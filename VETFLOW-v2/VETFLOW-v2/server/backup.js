@@ -8,19 +8,18 @@ const U = require('./util');
 // No se incluyen los usuarios ni sus contraseñas.
 const TABLES = [
   ['patients', ['id', 'name', 'species', 'breed', 'sex', 'neutered', 'birth', 'weight', 'owner_name', 'phone', 'email', 'notes']],
-  ['vaccines', ['id', 'patient_id', 'name', 'applied_on', 'next_on']],
-  ['diagnoses', ['id', 'patient_id', 'on_date', 'title', 'notes']],
-  ['medications', ['id', 'patient_id', 'on_date', 'name', 'dose', 'duration']],
-  // v2: "complementary_studies" es tabla nueva; "products" va antes de "services" porque
-  // services.product_id depende de un producto ya existente al restaurar en orden.
+  // "products" y "stock_movements" van antes que vacunas, medicación y caja, que apuntan a ellos.
   ['products', ['id', 'name', 'category', 'stock', 'min_stock', 'price']],
+  ['stock_movements', ['id', 'product_id', 'product_name', 'on_date', 'qty', 'reason', 'unit_price', 'voided']],
+  ['vaccines', ['id', 'patient_id', 'name', 'applied_on', 'next_on', 'product_id', 'stock_qty', 'stock_movement_id']],
+  ['diagnoses', ['id', 'patient_id', 'on_date', 'title', 'notes']],
+  ['medications', ['id', 'patient_id', 'on_date', 'name', 'dose', 'duration', 'product_id', 'stock_qty', 'stock_movement_id']],
   ['services', ['id', 'name', 'category', 'price', 'product_id']],
   ['suppliers', ['id', 'name', 'phone', 'email', 'description']],
   ['complementary_studies', ['id', 'patient_id', 'on_date', 'title', 'notes']],
   ['appointments', ['id', 'patient_id', 'title', 'description', 'appointment_date', 'appointment_time', 'appointment_type']],
-  ['cash_movements', ['id', 'on_date', 'kind', 'concept', 'category', 'method', 'amount']],
+  ['cash_movements', ['id', 'on_date', 'kind', 'concept', 'category', 'method', 'amount', 'stock_movement_id']],
   ['charges', ['id', 'patient_id', 'on_date', 'concept', 'amount', 'method', 'cash_id']],
-  ['stock_movements', ['id', 'product_id', 'product_name', 'on_date', 'qty', 'reason', 'unit_price']],
 ];
 
 const KEEP_AUTO = 14;
@@ -30,7 +29,11 @@ const KEEP_MANUAL = 20;
 // tiene: se tratan como "sin datos" (tabla vacía) o con este valor por defecto, en vez de
 // rechazar la restauración de una copia vieja.
 const NEW_TABLES = new Set(['suppliers', 'complementary_studies', 'appointments']);
-const COL_DEFAULTS = { stock_movements: { unit_price: 0 } };
+const COL_DEFAULTS = {
+  stock_movements: { unit_price: 0, voided: false },
+  vaccines: { stock_qty: 0 },
+  medications: { stock_qty: 0 },
+};
 
 async function collect() {
   const out = {};
@@ -43,8 +46,14 @@ async function collect() {
 
 function countsOf(data) {
   const c = {};
-  for (const [table] of TABLES) c[table] = data[table].length;
+  for (const [table] of TABLES) c[table] = (data[table] || []).length;
   return c;
+}
+const totalOf = (counts) => Object.keys(counts).reduce((n, k) => n + counts[k], 0);
+
+/** Cuántos registros hay hoy en cada tabla (para comparar contra una copia antes de restaurar). */
+async function currentCounts() {
+  return countsOf(await collect());
 }
 
 async function prune(auto) {
@@ -70,16 +79,45 @@ async function snapshot(label, auto) {
   return r.rows[0].id;
 }
 
-/** Hace la copia automática si todavía no se hizo una hoy (hora de Argentina). */
+const REFRESH_AFTER_MS = 3 * 60 * 60 * 1000;
+
+/**
+ * Copia automática: una por día (hora de Argentina), siempre con los datos ACTUALES.
+ * - Si todavía no hay copia de hoy, la crea.
+ * - Si ya hay una de hoy pero tiene más de 3 horas (o quedó vacía) y los datos cambiaron, la
+ *   actualiza. Antes la copia se hacía una sola vez, al primer arranque del día, y quedaba
+ *   desactualizada (o vacía) para el resto del día.
+ * - Nunca guarda una copia automática vacía: no tiene sentido y podría pisar una buena.
+ */
 async function ensureDaily() {
-  const r = await db.query('SELECT created_at FROM backups WHERE auto = $1 ORDER BY id DESC LIMIT 1', [true]);
-  if (r.rows[0]) {
-    const d = new Date(r.rows[0].created_at);
-    if (!isNaN(d.getTime()) && d.toLocaleDateString('en-CA', { timeZone: U.TZ || 'America/Argentina/Buenos_Aires' }) === U.todayAR()) {
-      return false;
-    }
+  const data = await collect();
+  const counts = countsOf(data);
+  if (totalOf(counts) === 0) {
+    console.warn('Copia diaria: la base está vacía, no se guarda una copia automática.');
+    return false;
   }
-  await snapshot('Copia automática diaria', true);
+  const r = await db.query('SELECT id, created_at, counts FROM backups WHERE auto = $1 ORDER BY id DESC LIMIT 1', [true]);
+  const last = r.rows[0];
+  let sameDay = false;
+  if (last) {
+    const d = new Date(last.created_at);
+    sameDay = !isNaN(d.getTime()) && d.toLocaleDateString('en-CA', { timeZone: U.TZ }) === U.todayAR();
+  }
+  const gz = zlib.gzipSync(Buffer.from(JSON.stringify(data))).toString('base64');
+  if (!sameDay) {
+    await db.query('INSERT INTO backups (label, auto, counts, data) VALUES ($1, $2, $3, $4)', ['Copia automática diaria', true, JSON.stringify(counts), gz]);
+    await prune(true);
+    return true;
+  }
+  let prev = {};
+  try {
+    prev = JSON.parse(last.counts);
+  } catch (e) {
+    /* sin detalle: se refresca igual */
+  }
+  const stale = Date.now() - new Date(last.created_at).getTime() > REFRESH_AFTER_MS || totalOf(prev) === 0;
+  if (!stale || JSON.stringify(prev) === JSON.stringify(counts)) return false;
+  await db.query('UPDATE backups SET created_at = now(), counts = $1, data = $2 WHERE id = $3', [JSON.stringify(counts), gz, last.id]);
   return true;
 }
 
@@ -127,8 +165,12 @@ function validate(d) {
  * Reemplaza todos los datos por los de la copia. Antes guarda una copia de lo actual.
  * Todo ocurre en una sola operación: si algo falla, los datos quedan como estaban.
  */
-async function restore(data) {
+async function restore(data, opts) {
   validate(data);
+  // Una copia sin ningún registro borraría todo: se exige confirmación explícita.
+  if (totalOf(countsOf(data)) === 0 && !(opts && opts.confirmEmpty)) {
+    throw new U.HttpError(409, 'Esta copia está vacía: restaurarla borra todos los datos. Confirmá que es lo que querés.');
+  }
   await snapshot('Antes de restaurar una copia', false);
   try {
     await db.tx(async (c) => {
@@ -164,4 +206,4 @@ async function restore(data) {
   }
 }
 
-module.exports = { snapshot, ensureDaily, list, load, remove, exportAll, restore };
+module.exports = { currentCounts, snapshot, ensureDaily, list, load, remove, exportAll, restore };

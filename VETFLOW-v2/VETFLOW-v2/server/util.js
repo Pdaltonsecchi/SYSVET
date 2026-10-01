@@ -35,6 +35,12 @@ function monthStart(iso, back) {
   const m = Number(iso.slice(5, 7)) - 1 - (back || 0);
   return new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
 }
+/** Último día del mes de `iso`. */
+function monthEnd(iso) {
+  const y = Number(iso.slice(0, 4));
+  const m = Number(iso.slice(5, 7));
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+}
 const round2 = (x) => Math.round(x * 100) / 100;
 
 /* ---------- validaciones ---------- */
@@ -59,6 +65,15 @@ function reqDate(v, label) {
 }
 function optDate(v, label) {
   return v == null || v === '' ? null : reqDate(v, label);
+}
+/** Fecha que no puede ser posterior a hoy (nacimiento, diagnóstico, aplicación, cobro, compra...). */
+function pastDate(v, label) {
+  reqDate(v, label);
+  if (v > todayAR()) throw bad(label + ' no puede ser posterior a hoy');
+  return v;
+}
+function optPastDate(v, label) {
+  return v == null || v === '' ? null : pastDate(v, label);
 }
 /** Hora de un turno: acepta "HH:MM" o "HH:MM:SS" y siempre devuelve "HH:MM:SS". */
 function reqTime(v, label) {
@@ -152,7 +167,7 @@ function clientIp(req) {
 module.exports = {
   HttpError, bad, HANDLED,
   METHODS, PROD_CATS, SERV_CATS, CASH_CATS, APPT_TYPES, APPT_LABELS,
-  TZ, todayAR, addDays, monthStart, round2,
-  reqStr, optStr, reqDate, optDate, reqTime, reqNum, reqInt, money, oneOf, idParam, checkEmail,
+  TZ, todayAR, addDays, monthStart, monthEnd, round2,
+  reqStr, optStr, reqDate, optDate, pastDate, optPastDate, reqTime, reqNum, reqInt, money, oneOf, idParam, checkEmail,
   sendJson, readBody, parseCookies, clientIp,
 };

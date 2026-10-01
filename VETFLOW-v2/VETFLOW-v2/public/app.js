@@ -16,7 +16,7 @@ var fmtDate=function(s){if(!s)return '—';var a=String(s).slice(0,10).split('-'
 var money=function(n){return new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0}).format(n||0);};
 var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});};
 var plural=function(n,a,b){return n+' '+(n===1?a:b);};
-var fmtTs=function(v){var d=new Date(v);if(isNaN(d.getTime()))return '';return d.toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});};
+var fmtTs=function(v){var d=new Date(v);if(isNaN(d.getTime()))return '';return d.toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});};
 // v2: lunes de la semana que contiene "iso" (semana de lunes a domingo).
 var mondayOf=function(iso){var d=parse(iso);var wd=d.getDay();wd=wd===0?7:wd;return shiftDays(-(wd-1),iso);};
 
@@ -221,6 +221,23 @@ dlg.addEventListener('click',function(e){if(e.target===dlg)dlg.close();});
 function confirmForm(title,text,submit,fn,danger){
   openForm({title:title,body:'<p>'+text+'</p>',submit:submit,danger:danger!==false,onSubmit:fn});
 }
+// Diálogo de decisión que devuelve una promesa con el "value" del botón elegido (o null si se cierra).
+// Se arma aparte de #dlg para poder abrirlo encima de un formulario que está a medio guardar.
+function choiceDialog(title,html,buttons){
+  return new Promise(function(resolve){
+    var d=document.createElement('dialog'),val=null;
+    d.innerHTML='<form class="dform"><h2>'+title+'</h2>'+html+'<div class="actions">'+buttons.map(function(b,i){
+      return '<button type="button" class="btn '+(b.cls||'ghost')+'" data-i="'+i+'">'+b.label+'</button>';
+    }).join('')+'</div></form>';
+    document.body.appendChild(d);
+    d.addEventListener('click',function(e){
+      var b=e.target.closest('[data-i]');
+      if(b){val=buttons[Number(b.dataset.i)].value;d.close();}
+    });
+    d.addEventListener('close',function(){d.remove();resolve(val);});
+    d.showModal();
+  });
+}
 function segHTML(action,items,active){
   return '<div class="seg" role="group">'+items.map(function(i){
     return '<button class="segb" data-action="'+action+'" data-v="'+i[0]+'" aria-pressed="'+(String(i[0])===String(active))+'">'+i[1]+'</button>';
@@ -415,7 +432,7 @@ function stockHTML(){
   var admin=isAdmin();
   var L=S.products.filter(function(x){return ui.cat==='all'||x.category===ui.cat;});
   var rows=L.map(function(x){
-    var chip=x.stock===0?'<span class="chip bad">Sin stock</span>':lowStock(x)?'<span class="chip warn">Poco stock</span>':'';
+    var chip=x.stock<=0?'<span class="chip bad">Sin stock</span>':lowStock(x)?'<span class="chip warn">Poco stock</span>':'';
     var stockCell=admin?'<span class="stk"><span>'+x.stock+'</span><button data-action="stock-add" data-id="'+x.id+'" aria-label="Agregar stock" title="Agregar stock (compra)">+</button></span>':'<b>'+x.stock+'</b>';
     var acts='<button class="link" data-action="sell" data-id="'+x.id+'">Vender</button>'+
       (admin?'<button class="link" data-action="stock-adjust" data-id="'+x.id+'">Ajustar</button><button class="link" data-action="stock-history" data-id="'+x.id+'">Historial</button><button class="link" data-action="edit-product" data-id="'+x.id+'">Editar</button><button class="link bad" data-action="del-product" data-id="'+x.id+'">Eliminar</button>':'');
@@ -493,8 +510,8 @@ function viewReportes(){
   var maxU=ui.rproducts.length&&ui.rproducts[0].units?ui.rproducts[0].units:1;
   var prRows=ui.rproducts.map(function(x){
     var st,left=x.units>0?Math.round(x.stock/(x.units/days)):null;
-    if(x.units===0)st='<span class="chip none">Sin movimiento</span>';
-    else if(x.stock===0)st='<span class="chip bad">Sin stock</span>';
+    if(x.stock<=0)st='<span class="chip bad">Sin stock</span>';
+    else if(x.units===0)st='<span class="chip none">Sin movimiento</span>';
     else if(left<=15)st='<span class="chip warn">Alcanza para '+plural(left,'día','días')+'</span>';
     else st='Alcanza para ~'+left+' días';
     return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small></td><td><div class="bars"><div class="bar" style="width:'+Math.max(4,Math.round(x.units/maxU*140))+'px"></div><span>'+x.units+'</span></div></td><td class="num">'+x.stock+'</td><td>'+st+'</td></tr>';
@@ -619,7 +636,7 @@ function patientForm(p){
       fld('Especie','species',{opts:['Perro','Gato'],value:p.species})+
       fld('Raza','breed',{value:p.breed,ph:'Ej.: Labrador'})+
       fld('Sexo','sex',{opts:['Macho','Hembra'],value:p.sex})+
-      fld('Fecha de nacimiento (aprox.)','birth',{type:'date',value:p.birth})+
+      fld('Fecha de nacimiento (aprox.)','birth',{type:'date',value:p.birth,max:todayIso()})+
       fld('Peso (kg)','weight',{type:'number',step:'0.1',min:0,value:p.weight})+
       fld('Dueño','owner',{value:p.owner,req:true})+
       fld('Teléfono','phone',{type:'tel',value:p.phone})+
@@ -640,21 +657,32 @@ function vaccineForm(p){
   // como aviso de que hay que reponer).
   var vacServices=S.services.filter(function(s){return s.category==='Vacunas';});
   var svcOpts=[['','No vincular (no descuenta stock)']].concat(vacServices.map(function(s){
-    return [s.id, s.name+(s.productId?' — descuenta stock':'')];
+    var pr=s.productId?S.products.find(function(x){return x.id===s.productId;}):null;
+    return [s.id, s.name+(pr?' — stock: '+pr.stock:'')];
   }));
   var f=openForm({title:'Agregar vacuna a '+esc(p.name),
     body:(vacServices.length?'<div class="fields">'+fld('Vacuna de la lista de precios (opcional)','service',{opts:svcOpts,full:true})+'</div>':'')+
     '<datalist id="vaclist">'+VAC_SUGG.map(function(v){return '<option value="'+v+'">';}).join('')+'</datalist>'+
     '<div class="fields">'+fld('Vacuna','name',{req:true,list:'vaclist',full:true,ph:'Ej.: Sextuple'})+
-    fld('Fecha de aplicación','date',{type:'date',value:todayIso(),req:true})+
+    fld('Fecha de aplicación','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+
     fld('Próxima dosis (vencimiento)','next',{type:'date'})+'</div>'+
     '<div class="quick"><span>Próxima dosis en:</span><button type="button" class="segb" data-q="d21">3 semanas</button><button type="button" class="segb" data-q="m6">6 meses</button><button type="button" class="segb" data-q="m12">1 año</button></div>',
     submit:'Agregar vacuna',
     onSubmit:async function(d){
-      var r=await api('/patients/'+p.id+'/vaccines',{body:{name:d.name,date:d.date,next:d.next,serviceId:d.service||null}});
+      // Si el producto vinculado no tiene stock, se avisa antes de guardar. El servidor igual lo
+      // rechaza si se intenta descontar sin stock: "Aplicar sin descontar" es la única salida.
+      var skip=false;
+      var svc=d.service?vacServices.find(function(x){return String(x.id)===String(d.service);}):null;
+      var prod=svc&&svc.productId?S.products.find(function(x){return x.id===svc.productId;}):null;
+      if(prod&&prod.stock<=0){
+        var ch=await choiceDialog('Sin stock de '+esc(prod.name),'<p>No hay stock de <b>'+esc(prod.name)+'</b> (quedan 0). ¿Querés aplicar la vacuna igual, sin descontar nada del stock?</p>',
+          [{label:'Cancelar',value:'cancel',cls:'ghost'},{label:'Aplicar sin descontar stock',value:'skip',cls:'primary'}]);
+        if(ch!=='skip')return false;
+        skip=true;
+      }
+      var r=await api('/patients/'+p.id+'/vaccines',{body:{name:d.name,date:d.date,next:d.next,serviceId:d.service||null,skipStock:skip}});
       await reload();
-      if(r.stockWarning)toast('Vacuna agregada. Advertencia: stock insuficiente del producto vinculado.',true);
-      else toast('Vacuna agregada');
+      toast('Vacuna agregada'+(r.deducted?' · se descontó 1 del stock':''));
     }});
   f.querySelectorAll('[data-q]').forEach(function(b){b.addEventListener('click',function(){
     var base=f.querySelector('[name="date"]').value||todayIso(),q=b.dataset.q;
@@ -669,7 +697,7 @@ function vaccineForm(p){
 }
 function dxForm(p){
   openForm({title:'Agregar diagnóstico a '+esc(p.name),
-    body:'<div class="fields">'+fld('Fecha','date',{type:'date',value:todayIso(),req:true})+fld('Diagnóstico o motivo de consulta','title',{req:true,ph:'Ej.: Gastroenteritis'})+
+    body:'<div class="fields">'+fld('Fecha','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+fld('Diagnóstico o motivo de consulta','title',{req:true,ph:'Ej.: Gastroenteritis'})+
     fld('Detalle y tratamiento indicado','notes',{type:'textarea',full:true})+'</div>',
     submit:'Agregar diagnóstico',
     onSubmit:async function(d){await api('/patients/'+p.id+'/diagnoses',{body:{date:d.date,title:d.title,notes:d.notes}});await reload();toast('Diagnóstico agregado');}});
@@ -679,11 +707,11 @@ function medForm(p){
   var f=openForm({title:'Agregar medicación a '+esc(p.name),
     body:'<div class="fields">'+fld('Producto del stock (descuenta 1 unidad)','product',{opts:opts,full:true})+
     fld('Medicamento','name',{req:true,full:true})+fld('Dosis','dose',{ph:'Ej.: 250 mg cada 12 h'})+fld('Duración','duration',{ph:'Ej.: 7 días'})+
-    fld('Fecha','date',{type:'date',value:todayIso(),req:true})+'</div>',
+    fld('Fecha','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+'</div>',
     submit:'Agregar medicación',
     onSubmit:async function(d){
       var r=await api('/patients/'+p.id+'/medications',{body:{date:d.date,name:d.name,dose:d.dose,duration:d.duration,productId:d.product||null}});
-      await reload();toast('Medicación agregada'+(r.deducted?' · se descontó 1 del stock':''));
+      await reload();toast('Medicación agregada'+(r.deducted?' · se descontó '+r.qty+' del stock':''));
     }});
   f.querySelector('[name="product"]').addEventListener('change',function(){
     var pr=S.products.find(function(x){return String(x.id)===f.querySelector('[name="product"]').value;});
@@ -695,7 +723,7 @@ function chargeForm(p){
   if(!S.services.length){toast(isAdmin()?'Primero cargá los precios en Farmacia y caja > Lista de precios':'Todavía no hay precios cargados. Pedile al administrador que los cargue.');return;}
   var f=openForm({title:'Cobrar servicio a '+esc(p.name),
     body:'<div class="fields">'+fld('Servicio','service',{opts:S.services.map(function(s){return [s.id,s.name+' — '+money(s.price)];}),full:true})+
-      fld('Monto a cobrar','amount',{type:'number',min:0,step:'1',value:S.services[0].price,req:true})+fld('Fecha','date',{type:'date',value:todayIso(),req:true})+
+      fld('Monto a cobrar','amount',{type:'number',min:0,step:'1',value:S.services[0].price,req:true})+fld('Fecha','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+
       fld('Forma de pago','method',{opts:PAY,value:'Efectivo',full:true})+
       fld('Registrar como ingreso en caja','cash',{type:'checkbox',value:true,full:true})+'</div>',
     submit:'Cobrar',
@@ -727,7 +755,7 @@ function productForm(x){
 function buyForm(x){
   openForm({title:'Agregar stock de '+esc(x.name),
     body:'<div class="fields">'+fld('Cantidad que llegó','qty',{type:'number',min:1,step:'1',value:1,req:true})+fld('Precio unitario que pagaste','unitPrice',{type:'number',min:0,step:'1',req:true})+
-      fld('Forma de pago','method',{opts:PAY,value:'Transferencia'})+fld('Fecha','date',{type:'date',value:todayIso(),req:true})+
+      fld('Forma de pago','method',{opts:PAY,value:'Transferencia'})+fld('Fecha','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+
       fld('Registrar como egreso en caja','cash',{type:'checkbox',value:true,full:true})+'</div><p>Stock actual: '+x.stock+'. El total (cantidad × precio unitario) se calcula solo.</p>',
     submit:'Agregar stock',
     onSubmit:async function(d){
@@ -787,7 +815,7 @@ function serviceForm(s){
 // v2: estudios complementarios (mismo patrón que diagnósticos).
 function studyForm(p){
   openForm({title:'Agregar estudio complementario a '+esc(p.name),
-    body:'<div class="fields">'+fld('Fecha','date',{type:'date',value:todayIso(),req:true})+fld('Tipo de estudio','title',{req:true,full:true,ph:'Ej.: Ecografía abdominal, radiografía, análisis de sangre'})+
+    body:'<div class="fields">'+fld('Fecha','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+fld('Tipo de estudio','title',{req:true,full:true,ph:'Ej.: Ecografía abdominal, radiografía, análisis de sangre'})+
     fld('Notas técnicas','notes',{type:'textarea',full:true})+'</div>',
     submit:'Agregar estudio',
     onSubmit:async function(d){await api('/patients/'+p.id+'/studies',{body:{date:d.date,title:d.title,notes:d.notes}});await reload();toast('Estudio agregado');}});
@@ -853,7 +881,16 @@ function cashForm(type){
     fld('Concepto','concept',{req:true,full:true,ph:type==='in'?'Ej.: Venta de alimento':'Ej.: Pago de luz'})+
     fld('Categoría','category',{opts:CASH_CATS,value:type==='in'?'Servicios':'Compra de stock'})+fld('Forma de pago','method',{opts:PAY,value:'Efectivo'})+'</div>',
     submit:'Registrar',
-    onSubmit:async function(d){await api('/cash',{body:{date:d.date,type:type,concept:d.concept,category:d.category,method:d.method,amount:d.amount}});await reload();toast('Movimiento registrado');}});
+    onSubmit:async function(d){
+      // Los movimientos manuales pueden tener fecha futura, pero hay que confirmarlo.
+      var future=d.date>todayIso();
+      if(future){
+        var ch=await choiceDialog('Fecha posterior a hoy','<p>La fecha es posterior a hoy, ¿es correcto?</p>',
+          [{label:'Corregir la fecha',value:'no',cls:'ghost'},{label:'Sí, es correcta',value:'ok',cls:'primary'}]);
+        if(ch!=='ok')return false;
+      }
+      await api('/cash',{body:{date:d.date,type:type,concept:d.concept,category:d.category,method:d.method,amount:d.amount,confirmFuture:future}});await reload();toast('Movimiento registrado');
+    }});
 }
 function userForm(u){
   var isNew=!u;u=u||{role:'staff',active:true};
@@ -893,10 +930,25 @@ async function downloadExport(){
   render();
   toast('Copia descargada. Guardala en un lugar seguro.');
 }
-function restoreFileForm(data,label){
-  confirmForm('Restaurar copia','Se reemplazan todos los datos actuales (pacientes, stock, caja y precios) por los de: '+esc(label)+'. Antes se guarda una copia de los datos de ahora. Los usuarios no cambian.','Restaurar',async function(){
-    await api('/restore',{body:{data:data}});ui.sel=null;ui.detail=null;await reload();toast('Copia restaurada');
-  },false);
+var COUNT_LABELS=[['patients','paciente','pacientes'],['products','producto','productos'],['cash_movements','movimiento de caja','movimientos de caja'],['appointments','turno','turnos']];
+var countsText=function(c){return COUNT_LABELS.map(function(l){return plural(c[l[0]]||0,l[1],l[2]);}).join(', ');};
+var countsTotal=function(c){return Object.keys(c).reduce(function(n,k){return n+(Number(c[k])||0);},0);};
+// Confirmación reforzada: muestra cuántos registros hay hoy y cuántos tiene la copia. Si la copia
+// está vacía lo marca bien fuerte y pide tildar que se entiende que se borra todo.
+function restoreConfirm(label,copyCounts,curCounts,doRestore){
+  var empty=countsTotal(copyCounts)===0;
+  openForm({title:'Restaurar copia',danger:empty,submit:'Restaurar',
+    body:'<p>Vas a reemplazar los datos actuales ('+esc(countsText(curCounts))+') por esta copia ('+esc(countsText(copyCounts))+').</p>'+
+      '<p><small>Copia: '+esc(label)+'. Antes se guarda una copia de los datos de ahora. Los usuarios no cambian.</small></p>'+
+      (empty?'<p class="warnbox"><b>⚠️ Esta copia está vacía, restaurarla borra todo</b></p><label class="fld check"><input type="checkbox" name="understand" required><span>Entiendo que se borran todos los datos actuales</span></label>':''),
+    onSubmit:function(){return doRestore(empty);}});
+}
+async function restoreFileForm(data,label){
+  var cur=(await api('/backups/current')).counts;
+  var cc={};Object.keys(data).forEach(function(k){if(Array.isArray(data[k]))cc[k]=data[k].length;});
+  restoreConfirm(label,cc,cur,async function(empty){
+    await api('/restore',{body:{data:data,confirmEmpty:empty}});ui.sel=null;ui.detail=null;await reload();toast('Copia restaurada');
+  });
 }
 
 /* ============================================================
@@ -928,10 +980,10 @@ var actions={
   'add-study':function(){if(ui.detail)studyForm(ui.detail);}, // v2
   'add-med':function(){if(ui.detail)medForm(ui.detail);},
   charge:function(){if(ui.detail)chargeForm(ui.detail);},
-  'del-vac':async function(id){await api('/vaccines/'+id,{method:'DELETE'});await reload();toast('Vacuna quitada');},
+  'del-vac':async function(id){var r=await api('/vaccines/'+id,{method:'DELETE'});await reload();toast('Vacuna quitada'+(r.restored?' · se devolvió '+r.restored+' al stock':''));},
   'del-dx':async function(id){await api('/diagnoses/'+id,{method:'DELETE'});await reload();toast('Diagnóstico quitado');},
   'del-study':async function(id){await api('/studies/'+id,{method:'DELETE'});await reload();toast('Estudio quitado');}, // v2
-  'del-med':async function(id){await api('/medications/'+id,{method:'DELETE'});await reload();toast('Medicación quitada');},
+  'del-med':async function(id){var r=await api('/medications/'+id,{method:'DELETE'});await reload();toast('Medicación quitada'+(r.restored?' · se devolvieron '+r.restored+' al stock':''));},
   'del-chg':function(id){
     confirmForm('Quitar cobro','Se quita el cobro de la historia del paciente y también el ingreso que se registró en la caja.','Quitar cobro',async function(){
       await api('/charges/'+id,{method:'DELETE'});await reload();toast('Cobro quitado');
@@ -966,18 +1018,22 @@ var actions={
   'cash-in':function(){cashForm('in');},
   'cash-out':function(){cashForm('out');},
   'del-cash':function(id){
-    confirmForm('Eliminar movimiento','Se borra este movimiento de la caja. Esta acción no se puede deshacer.','Eliminar',async function(){
-      await api('/cash/'+id,{method:'DELETE'});await reload();toast('Movimiento eliminado');
+    var c=((ui.cash&&ui.cash.items)||[]).find(function(x){return String(x.id)===String(id);});
+    var d=c?c.stockDelta:0;
+    var extra=d>0?' También se devuelven '+plural(d,'unidad','unidades')+' al stock.':d<0?' También se restan '+plural(-d,'unidad','unidades')+' del stock.':'';
+    confirmForm('Eliminar movimiento','Se borra este movimiento de la caja.'+extra+' Esta acción no se puede deshacer.','Eliminar',async function(){
+      await api('/cash/'+id,{method:'DELETE'});await reload();toast('Movimiento eliminado'+(d>0?' · stock devuelto':d<0?' · stock descontado':''));
     });
   },
   'backup-download':function(){return downloadExport();},
   'backup-now':async function(){await api('/backups',{body:{}});await reload();toast('Copia creada');},
   'pick-file':function(){var f=$('#bfile');if(f)f.click();},
-  restore:function(id){
+  restore:async function(id){
     var b=(ui.backups||[]).find(function(x){return String(x.id)===String(id);});if(!b)return;
-    confirmForm('Restaurar copia','Se reemplazan todos los datos actuales (pacientes, stock, caja y precios) por los de la copia “'+esc(b.label)+'” del '+fmtTs(b.createdAt)+'. Antes se guarda una copia de los datos de ahora. Los usuarios no cambian.','Restaurar',async function(){
-      await api('/backups/'+id+'/restore',{body:{}});ui.sel=null;ui.detail=null;await reload();toast('Copia restaurada');
-    },false);
+    var cur=(await api('/backups/current')).counts;
+    restoreConfirm('“'+b.label+'” del '+fmtTs(b.createdAt),b.counts||{},cur,async function(empty){
+      await api('/backups/'+id+'/restore',{body:{confirmEmpty:empty}});ui.sel=null;ui.detail=null;await reload();toast('Copia restaurada');
+    });
   },
   'del-backup':function(id){
     confirmForm('Eliminar copia','Se borra esta copia guardada en el sistema.','Eliminar',async function(){
@@ -1039,8 +1095,8 @@ document.addEventListener('change',function(e){
       try{
         var j=JSON.parse(r.result),x=j.data||j;
         if(!x||!Array.isArray(x.patients)||!Array.isArray(x.products)||!Array.isArray(x.cash_movements))throw new Error('formato');
-        restoreFileForm(x,'el archivo '+f.name);
-      }catch(err){toast('El archivo no es una copia válida');}
+      }catch(err){toast('El archivo no es una copia válida');return;}
+      restoreFileForm(x,'el archivo '+f.name).catch(function(err){toast(err.message);});
     };
     r.readAsText(f);
     e.target.value='';
