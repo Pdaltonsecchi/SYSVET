@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>VETFLOW</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%90%BE%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Figtree:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body data-state="loading">
+
+<div id="boot" class="boot" role="status">
+  <div class="boot-mark" aria-hidden="true">🐾</div>
+  <p id="boot-msg">Iniciando el sistema…</p>
+  <small id="boot-sub">La primera vez del día puede tardar hasta un minuto.</small>
+  <button id="boot-retry" class="btn primary" type="button" hidden>Reintentar</button>
+</div>
+
+<div id="login" class="login">
+  <form id="loginform" class="loginbox" autocomplete="on">
+    <div class="brand2"><span aria-hidden="true">🐾</span> VETFLOW</div>
+    <h1>Ingresar</h1>
+    <label class="fld"><span>Email</span><input id="lemail" name="email" type="email" autocomplete="username" required></label>
+    <label class="fld"><span>Contraseña</span><input id="lpass" name="password" type="password" autocomplete="current-password" required></label>
+    <p id="lerror" class="err" role="alert"></p>
+    <button id="lbtn" class="btn primary" type="submit">Entrar</button>
+  </form>
+</div>
+
+<div class="app" id="app">
+  <aside class="side">
+    <div class="brand"><span class="mark" aria-hidden="true">🐾</span><div><b>VETFLOW</b><small>Sistema veterinario</small></div></div>
+    <nav class="nav" id="nav" aria-label="Secciones"></nav>
+    <div class="alerts" id="alerts"></div>
+    <div class="side-foot" id="userbox"></div>
+  </aside>
+  <main id="main"></main>
+</div>
+
+<dialog id="dlg"></dialog>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

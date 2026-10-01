@@ -1,0 +1,1067 @@
+(function(){
+'use strict';
+
+/* ============================================================
+   Utilidades
+   ============================================================ */
+var $=function(s){return document.querySelector(s);};
+var pad=function(n){return String(n).padStart(2,'0');};
+var isoOf=function(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());};
+var todayIso=function(){return isoOf(new Date());};
+var parse=function(s){var a=s.split('-').map(Number);return new Date(a[0],a[1]-1,a[2]);};
+var shiftDays=function(n,base){var d=base?parse(base):new Date();d.setDate(d.getDate()+n);return isoOf(d);};
+var shiftMonths=function(n,base){var d=base?parse(base):new Date();d.setMonth(d.getMonth()+n);return isoOf(d);};
+var diffDays=function(s){var t=new Date();t.setHours(0,0,0,0);return Math.round((parse(s)-t)/86400000);};
+var fmtDate=function(s){if(!s)return '—';var a=String(s).slice(0,10).split('-');return a[2]+'/'+a[1]+'/'+a[0];};
+var money=function(n){return new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0}).format(n||0);};
+var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});};
+var plural=function(n,a,b){return n+' '+(n===1?a:b);};
+var fmtTs=function(v){var d=new Date(v);if(isNaN(d.getTime()))return '';return d.toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});};
+// v2: lunes de la semana que contiene "iso" (semana de lunes a domingo).
+var mondayOf=function(iso){var d=parse(iso);var wd=d.getDay();wd=wd===0?7:wd;return shiftDays(-(wd-1),iso);};
+
+var PROD_CATS=['Medicamentos','Vacunas','Higiene','Pulguicidas','Antiparasitarios','Otros'];
+var SERV_CATS=['Consultas','Vacunas','Cirugías','Otros'];
+var CASH_CATS=['Servicios','Venta de productos','Compra de stock','Alquiler y servicios','Sueldos','Retiro de caja','Otros'];
+var PAY=['Efectivo','Transferencia','Tarjeta de débito','Tarjeta de crédito'];
+var VAC_SUGG=['Sextuple','Quíntuple','Antirrábica','Tos de las perreras','Triple felina','Leucemia felina','Desparasitación'];
+var APPT_TYPES=[['consulta','Consulta'],['vacuna','Vacuna'],['cirugia','Cirugía'],['otro','Otro']];
+var APPT_LABEL={consulta:'Consulta',vacuna:'Vacuna',cirugia:'Cirugía',otro:'Otro'};
+var APPT_VIEWS=[['week','Semana'],['2weeks','2 semanas'],['3weeks','3 semanas'],['month','Mes']];
+
+/* ============================================================
+   Estado
+   ============================================================ */
+var S={user:null,patients:[],products:[],services:[],summary:null};
+var ui={view:'pacientes',sel:null,detail:null,filter:'all',q:'',tab:'stock',cat:'all',
+  cashp:'month',cashf:'all',cashm:'all',cash:null,
+  rep:'90',rmonthly:null,rservices:null,rproducts:null,backups:null,users:null,
+  suppliers:null, // v2
+  cal:{view:'week',anchor:todayIso()},appts:null}; // v2: calendario de turnos
+var main=$('#main'),dlg=$('#dlg');
+var isAdmin=function(){return !!S.user&&S.user.role==='admin';};
+
+// El segundo parámetro (warn) pinta el aviso en rojo — se usa para alertas de stock insuficiente.
+function toast(msg,warn){var t=$('#toast');t.textContent=msg;t.classList.toggle('warn',!!warn);t.classList.add('on');clearTimeout(toast._t);toast._t=setTimeout(function(){t.classList.remove('on');},3200);}
+
+/* ============================================================
+   Conexión con el servidor
+   ============================================================ */
+async function api(path,opts){
+  opts=opts||{};
+  var init={method:opts.method||'GET',credentials:'same-origin',headers:{'Accept':'application/json'}};
+  if(opts.body!==undefined){init.method=opts.method||'POST';init.headers['Content-Type']='application/json';init.body=JSON.stringify(opts.body);}
+  var res;
+  try{res=await fetch('/api'+path,init);}
+  catch(e){var ce=new Error('No hay conexión con el servidor. Revisá tu internet e intentá de nuevo.');ce.status=0;throw ce;}
+  if(opts.raw&&res.ok)return res;
+  var data=null;
+  try{data=await res.json();}catch(e){}
+  if(!res.ok){
+    var err=new Error((data&&data.error)||'Ocurrió un error inesperado ('+res.status+')');
+    err.status=res.status;
+    if(res.status===401&&path!=='/login'&&S.user){S.user=null;showLogin('Tu sesión venció. Volvé a ingresar.');}
+    throw err;
+  }
+  return data;
+}
+
+function setState(s){document.body.dataset.state=s;}
+function showLogin(msg){
+  if(dlg.open)dlg.close();
+  setState('login');
+  $('#lerror').textContent=msg||'';
+}
+function applyBootstrap(d){
+  S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.summary=d.summary||null;
+}
+async function start(){
+  var d=await api('/bootstrap');
+  applyBootstrap(d);
+  ui.view='pacientes';ui.sel=null;ui.detail=null;ui.filter='all';ui.q='';ui.tab='stock';
+  setState('app');
+  render();
+}
+async function boot(){
+  try{await start();}
+  catch(e){
+    if(e.status===401){showLogin();return;}
+    setState('loading');
+    $('#boot-msg').textContent='No se pudo conectar con el sistema';
+    $('#boot-sub').textContent=e.message;
+    $('#boot-retry').hidden=false;
+  }
+}
+
+/* Carga los datos de la pantalla actual. */
+async function loadView(){
+  if(ui.view==='pacientes'&&ui.sel){
+    try{ui.detail=await api('/patients/'+ui.sel);}
+    catch(e){if(e.status===404){ui.sel=null;ui.detail=null;}else throw e;}
+  }else if(ui.view==='calendario'){
+    await loadAppointments();
+  }else if(ui.view==='farmacia'&&ui.tab==='caja'&&isAdmin()){
+    await loadCash();
+  }else if(ui.view==='proveedores'){
+    ui.suppliers=(await api('/suppliers')).items;
+  }else if(ui.view==='reportes'&&isAdmin()){
+    await loadReports();
+  }else if(ui.view==='copias'&&isAdmin()){
+    ui.backups=(await api('/backups')).items;
+  }else if(ui.view==='usuarios'&&isAdmin()){
+    ui.users=(await api('/users')).items;
+  }
+}
+// v2: rango de fechas visible del calendario según la vista elegida (semana/2/3 semanas o mes).
+// En "mes" el rango se agranda hasta completar semanas enteras, para que la grilla no quede cortada.
+function calRange(){
+  var a=ui.cal.anchor;
+  if(ui.cal.view==='week')return [mondayOf(a), shiftDays(6, mondayOf(a))];
+  if(ui.cal.view==='2weeks')return [mondayOf(a), shiftDays(13, mondayOf(a))];
+  if(ui.cal.view==='3weeks')return [mondayOf(a), shiftDays(20, mondayOf(a))];
+  var first=a.slice(0,8)+'01';
+  var y=Number(a.slice(0,4)),m=Number(a.slice(5,7));
+  var lastDay=new Date(y,m,0).getDate();
+  var last=a.slice(0,8)+pad(lastDay);
+  var from=mondayOf(first);
+  var wd=parse(last).getDay();wd=wd===0?7:wd;
+  var to=shiftDays(7-wd,last);
+  return [from,to];
+}
+async function loadAppointments(){
+  var r=calRange();
+  ui.appts=(await api('/appointments?from='+r[0]+'&to='+r[1])).items;
+}
+async function reloadCal(){
+  try{await loadAppointments();}catch(e){toast(e.message);}
+  render();
+}
+function calShift(dir){
+  if(ui.cal.view==='month'){ui.cal.anchor=shiftMonths(dir,ui.cal.anchor);return;}
+  var span=ui.cal.view==='week'?7:ui.cal.view==='2weeks'?14:21;
+  ui.cal.anchor=shiftDays(dir*span,ui.cal.anchor);
+}
+function calTitle(){
+  if(ui.cal.view==='month'){
+    var t=parse(ui.cal.anchor).toLocaleDateString('es-AR',{month:'long',year:'numeric'});
+    return t.charAt(0).toUpperCase()+t.slice(1);
+  }
+  var r=calRange();
+  return fmtDate(r[0])+' – '+fmtDate(r[1]);
+}
+async function loadCash(){
+  var q=['period='+ui.cashp];
+  if(ui.cashf!=='all')q.push('type='+ui.cashf);
+  if(ui.cashm!=='all')q.push('group='+encodeURIComponent(ui.cashm));
+  var r=await Promise.all([api('/cash?'+q.join('&')),api('/cash/summary')]);
+  ui.cash=r[0];S.summary=r[1];
+}
+async function loadReports(){
+  var r=await Promise.all([api('/reports/monthly'),api('/reports/services?days='+ui.rep),api('/reports/products?days='+ui.rep)]);
+  ui.rmonthly=r[0].months;ui.rservices=r[1].items;ui.rproducts=r[2].items;
+}
+/* Después de guardar algo: vuelve a pedir los datos y redibuja. */
+async function reload(){
+  try{
+    var d=await api('/bootstrap');
+    applyBootstrap(d);
+    await loadView();
+  }catch(e){toast(e.message);}
+  render();
+}
+async function go(view){
+  ui.view=view;
+  render();
+  window.scrollTo(0,0);
+  try{await loadView();}catch(e){toast(e.message);}
+  render();
+}
+
+/* ============================================================
+   Ventanas de formulario
+   ============================================================ */
+function fld(label,name,o){
+  o=o||{};
+  var value=o.value==null?'':o.value,ctl;
+  if(o.opts){
+    ctl='<select name="'+name+'"'+(o.req?' required':'')+'>'+o.opts.map(function(x){
+      var v=Array.isArray(x)?x[0]:x,t=Array.isArray(x)?x[1]:x;
+      return '<option value="'+esc(v)+'"'+(String(v)===String(value)?' selected':'')+'>'+esc(t)+'</option>';
+    }).join('')+'</select>';
+  }else if(o.type==='textarea'){
+    ctl='<textarea name="'+name+'" rows="3" placeholder="'+esc(o.ph||'')+'">'+esc(value)+'</textarea>';
+  }else if(o.type==='checkbox'){
+    return '<label class="fld check'+(o.full?' full':'')+'"><input type="checkbox" name="'+name+'"'+(value?' checked':'')+'><span>'+label+'</span></label>';
+  }else{
+    ctl='<input name="'+name+'" type="'+(o.type||'text')+'" value="'+esc(value)+'"'+(o.req?' required':'')+' placeholder="'+esc(o.ph||'')+'"'+
+      (o.step?' step="'+o.step+'"':'')+(o.min!=null?' min="'+o.min+'"':'')+(o.max!=null?' max="'+o.max+'"':'')+(o.list?' list="'+o.list+'"':'')+
+      (o.auto?' autocomplete="'+o.auto+'"':' autocomplete="off"')+'>';
+  }
+  return '<label class="fld'+(o.full?' full':'')+'"><span>'+label+'</span>'+ctl+'</label>';
+}
+function openForm(o){
+  dlg.innerHTML='<form class="dform"><h2>'+o.title+'</h2>'+o.body+'<p class="err" role="alert"></p>'+
+    '<div class="actions"><button type="button" class="btn ghost" data-close>Cancelar</button>'+
+    '<button type="submit" class="btn '+(o.danger?'danger':'primary')+'">'+(o.submit||'Guardar')+'</button></div></form>';
+  var f=dlg.querySelector('form');
+  f.addEventListener('submit',async function(e){
+    e.preventDefault();
+    var btn=f.querySelector('[type="submit"]'),errEl=f.querySelector('.err'),data={};
+    new FormData(f).forEach(function(v,k){data[k]=v;});
+    errEl.textContent='';btn.disabled=true;
+    try{var r=await o.onSubmit(data,f);if(r!==false)dlg.close();}
+    catch(err){errEl.textContent=err.message||'Ocurrió un error';}
+    btn.disabled=false;
+  });
+  dlg.querySelector('[data-close]').addEventListener('click',function(){dlg.close();});
+  dlg.showModal();
+  return f;
+}
+dlg.addEventListener('click',function(e){if(e.target===dlg)dlg.close();});
+function confirmForm(title,text,submit,fn,danger){
+  openForm({title:title,body:'<p>'+text+'</p>',submit:submit,danger:danger!==false,onSubmit:fn});
+}
+function segHTML(action,items,active){
+  return '<div class="seg" role="group">'+items.map(function(i){
+    return '<button class="segb" data-action="'+action+'" data-v="'+i[0]+'" aria-pressed="'+(String(i[0])===String(active))+'">'+i[1]+'</button>';
+  }).join('')+'</div>';
+}
+
+/* ============================================================
+   Navegación, avisos y usuario
+   ============================================================ */
+function navItems(){
+  // v2: Calendario y Proveedores son visibles para admin y ayudante (agendar turnos y
+  // consultar a quién comprarle es tarea del día a día, no solo del administrador).
+  var a=[['pacientes','Pacientes'],['calendario','Calendario'],['farmacia','Farmacia y caja'],['proveedores','Proveedores']];
+  if(isAdmin())a.push(['reportes','Reportes'],['copias','Copias de seguridad'],['usuarios','Usuarios']);
+  return a;
+}
+function renderNav(){
+  $('#nav').innerHTML=navItems().map(function(i){
+    return '<button class="navb" data-action="nav" data-v="'+i[0]+'" aria-current="'+(ui.view===i[0]?'page':'false')+'">'+i[1]+'</button>';
+  }).join('');
+}
+function renderUserBox(){
+  var u=S.user;
+  $('#userbox').innerHTML='<div class="who"><b>'+esc(u.name)+'</b><small>'+(u.role==='admin'?'Administrador':'Ayudante')+'</small></div>'+
+    '<button data-action="change-pass">Cambiar contraseña</button><button data-action="logout">Cerrar sesión</button>';
+}
+function lastExportDays(){
+  try{
+    var t=Number(localStorage.getItem('vet_last_export'));
+    if(!t)return null;
+    return Math.floor((Date.now()-t)/86400000);
+  }catch(e){return null;}
+}
+
+/* Vacunas: solo cuenta la dosis más reciente de cada vacuna. */
+function latestIds(p){
+  var m={};
+  p.vaccines.forEach(function(v){var k=v.name.trim().toLowerCase();if(!m[k]||v.date>m[k].date)m[k]=v;});
+  var ids={};Object.keys(m).forEach(function(k){ids[m[k].id]=true;});
+  return ids;
+}
+function vacStatus(v,latest){
+  if(!latest)return {k:'none',t:'Reemplazada por dosis nueva'};
+  if(!v.next)return {k:'none',t:'Sin refuerzo'};
+  var d=diffDays(v.next);
+  if(d<0)return {k:'bad',t:'Vencida hace '+plural(-d,'día','días')};
+  if(d===0)return {k:'warn',t:'Vence hoy'};
+  if(d<=30)return {k:'warn',t:'Vence en '+plural(d,'día','días')};
+  return {k:'ok',t:'Al día'};
+}
+function patientAlert(p){
+  var L=latestIds(p),r=null;
+  p.vaccines.forEach(function(v){
+    if(!L[v.id]||!v.next)return;
+    var d=diffDays(v.next);
+    if(d<0)r='bad';else if(d<=30&&r!=='bad')r='warn';
+  });
+  return r;
+}
+var lowStock=function(x){return x.stock<=x.min;};
+
+function renderAlerts(){
+  var bad=S.patients.filter(function(p){return patientAlert(p)==='bad';}).length;
+  var warn=S.patients.filter(function(p){return patientAlert(p)==='warn';}).length;
+  var low=S.products.filter(lowStock).length;
+  var h='';
+  if(bad)h+='<button class="al" data-action="goto-vac"><span class="dot bad"></span><span>'+plural(bad,'paciente con vacuna vencida','pacientes con vacuna vencida')+'</span></button>';
+  if(warn)h+='<button class="al" data-action="goto-vac"><span class="dot warn"></span><span>'+plural(warn,'paciente con vacuna por vencer','pacientes con vacuna por vencer')+'</span></button>';
+  if(low)h+='<button class="al" data-action="goto-stock"><span class="dot warn"></span><span>'+plural(low,'producto con poco stock','productos con poco stock')+'</span></button>';
+  if(isAdmin()){
+    var d=lastExportDays();
+    if(d===null||d>7)h+='<button class="al" data-action="goto-backups"><span class="dot warn"></span><span>'+(d===null?'Todavía no descargaste una copia de seguridad':'Hace '+plural(d,'día','días')+' que no descargás una copia de seguridad')+'</span></button>';
+  }
+  if(!h)h='<div class="al"><span class="dot ok"></span><span>Todo al día</span></div>';
+  $('#alerts').innerHTML='<h3>Para revisar</h3>'+h;
+}
+
+/* ============================================================
+   Pacientes
+   ============================================================ */
+var emo=function(p){return p.species==='Gato'?'🐱':'🐶';};
+
+function ageText(b){
+  if(!b)return 'Edad sin datos';
+  var a=b.split('-').map(Number),now=new Date();
+  var months=(now.getFullYear()-a[0])*12+(now.getMonth()+1-a[1]);
+  if(now.getDate()<a[2])months--;
+  if(months<0)months=0;
+  if(months<12)return plural(months,'mes','meses');
+  return plural(Math.floor(months/12),'año','años');
+}
+function filteredPatients(){
+  var q=ui.q.trim().toLowerCase();
+  return S.patients.filter(function(p){
+    if((ui.filter==='Perro'||ui.filter==='Gato')&&p.species!==ui.filter)return false;
+    if(ui.filter==='alert'&&!patientAlert(p))return false;
+    if(q){var hay=(p.name+' '+p.owner+' '+p.breed+' '+p.phone).toLowerCase();if(hay.indexOf(q)<0)return false;}
+    return true;
+  });
+}
+function listHTML(){
+  var L=filteredPatients();
+  if(!L.length)return '<li class="empty">'+(S.patients.length?'No hay pacientes con ese filtro.':'Todavía no cargaste ningún paciente. Empezá con “Nuevo paciente”.')+'</li>';
+  return L.map(function(p){
+    var al=patientAlert(p);
+    var chip=al==='bad'?'<span class="chip bad">Vacuna vencida</span>':al==='warn'?'<span class="chip warn">Vacuna por vencer</span>':'';
+    return '<li><button class="pitem" data-action="select" data-id="'+p.id+'" aria-current="'+(p.id===ui.sel)+'">'+
+      '<span class="avatar" aria-hidden="true">'+emo(p)+'</span>'+
+      '<span class="pi-main"><b>'+esc(p.name)+'</b><small>'+esc(p.breed||p.species)+' · '+esc(p.owner)+'</small></span>'+chip+'</button></li>';
+  }).join('');
+}
+function viewPacientes(){
+  var p=ui.sel&&ui.detail&&ui.detail.id===ui.sel?ui.detail:null;
+  var right;
+  if(ui.sel)right=p?detailHTML(p):'<button class="btn back" data-action="back">Volver a la lista</button><p class="empty">Cargando…</p>';
+  else right='<p class="empty">'+(S.patients.length?'Elegí un paciente de la lista para ver su historia clínica, o agregá uno nuevo.':'Cuando cargues el primer paciente vas a ver acá su historia clínica.')+'</p>';
+  return '<section class="pac '+(ui.sel?'show-detail':'')+'">'+
+    '<div class="pac-list">'+
+      '<div class="head"><h1>Pacientes</h1><button class="btn primary" data-action="new-patient">Nuevo paciente</button></div>'+
+      '<input id="q" type="search" placeholder="Buscar por nombre, dueño, raza o teléfono" value="'+esc(ui.q)+'" aria-label="Buscar paciente">'+
+      segHTML('filter',[['all','Todos'],['Perro','Perros'],['Gato','Gatos'],['alert','Vacunas a controlar']],ui.filter)+
+      '<ul class="plist" id="plist">'+listHTML()+'</ul>'+
+    '</div>'+
+    '<div class="pac-detail">'+right+'</div></section>';
+}
+function sec(title,action,label,inner){
+  return '<section class="sec"><div class="sec-head"><h3>'+title+'</h3><button class="btn" data-action="'+action+'">'+label+'</button></div>'+inner+'</section>';
+}
+function detailHTML(p){
+  var L=latestIds(p);
+  var vacHTML=p.vaccines.length?'<div class="rows">'+p.vaccines.map(function(v){
+    var s=vacStatus(v,!!L[v.id]);
+    return '<div class="row vac"><div><b>'+esc(v.name)+'</b></div><div><span class="k">Aplicada</span>'+fmtDate(v.date)+'</div><div><span class="k">Próxima dosis</span>'+fmtDate(v.next)+'</div><div class="chipcell"><span class="chip '+s.k+'">'+s.t+'</span></div><div><button class="link bad" data-action="del-vac" data-id="'+v.id+'">Quitar</button></div></div>';
+  }).join('')+'</div>':'<p class="empty">Todavía no hay vacunas registradas.</p>';
+
+  var dxHTML=p.diagnoses.length?'<div class="tl">'+p.diagnoses.map(function(d){
+    return '<div class="tl-item"><span class="d">'+fmtDate(d.date)+'</span><div><b>'+esc(d.title)+'</b>'+(d.notes?'<p>'+esc(d.notes)+'</p>':'')+'</div><button class="link bad" data-action="del-dx" data-id="'+d.id+'">Quitar</button></div>';
+  }).join('')+'</div>':'<p class="empty">Todavía no hay diagnósticos ni consultas registradas.</p>';
+
+  // v2: estudios complementarios (ecografía, radiografía, análisis, etc.)
+  var stHTML=(p.studies||[]).length?'<div class="tl">'+p.studies.map(function(st){
+    return '<div class="tl-item"><span class="d">'+fmtDate(st.date)+'</span><div><b>'+esc(st.title)+'</b>'+(st.notes?'<p>'+esc(st.notes)+'</p>':'')+'</div><button class="link bad" data-action="del-study" data-id="'+st.id+'">Quitar</button></div>';
+  }).join('')+'</div>':'<p class="empty">Todavía no hay estudios complementarios registrados.</p>';
+
+  var mdHTML=p.meds.length?'<div class="tl">'+p.meds.map(function(m){
+    var sub=[m.dose,m.duration].filter(Boolean).map(esc).join(' · ');
+    return '<div class="tl-item"><span class="d">'+fmtDate(m.date)+'</span><div><b>'+esc(m.name)+'</b>'+(sub?'<p>'+sub+'</p>':'')+'</div><button class="link bad" data-action="del-med" data-id="'+m.id+'">Quitar</button></div>';
+  }).join('')+'</div>':'<p class="empty">Todavía no hay medicación registrada.</p>';
+
+  var total=p.charges.reduce(function(s,c){return s+c.amount;},0);
+  var chHTML=p.charges.length?'<div class="tl">'+p.charges.map(function(c){
+    return '<div class="tl-item"><span class="d">'+fmtDate(c.date)+'</span><div><b>'+esc(c.concept)+'</b><p>'+money(c.amount)+(c.method?' · '+esc(c.method):'')+'</p></div>'+
+      (isAdmin()?'<button class="link bad" data-action="del-chg" data-id="'+c.id+'">Quitar</button>':'<span></span>')+'</div>';
+  }).join('')+'</div><div class="sum"><span>Total cobrado</span><span>'+money(total)+'</span></div>':'<p class="empty">Todavía no se cobró ningún servicio a este paciente.</p>';
+
+  return '<button class="btn back" data-action="back">Volver a la lista</button>'+
+    '<header class="phead"><div class="avatar big" aria-hidden="true">'+emo(p)+'</div>'+
+    '<div class="info"><h2>'+esc(p.name)+'</h2>'+
+    '<p class="meta">'+esc(p.species)+(p.breed?' '+esc(p.breed):'')+' · '+esc(p.sex)+(p.neutered?' (castrad'+(p.sex==='Hembra'?'a':'o')+')':'')+' · '+ageText(p.birth)+(p.weight!==''?' · '+esc(p.weight)+' kg':'')+'</p>'+
+    '<p class="meta">Dueño: '+esc(p.owner)+(p.phone?' · '+esc(p.phone):'')+(p.email?' · '+esc(p.email):'')+'</p></div>'+
+    '<div class="pactions"><button class="btn primary" data-action="charge">Cobrar servicio</button><button class="btn" data-action="edit-patient">Editar datos</button>'+
+    (isAdmin()?'<button class="btn danger-o" data-action="del-patient">Eliminar</button>':'')+'</div></header>'+
+    (p.notes?'<p class="note"><b>Notas:</b> '+esc(p.notes)+'</p>':'')+
+    sec('Vacunas','add-vac','Agregar vacuna',vacHTML)+
+    sec('Diagnósticos y consultas','add-dx','Agregar diagnóstico',dxHTML)+
+    sec('Estudios complementarios','add-study','Agregar estudio',stHTML)+
+    sec('Medicación','add-med','Agregar medicación',mdHTML)+
+    sec('Servicios cobrados','charge','Cobrar servicio',chHTML);
+}
+
+/* ============================================================
+   Farmacia y caja
+   ============================================================ */
+function viewFarmacia(){
+  var tabs=[['stock','Stock']];
+  if(isAdmin())tabs.push(['caja','Ingresos y egresos']);
+  tabs.push(['precios','Lista de precios']);
+  var summary='';
+  if(isAdmin()&&S.summary){
+    var m=S.summary.month,bal=m.in-m.out;
+    var mes=new Date().toLocaleDateString('es-AR',{month:'long'});
+    summary='<div class="summary"><div><small>Ingresos de '+mes+'</small><b>'+money(m.in)+'</b><small>Caja (efectivo) '+money(m.efe)+' · Transferencias '+money(m.tra)+' · Tarjetas '+money(m.tar)+'</small></div>'+
+      '<div><small>Egresos de '+mes+'</small><b>'+money(m.out)+'</b></div>'+
+      '<div><small>Balance</small><b class="'+(bal>=0?'pos':'neg')+'">'+money(bal)+'</b></div></div>';
+  }
+  var body=ui.tab==='stock'?stockHTML():ui.tab==='caja'?cajaHTML():preciosHTML();
+  return '<section class="farm"><div class="head"><h1>Farmacia y caja</h1></div>'+summary+
+    '<div class="tabs" role="tablist">'+tabs.map(function(x){
+      return '<button class="tab" role="tab" data-action="tab" data-v="'+x[0]+'" aria-selected="'+(ui.tab===x[0])+'">'+x[1]+'</button>';}).join('')+'</div>'+body+'</section>';
+}
+function stockHTML(){
+  var admin=isAdmin();
+  var L=S.products.filter(function(x){return ui.cat==='all'||x.category===ui.cat;});
+  var rows=L.map(function(x){
+    var chip=x.stock===0?'<span class="chip bad">Sin stock</span>':lowStock(x)?'<span class="chip warn">Poco stock</span>':'';
+    var stockCell=admin?'<span class="stk"><span>'+x.stock+'</span><button data-action="stock-add" data-id="'+x.id+'" aria-label="Agregar stock" title="Agregar stock (compra)">+</button></span>':'<b>'+x.stock+'</b>';
+    var acts='<button class="link" data-action="sell" data-id="'+x.id+'">Vender</button>'+
+      (admin?'<button class="link" data-action="stock-adjust" data-id="'+x.id+'">Ajustar</button><button class="link" data-action="stock-history" data-id="'+x.id+'">Historial</button><button class="link" data-action="edit-product" data-id="'+x.id+'">Editar</button><button class="link bad" data-action="del-product" data-id="'+x.id+'">Eliminar</button>':'');
+    return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small></td><td>'+stockCell+'</td><td class="num">'+x.min+'</td><td>'+chip+'</td><td class="num">'+money(x.price)+'</td><td class="act">'+acts+'</td></tr>';
+  }).join('');
+  var empty=S.products.length?'No hay productos en esta categoría.':'Todavía no cargaste productos. '+(admin?'Empezá con “Nuevo producto”.':'Pedile al administrador que los cargue.');
+  return '<div class="toolbar">'+segHTML('cat',[['all','Todos']].concat(PROD_CATS.map(function(c){return [c,c];})),ui.cat)+
+    (admin?'<button class="btn primary" data-action="new-product">Nuevo producto</button>':'')+'</div>'+
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Stock</th><th class="num">Mínimo</th><th>Estado</th><th class="num">Precio de venta</th><th></th></tr></thead><tbody>'+
+    (rows||'<tr><td colspan="6" class="empty">'+empty+'</td></tr>')+'</tbody></table></div>';
+}
+function cajaHTML(){
+  if(!ui.cash||!S.summary)return '<p class="empty">Cargando…</p>';
+  var sm=S.summary;
+  var rows=ui.cash.items.map(function(c){
+    return '<tr><td>'+fmtDate(c.date)+'</td><td><b>'+esc(c.concept)+'</b></td><td>'+esc(c.category)+'</td><td>'+esc(c.method)+'</td><td class="num '+(c.type==='in'?'in':'out')+'">'+(c.type==='in'?'+ ':'− ')+money(c.amount)+'</td><td class="act"><button class="link bad" data-action="del-cash" data-id="'+c.id+'">Eliminar</button></td></tr>';
+  }).join('');
+  var mes=new Date().toLocaleDateString('es-AR',{month:'long'});
+  var pm=PAY.map(function(m){return '<div class="bk"><span>'+m+'</span><b>'+money(sm.month.byMethod[m]||0)+'</b></div>';}).join('');
+  return '<div class="cashbox"><div class="panel"><h3>Efectivo que debería haber en caja</h3><div class="big">'+money(sm.drawer)+'</div>'+
+    '<p>Ingresos menos egresos en efectivo, desde el primer registro. Hoy entró '+money(sm.todayCash.in)+' y salió '+money(sm.todayCash.out)+' en efectivo. Si sacás plata de la caja, registrala como egreso en efectivo (categoría “Retiro de caja”).</p></div>'+
+    '<div class="panel"><h3>Ingresos de '+mes+' por forma de pago</h3><div class="bk-list">'+pm+'</div></div></div>'+
+    '<div class="toolbar"><div class="filters">'+
+      segHTML('cashp',[['today','Hoy'],['month','Este mes'],['prev','Mes anterior'],['all','Todo']],ui.cashp)+
+      segHTML('cashf',[['all','Ingresos y egresos'],['in','Ingresos'],['out','Egresos']],ui.cashf)+
+      segHTML('cashm',[['all','Todas las formas de pago'],['Efectivo','Efectivo'],['Transferencia','Transferencias'],['Tarjeta','Tarjetas']],ui.cashm)+
+    '</div><span><button class="btn" data-action="cash-out">Registrar egreso</button> <button class="btn primary" data-action="cash-in">Registrar ingreso</button></span></div>'+
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Concepto</th><th>Categoría</th><th>Forma de pago</th><th class="num">Monto</th><th></th></tr></thead><tbody>'+
+    (rows||'<tr><td colspan="6" class="empty">No hay movimientos en este período.</td></tr>')+'</tbody></table></div>'+
+    (ui.cash.limited?'<p class="empty">Se muestran los últimos 500 movimientos. Elegí un período más corto para ver el resto.</p>':'');
+}
+function preciosHTML(){
+  var admin=isAdmin();
+  var g=SERV_CATS.map(function(cat){
+    var L=S.services.filter(function(s){return s.category===cat;});
+    if(!L.length)return '';
+    return '<div class="grp"><h3>'+cat+'</h3><div class="tbl-wrap"><table class="tbl"><tbody>'+L.map(function(s){
+      // v2: si esta vacuna está vinculada a un producto del stock, se muestra cuál.
+      var linked=s.productId?S.products.find(function(x){return x.id===s.productId;}):null;
+      return '<tr><td><b>'+esc(s.name)+'</b>'+(linked?'<br><small>Descuenta: '+esc(linked.name)+'</small>':'')+'</td><td class="num">'+money(s.price)+'</td><td class="act">'+
+        (admin?'<button class="link" data-action="edit-service" data-id="'+s.id+'">Editar</button><button class="link bad" data-action="del-service" data-id="'+s.id+'">Eliminar</button>':'')+'</td></tr>';
+    }).join('')+'</tbody></table></div></div>';
+  }).join('');
+  return '<div class="toolbar"><small>Estos precios se usan al cobrar un servicio a un paciente.</small>'+(admin?'<button class="btn primary" data-action="new-service">Nuevo precio</button>':'')+'</div>'+
+    (g||'<p class="empty">Todavía no cargaste precios. '+(admin?'Empezá con “Nuevo precio” (consultas, vacunas, cirugías).':'Pedile al administrador que los cargue.')+'</p>');
+}
+
+/* ============================================================
+   Reportes
+   ============================================================ */
+function monthLabel(ym){return new Date(Number(ym.slice(0,4)),Number(ym.slice(5,7))-1,1).toLocaleDateString('es-AR',{month:'short'}).replace('.','');}
+function chartSVG(M){
+  var W=640,H=230,pl=8,pb=28,pt=12,ch=H-pb-pt;
+  var max=Math.max.apply(null,M.map(function(x){return Math.max(x.in,x.out);}).concat([1]));
+  var gw=(W-pl*2)/M.length,bw=Math.min(34,gw/2-6),g='';
+  M.forEach(function(x,i){
+    var x0=pl+i*gw+gw/2,hi=Math.round(x.in/max*ch),he=Math.round(x.out/max*ch);
+    g+='<rect x="'+(x0-bw-2)+'" y="'+(pt+ch-hi)+'" width="'+bw+'" height="'+hi+'" rx="3" fill="var(--brand)"/>';
+    g+='<rect x="'+(x0+2)+'" y="'+(pt+ch-he)+'" width="'+bw+'" height="'+he+'" rx="3" fill="var(--muted)" opacity=".55"/>';
+    g+='<text x="'+x0+'" y="'+(H-8)+'" text-anchor="middle" font-size="13" fill="var(--muted)">'+monthLabel(x.ym)+'</text>';
+  });
+  return '<svg class="chart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Ingresos y egresos de los últimos 6 meses"><line x1="0" x2="'+W+'" y1="'+(pt+ch)+'" y2="'+(pt+ch)+'" stroke="var(--line)"/>'+g+'</svg>';
+}
+function viewReportes(){
+  if(!ui.rmonthly||!ui.rservices||!ui.rproducts)return '<section class="farm"><div class="head"><h1>Reportes</h1></div><p class="empty">Cargando…</p></section>';
+  var days=Number(ui.rep);
+  var mrows=ui.rmonthly.slice().reverse().map(function(x){
+    var bal=x.in-x.out;
+    return '<tr><td>'+monthLabel(x.ym)+' '+x.ym.slice(0,4)+'</td><td class="num">'+money(x.efe)+'</td><td class="num">'+money(x.tra)+'</td><td class="num">'+money(x.tar)+'</td><td class="num"><b>'+money(x.in)+'</b></td><td class="num">'+money(x.out)+'</td><td class="num '+(bal>=0?'in':'out')+'">'+money(bal)+'</td></tr>';
+  }).join('');
+  var maxN=ui.rservices.length?ui.rservices[0].n:1;
+  var svRows=ui.rservices.map(function(x){
+    return '<tr><td><b>'+esc(x.name)+'</b></td><td><div class="bars"><div class="bar" style="width:'+Math.max(4,Math.round(x.n/maxN*140))+'px"></div><span>'+x.n+'</span></div></td><td class="num">'+money(x.total)+'</td></tr>';
+  }).join('');
+  var maxU=ui.rproducts.length&&ui.rproducts[0].units?ui.rproducts[0].units:1;
+  var prRows=ui.rproducts.map(function(x){
+    var st,left=x.units>0?Math.round(x.stock/(x.units/days)):null;
+    if(x.units===0)st='<span class="chip none">Sin movimiento</span>';
+    else if(x.stock===0)st='<span class="chip bad">Sin stock</span>';
+    else if(left<=15)st='<span class="chip warn">Alcanza para '+plural(left,'día','días')+'</span>';
+    else st='Alcanza para ~'+left+' días';
+    return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small></td><td><div class="bars"><div class="bar" style="width:'+Math.max(4,Math.round(x.units/maxU*140))+'px"></div><span>'+x.units+'</span></div></td><td class="num">'+x.stock+'</td><td>'+st+'</td></tr>';
+  }).join('');
+  return '<section class="farm"><div class="head"><h1>Reportes</h1></div>'+
+    '<div class="repsec"><h2>Ingresos por mes</h2><div class="legend"><span><i style="background:var(--brand)"></i>Ingresos</span><span><i style="background:var(--muted);opacity:.55"></i>Egresos</span></div>'+chartSVG(ui.rmonthly)+
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Mes</th><th class="num">Efectivo</th><th class="num">Transferencias</th><th class="num">Tarjetas</th><th class="num">Total ingresos</th><th class="num">Egresos</th><th class="num">Balance</th></tr></thead><tbody>'+mrows+'</tbody></table></div></div>'+
+    '<div class="repsec"><div class="toolbar"><h2 style="margin:0">Servicios y productos</h2>'+segHTML('rep',[['30','Últimos 30 días'],['90','Últimos 3 meses'],['365','Último año']],ui.rep)+'</div>'+
+    '<div class="grp"><h3>Servicios más vendidos</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Servicio</th><th>Veces cobrado</th><th class="num">Total cobrado</th></tr></thead><tbody>'+(svRows||'<tr><td colspan="3" class="empty">No hay servicios cobrados en este período.</td></tr>')+'</tbody></table></div></div>'+
+    '<div class="grp"><h3>Productos que más rotan</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Unidades vendidas o usadas</th><th class="num">Stock actual</th><th>Cuánto dura el stock</th></tr></thead><tbody>'+(prRows||'<tr><td colspan="4" class="empty">Todavía no cargaste productos.</td></tr>')+'</tbody></table></div></div></div></section>';
+}
+
+/* ============================================================
+   Copias de seguridad y usuarios
+   ============================================================ */
+function viewBackups(){
+  if(!ui.backups)return '<section class="farm"><div class="head"><h1>Copias de seguridad</h1></div><p class="empty">Cargando…</p></section>';
+  var d=lastExportDays();
+  var lastAuto=ui.backups.filter(function(b){return b.auto;})[0];
+  var rows=ui.backups.length?ui.backups.map(function(b){
+    var c=b.counts||{};
+    return '<div class="bk"><div><b>'+esc(b.label)+'</b><br><small>'+fmtTs(b.createdAt)+' · '+plural(c.patients||0,'paciente','pacientes')+' · '+plural(c.products||0,'producto','productos')+' · '+plural(c.cash_movements||0,'movimiento de caja','movimientos de caja')+'</small></div>'+
+      '<div><button class="link" data-action="restore" data-id="'+b.id+'">Restaurar</button><button class="link bad" data-action="del-backup" data-id="'+b.id+'">Eliminar</button></div></div>';
+  }).join(''):'<p class="empty">Todavía no hay copias guardadas.</p>';
+  return '<section class="farm"><div class="head"><h1>Copias de seguridad</h1></div>'+
+    '<p class="warnbox">La base de datos gratuita no incluye copias propias. Por eso el sistema guarda una copia por día dentro de la misma base (te sirve si borrás algo por error), pero <b>si se perdiera la base, esas copias también se pierden</b>. Descargá un archivo a tu computadora o a un pendrive, por lo menos una vez por semana.'+
+    (d===null?' Todavía no descargaste ninguno desde esta computadora.':' La última descarga desde esta computadora fue hace '+plural(d,'día','días')+'.')+'</p>'+
+    '<div class="cashbox" style="margin-top:1rem"><div class="panel"><h3>Copia automática diaria</h3><p>'+(lastAuto?'Última copia automática: '+fmtTs(lastAuto.createdAt)+'.':'Todavía no se hizo ninguna.')+' Se hace sola una vez por día y se conservan las últimas 14.</p></div>'+
+    '<div class="panel"><h3>Archivo y copias manuales</h3><div class="filerow"><button class="btn primary" data-action="backup-download">Descargar copia a mi computadora</button><button class="btn" data-action="backup-now">Crear copia ahora</button><button class="btn" data-action="pick-file">Cargar desde archivo</button><input id="bfile" type="file" accept=".json,application/json" hidden></div></div></div>'+
+    '<section class="sec"><h3>Copias guardadas en el sistema</h3><div class="bk-list">'+rows+'</div></section></section>';
+}
+function viewUsers(){
+  if(!ui.users)return '<section class="farm"><div class="head"><h1>Usuarios</h1></div><p class="empty">Cargando…</p></section>';
+  var rows=ui.users.map(function(u){
+    return '<tr><td><b>'+esc(u.name)+'</b><br><small>'+esc(u.email)+'</small></td><td>'+(u.role==='admin'?'Administrador':'Ayudante')+'</td><td>'+(u.active?'<span class="chip ok">Activo</span>':'<span class="chip none">Desactivado</span>')+'</td><td class="act"><button class="link" data-action="edit-user" data-id="'+u.id+'">Editar</button></td></tr>';
+  }).join('');
+  return '<section class="farm"><div class="head"><h1>Usuarios</h1><button class="btn primary" data-action="new-user">Nuevo usuario</button></div>'+
+    '<p class="empty">El administrador ve todo. El ayudante puede cargar y ver pacientes, cobrar servicios y vender productos, pero no ve la caja, los reportes ni las copias, y no puede borrar pacientes ni cambiar precios.</p>'+
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Usuario</th><th>Rol</th><th>Estado</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></section>';
+}
+
+/* ============================================================
+   v2 · Proveedores
+   ============================================================ */
+function viewProveedores(){
+  if(!ui.suppliers)return '<section class="farm"><div class="head"><h1>Proveedores</h1></div><p class="empty">Cargando…</p></section>';
+  var admin=isAdmin();
+  var rows=ui.suppliers.map(function(s){
+    return '<tr><td><b>'+esc(s.name)+'</b>'+(s.description?'<br><small>'+esc(s.description)+'</small>':'')+'</td><td>'+esc(s.phone)+'</td><td>'+esc(s.email)+'</td>'+
+      (admin?'<td class="act"><button class="link" data-action="edit-supplier" data-id="'+s.id+'">Editar</button><button class="link bad" data-action="del-supplier" data-id="'+s.id+'">Eliminar</button></td>':'')+'</tr>';
+  }).join('');
+  var empty=admin?'Todavía no cargaste proveedores. Empezá con “Agregar proveedor”.':'Todavía no hay proveedores cargados.';
+  return '<section class="farm"><div class="head"><h1>Proveedores</h1>'+(admin?'<button class="btn primary" data-action="new-supplier">Agregar proveedor</button>':'')+'</div>'+
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Proveedor</th><th>Teléfono</th><th>Email</th>'+(admin?'<th></th>':'')+'</tr></thead><tbody>'+
+    (rows||'<tr><td colspan="'+(admin?4:3)+'" class="empty">'+empty+'</td></tr>')+'</tbody></table></div></section>';
+}
+
+/* ============================================================
+   v2 · Calendario de turnos
+   ============================================================ */
+var WEEKDAYS=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+function calDayColumn(iso){
+  var list=(ui.appts||[]).filter(function(a){return a.date===iso;}).sort(function(a,b){return a.time.localeCompare(b.time);});
+  var d=parse(iso),isToday=iso===todayIso();
+  var blocks=list.map(function(a){
+    return '<button class="appt '+a.type+'" data-action="appt-view" data-id="'+a.id+'">'+a.time.slice(0,5)+' · '+esc(a.patientName)+'<small>'+esc(a.title)+'</small></button>';
+  }).join('');
+  return '<div class="cal-day'+(isToday?' today':'')+'"><div class="cal-day-head"><span>'+WEEKDAYS[(d.getDay()+6)%7]+'</span><b>'+d.getDate()+'</b>'+
+    '<button class="cal-add" data-action="cal-add-day" data-v="'+iso+'" aria-label="Agregar turno este día">+</button></div>'+blocks+'</div>';
+}
+function calMonthGrid(){
+  var r=calRange(),curMonth=ui.cal.anchor.slice(0,7),cells='',d=r[0];
+  while(d<=r[1]){
+    var list=(ui.appts||[]).filter(function(a){return a.date===d;}).sort(function(a,b){return a.time.localeCompare(b.time);});
+    var out=d.slice(0,7)!==curMonth,isToday=d===todayIso();
+    var shown=list.slice(0,3).map(function(a){
+      return '<button class="cal-chip '+a.type+'" data-action="appt-view" data-id="'+a.id+'">'+a.time.slice(0,5)+' '+esc(a.patientName)+'</button>';
+    }).join('');
+    var more=list.length>3?'<button class="cal-more" data-action="cal-day-focus" data-v="'+d+'">+'+(list.length-3)+' más</button>':'';
+    cells+='<div class="cal-mday'+(out?' out':'')+(isToday?' today':'')+'"><div class="mhead"><span>'+Number(d.slice(8,10))+'</span>'+
+      '<button class="cal-add" data-action="cal-add-day" data-v="'+d+'" aria-label="Agregar turno este día">+</button></div>'+shown+more+'</div>';
+    d=shiftDays(1,d);
+  }
+  return '<div class="cal-month">'+cells+'</div>';
+}
+function viewCalendario(){
+  if(!ui.appts)return '<section class="farm"><div class="head"><h1>Calendario</h1></div><p class="empty">Cargando…</p></section>';
+  var cols=ui.cal.view==='week'?7:ui.cal.view==='2weeks'?14:ui.cal.view==='3weeks'?21:null;
+  var body;
+  if(ui.cal.view==='month')body=calMonthGrid();
+  else{
+    var r=calRange(),cells='',d=r[0];
+    while(d<=r[1]){cells+=calDayColumn(d);d=shiftDays(1,d);}
+    body='<div class="cal-scroll"><div class="cal-week" style="--cal-cols:'+cols+'">'+cells+'</div></div>';
+  }
+  return '<section class="farm"><div class="head"><h1>Calendario</h1><button class="btn primary" data-action="new-appt">Agregar turno</button></div>'+
+    '<div class="cal-head"><div class="cal-nav"><button data-action="cal-prev" aria-label="Anterior">‹</button><button class="btn" data-action="cal-today">Hoy</button><button data-action="cal-next" aria-label="Siguiente">›</button></div>'+
+    '<div class="cal-title">'+calTitle()+'</div>'+segHTML('cal-view',APPT_VIEWS,ui.cal.view)+'</div>'+
+    '<div class="cal-legend"><span><i style="background:var(--appt-consulta)"></i>Consulta</span><span><i style="background:var(--appt-vacuna)"></i>Vacuna</span>'+
+    '<span><i style="background:var(--appt-cirugia)"></i>Cirugía</span><span><i style="background:var(--appt-otro)"></i>Otro</span></div>'+body+'</section>';
+}
+
+function render(){
+  if(!S.user)return;
+  var adminOnly={reportes:1,copias:1,usuarios:1};
+  if(adminOnly[ui.view]&&!isAdmin())ui.view='pacientes';
+  if(ui.view==='farmacia'&&!isAdmin()&&ui.tab==='caja')ui.tab='stock';
+  renderNav();renderAlerts();renderUserBox();
+  var v=ui.view;
+  main.innerHTML=v==='pacientes'?viewPacientes():v==='calendario'?viewCalendario():v==='farmacia'?viewFarmacia():v==='proveedores'?viewProveedores():
+    v==='reportes'?viewReportes():v==='copias'?viewBackups():viewUsers();
+}
+
+/* ============================================================
+   Formularios
+   ============================================================ */
+function patientForm(p){
+  var isNew=!p;p=p||{species:'Perro',sex:'Macho',neutered:false};
+  openForm({title:isNew?'Nuevo paciente':'Editar datos de '+esc(p.name),
+    body:'<div class="fields">'+
+      fld('Nombre','name',{value:p.name,req:true})+
+      fld('Especie','species',{opts:['Perro','Gato'],value:p.species})+
+      fld('Raza','breed',{value:p.breed,ph:'Ej.: Labrador'})+
+      fld('Sexo','sex',{opts:['Macho','Hembra'],value:p.sex})+
+      fld('Fecha de nacimiento (aprox.)','birth',{type:'date',value:p.birth})+
+      fld('Peso (kg)','weight',{type:'number',step:'0.1',min:0,value:p.weight})+
+      fld('Dueño','owner',{value:p.owner,req:true})+
+      fld('Teléfono','phone',{type:'tel',value:p.phone})+
+      fld('Email del dueño','email',{type:'email',value:p.email,full:true,ph:'nombre@correo.com'})+
+      fld('Castrado/a','neutered',{type:'checkbox',value:p.neutered,full:true})+
+      fld('Alergias o notas importantes','notes',{type:'textarea',value:p.notes,full:true,ph:'Ej.: alérgico a la penicilina'})+
+    '</div>',
+    submit:isNew?'Agregar paciente':'Guardar cambios',
+    onSubmit:async function(d){
+      var body={name:d.name,species:d.species,breed:d.breed,sex:d.sex,birth:d.birth,weight:d.weight,owner:d.owner,phone:d.phone,email:d.email,neutered:!!d.neutered,notes:d.notes};
+      if(isNew){var r=await api('/patients',{body:body});ui.sel=r.id;ui.detail=null;ui.view='pacientes';await reload();toast('Paciente agregado');}
+      else{await api('/patients/'+p.id,{method:'PUT',body:body});await reload();toast('Datos guardados');}
+    }});
+}
+function vaccineForm(p){
+  // v2: si se elige una vacuna de la lista de precios que tiene un producto del stock
+  // vinculado, se descuenta 1 unidad sola al guardar (puede dejar el stock en negativo,
+  // como aviso de que hay que reponer).
+  var vacServices=S.services.filter(function(s){return s.category==='Vacunas';});
+  var svcOpts=[['','No vincular (no descuenta stock)']].concat(vacServices.map(function(s){
+    return [s.id, s.name+(s.productId?' — descuenta stock':'')];
+  }));
+  var f=openForm({title:'Agregar vacuna a '+esc(p.name),
+    body:(vacServices.length?'<div class="fields">'+fld('Vacuna de la lista de precios (opcional)','service',{opts:svcOpts,full:true})+'</div>':'')+
+    '<datalist id="vaclist">'+VAC_SUGG.map(function(v){return '<option value="'+v+'">';}).join('')+'</datalist>'+
+    '<div class="fields">'+fld('Vacuna','name',{req:true,list:'vaclist',full:true,ph:'Ej.: Sextuple'})+
+    fld('Fecha de aplicación','date',{type:'date',value:todayIso(),req:true})+
+    fld('Próxima dosis (vencimiento)','next',{type:'date'})+'</div>'+
+    '<div class="quick"><span>Próxima dosis en:</span><button type="button" class="segb" data-q="d21">3 semanas</button><button type="button" class="segb" data-q="m6">6 meses</button><button type="button" class="segb" data-q="m12">1 año</button></div>',
+    submit:'Agregar vacuna',
+    onSubmit:async function(d){
+      var r=await api('/patients/'+p.id+'/vaccines',{body:{name:d.name,date:d.date,next:d.next,serviceId:d.service||null}});
+      await reload();
+      if(r.stockWarning)toast('Vacuna agregada. Advertencia: stock insuficiente del producto vinculado.',true);
+      else toast('Vacuna agregada');
+    }});
+  f.querySelectorAll('[data-q]').forEach(function(b){b.addEventListener('click',function(){
+    var base=f.querySelector('[name="date"]').value||todayIso(),q=b.dataset.q;
+    f.querySelector('[name="next"]').value=q==='d21'?shiftDays(21,base):q==='m6'?shiftMonths(6,base):shiftMonths(12,base);
+  });});
+  var svcSel=f.querySelector('[name="service"]');
+  if(svcSel)svcSel.addEventListener('change',function(){
+    var s=vacServices.find(function(x){return String(x.id)===svcSel.value;});
+    var nm=f.querySelector('[name="name"]');
+    if(s&&!nm.value)nm.value=s.name;
+  });
+}
+function dxForm(p){
+  openForm({title:'Agregar diagnóstico a '+esc(p.name),
+    body:'<div class="fields">'+fld('Fecha','date',{type:'date',value:todayIso(),req:true})+fld('Diagnóstico o motivo de consulta','title',{req:true,ph:'Ej.: Gastroenteritis'})+
+    fld('Detalle y tratamiento indicado','notes',{type:'textarea',full:true})+'</div>',
+    submit:'Agregar diagnóstico',
+    onSubmit:async function(d){await api('/patients/'+p.id+'/diagnoses',{body:{date:d.date,title:d.title,notes:d.notes}});await reload();toast('Diagnóstico agregado');}});
+}
+function medForm(p){
+  var opts=[['','Ninguno (no descontar)']].concat(S.products.filter(function(x){return x.category==='Medicamentos'||x.category==='Vacunas';}).map(function(x){return [x.id,x.name+' (stock: '+x.stock+')'];}));
+  var f=openForm({title:'Agregar medicación a '+esc(p.name),
+    body:'<div class="fields">'+fld('Producto del stock (descuenta 1 unidad)','product',{opts:opts,full:true})+
+    fld('Medicamento','name',{req:true,full:true})+fld('Dosis','dose',{ph:'Ej.: 250 mg cada 12 h'})+fld('Duración','duration',{ph:'Ej.: 7 días'})+
+    fld('Fecha','date',{type:'date',value:todayIso(),req:true})+'</div>',
+    submit:'Agregar medicación',
+    onSubmit:async function(d){
+      var r=await api('/patients/'+p.id+'/medications',{body:{date:d.date,name:d.name,dose:d.dose,duration:d.duration,productId:d.product||null}});
+      await reload();toast('Medicación agregada'+(r.deducted?' · se descontó 1 del stock':''));
+    }});
+  f.querySelector('[name="product"]').addEventListener('change',function(){
+    var pr=S.products.find(function(x){return String(x.id)===f.querySelector('[name="product"]').value;});
+    var nm=f.querySelector('[name="name"]');
+    if(pr&&!nm.value)nm.value=pr.name;
+  });
+}
+function chargeForm(p){
+  if(!S.services.length){toast(isAdmin()?'Primero cargá los precios en Farmacia y caja > Lista de precios':'Todavía no hay precios cargados. Pedile al administrador que los cargue.');return;}
+  var f=openForm({title:'Cobrar servicio a '+esc(p.name),
+    body:'<div class="fields">'+fld('Servicio','service',{opts:S.services.map(function(s){return [s.id,s.name+' — '+money(s.price)];}),full:true})+
+      fld('Monto a cobrar','amount',{type:'number',min:0,step:'1',value:S.services[0].price,req:true})+fld('Fecha','date',{type:'date',value:todayIso(),req:true})+
+      fld('Forma de pago','method',{opts:PAY,value:'Efectivo',full:true})+
+      fld('Registrar como ingreso en caja','cash',{type:'checkbox',value:true,full:true})+'</div>',
+    submit:'Cobrar',
+    onSubmit:async function(d){
+      await api('/patients/'+p.id+'/charges',{body:{serviceId:Number(d.service),amount:d.amount,method:d.method,date:d.date,cash:!!d.cash}});
+      await reload();toast('Servicio cobrado');
+    }});
+  f.querySelector('[name="service"]').addEventListener('change',function(){
+    var s=S.services.find(function(x){return String(x.id)===f.querySelector('[name="service"]').value;});
+    if(s)f.querySelector('[name="amount"]').value=s.price;
+  });
+}
+function productForm(x){
+  var isNew=!x;x=x||{category:'Medicamentos',min:5,price:0};
+  openForm({title:isNew?'Nuevo producto':'Editar producto',
+    body:'<div class="fields">'+fld('Nombre','name',{value:x.name,req:true,full:true})+fld('Categoría','category',{opts:PROD_CATS,value:x.category})+fld('Precio de venta','price',{type:'number',min:0,step:'1',value:x.price,req:true})+
+    fld('Stock mínimo (para avisar)','min',{type:'number',min:0,step:'1',value:x.min,req:true})+
+    (isNew?fld('Stock inicial','stock',{type:'number',min:0,step:'1',value:0,req:true})+
+      // v2: se carga precio unitario; el costo total (para la caja) se calcula solo.
+      fld('Precio unitario que pagaste (opcional)','unitPrice',{type:'number',min:0,step:'1',ph:'El total se calcula solo'})+
+      fld('Forma de pago','method',{opts:PAY,value:'Transferencia'}):'')+'</div>'+
+    (isNew?'':'<p>Para cambiar la cantidad usá el botón + (llegó mercadería) o “Ajustar” (corrección).</p>'),
+    submit:isNew?'Agregar producto':'Guardar cambios',
+    onSubmit:async function(d){
+      if(isNew){await api('/products',{body:{name:d.name,category:d.category,price:d.price,min:d.min,stock:d.stock,unitPrice:d.unitPrice,method:d.method}});await reload();toast('Producto agregado');}
+      else{await api('/products/'+x.id,{method:'PUT',body:{name:d.name,category:d.category,price:d.price,min:d.min}});await reload();toast('Producto guardado');}
+    }});
+}
+function buyForm(x){
+  openForm({title:'Agregar stock de '+esc(x.name),
+    body:'<div class="fields">'+fld('Cantidad que llegó','qty',{type:'number',min:1,step:'1',value:1,req:true})+fld('Precio unitario que pagaste','unitPrice',{type:'number',min:0,step:'1',req:true})+
+      fld('Forma de pago','method',{opts:PAY,value:'Transferencia'})+fld('Fecha','date',{type:'date',value:todayIso(),req:true})+
+      fld('Registrar como egreso en caja','cash',{type:'checkbox',value:true,full:true})+'</div><p>Stock actual: '+x.stock+'. El total (cantidad × precio unitario) se calcula solo.</p>',
+    submit:'Agregar stock',
+    onSubmit:async function(d){
+      var r=await api('/products/'+x.id+'/purchase',{body:{qty:d.qty,unitPrice:d.unitPrice,method:d.method,date:d.date,cash:!!d.cash}});
+      await reload();toast('Se agregaron '+d.qty+' al stock'+(d.cash&&r.cost>0?' · egreso de '+money(r.cost):''));
+    }});
+}
+// v2: ver el historial de compras/ventas/ajustes de un producto, con precio unitario y total.
+function movementsDialog(x){
+  dlg.innerHTML='<form class="dform"><h2>Historial de stock — '+esc(x.name)+'</h2><p class="empty">Cargando…</p>'+
+    '<div class="actions"><button type="button" class="btn ghost" data-close>Cerrar</button></div></form>';
+  dlg.querySelector('[data-close]').addEventListener('click',function(){dlg.close();});
+  dlg.showModal();
+  api('/products/'+x.id+'/movements').then(function(r){
+    if(!dlg.open)return;
+    var rows=r.items.map(function(m){
+      var total=m.qty>0&&m.unitPrice>0?money(m.unitPrice*m.qty):'—';
+      return '<tr><td>'+fmtDate(m.date)+'</td><td>'+esc(m.reason)+'</td><td class="num '+(m.qty<0?'out':'in')+'">'+(m.qty>0?'+':'')+m.qty+'</td>'+
+        '<td class="num">'+(m.unitPrice>0?money(m.unitPrice):'—')+'</td><td class="num">'+total+'</td></tr>';
+    }).join('');
+    var p=dlg.querySelector('p');
+    if(p)p.outerHTML='<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Motivo</th><th class="num">Cantidad</th><th class="num">Precio unitario</th><th class="num">Total</th></tr></thead><tbody>'+
+      (rows||'<tr><td colspan="5" class="empty">Todavía no hay movimientos.</td></tr>')+'</tbody></table></div>';
+  }).catch(function(e){if(dlg.open)toast(e.message);});
+}
+function adjustForm(x){
+  openForm({title:'Ajustar stock de '+esc(x.name),
+    body:'<div class="fields">'+fld('Cantidad a sumar o restar','delta',{type:'number',step:'1',req:true,ph:'Ej.: -2 para restar 2',full:true})+'</div>'+
+      '<p>Stock actual: '+x.stock+'. Sirve para corregir el stock (una pérdida, un error de carga). No modifica la caja.</p>',
+    submit:'Ajustar stock',
+    onSubmit:async function(d){await api('/products/'+x.id+'/adjust',{body:{delta:d.delta}});await reload();toast('Stock ajustado');}});
+}
+function sellForm(x){
+  if(x.stock<1){toast('No queda stock de este producto');return;}
+  openForm({title:'Vender '+esc(x.name),
+    body:'<div class="fields">'+fld('Cantidad','qty',{type:'number',min:1,max:x.stock,step:'1',value:1,req:true})+fld('Forma de pago','method',{opts:PAY,value:'Efectivo'})+'</div><p>Precio por unidad: '+money(x.price)+'. Quedan '+x.stock+' en stock.</p>',
+    submit:'Registrar venta',
+    onSubmit:async function(d){var r=await api('/products/'+x.id+'/sell',{body:{qty:d.qty,method:d.method}});await reload();toast('Venta registrada: '+money(r.total));}});
+}
+function serviceForm(s){
+  var isNew=!s;s=s||{category:'Consultas',price:0};
+  // v2: si el precio es de una vacuna, se puede vincular al producto del stock que se
+  // descuenta cada vez que se aplica esa vacuna a un paciente (Pacientes → Vacunas).
+  var vacProducts=S.products.filter(function(x){return x.category==='Vacunas';});
+  var prodOpts=[['','Ninguno']].concat(vacProducts.map(function(x){return [x.id,x.name+' (stock: '+x.stock+')'];}));
+  openForm({title:isNew?'Nuevo precio':'Editar precio',
+    body:'<div class="fields">'+fld('Servicio','name',{value:s.name,req:true,full:true,ph:'Ej.: Consulta general'})+fld('Categoría','category',{opts:SERV_CATS,value:s.category})+fld('Precio','price',{type:'number',min:0,step:'1',value:s.price,req:true})+
+    fld('Vacuna del stock que descuenta (opcional)','productId',{opts:prodOpts,value:s.productId,full:true})+'</div>'+
+    '<p>Si es una vacuna, vinculala a su producto del stock: cada vez que se aplique elegida de la lista de precios, se descuenta 1 unidad sola.</p>',
+    submit:isNew?'Agregar precio':'Guardar cambios',
+    onSubmit:async function(d){
+      var body={name:d.name,category:d.category,price:d.price,productId:d.productId||null};
+      if(isNew)await api('/services',{body:body});else await api('/services/'+s.id,{method:'PUT',body:body});
+      await reload();toast(isNew?'Precio agregado':'Precio guardado');
+    }});
+}
+// v2: estudios complementarios (mismo patrón que diagnósticos).
+function studyForm(p){
+  openForm({title:'Agregar estudio complementario a '+esc(p.name),
+    body:'<div class="fields">'+fld('Fecha','date',{type:'date',value:todayIso(),req:true})+fld('Tipo de estudio','title',{req:true,full:true,ph:'Ej.: Ecografía abdominal, radiografía, análisis de sangre'})+
+    fld('Notas técnicas','notes',{type:'textarea',full:true})+'</div>',
+    submit:'Agregar estudio',
+    onSubmit:async function(d){await api('/patients/'+p.id+'/studies',{body:{date:d.date,title:d.title,notes:d.notes}});await reload();toast('Estudio agregado');}});
+}
+
+// v2: proveedores.
+function supplierForm(s){
+  var isNew=!s;s=s||{};
+  openForm({title:isNew?'Nuevo proveedor':'Editar proveedor',
+    body:'<div class="fields">'+fld('Nombre','name',{value:s.name,req:true,full:true})+fld('Teléfono','phone',{type:'tel',value:s.phone})+fld('Email','email',{type:'email',value:s.email})+
+    fld('Qué se le compra (opcional)','description',{type:'textarea',value:s.description,full:true,ph:'Ej.: vacunas y antiparasitarios'})+'</div>',
+    submit:isNew?'Agregar proveedor':'Guardar cambios',
+    onSubmit:async function(d){
+      var body={name:d.name,phone:d.phone,email:d.email,description:d.description};
+      if(isNew)await api('/suppliers',{body:body});else await api('/suppliers/'+s.id,{method:'PUT',body:body});
+      ui.suppliers=null;await refreshView();toast(isNew?'Proveedor agregado':'Proveedor guardado');
+    }});
+}
+
+// v2: turnos del calendario.
+function appointmentForm(a,presetDate){
+  var isNew=!a;a=a||{type:'consulta',date:presetDate||ui.cal.anchor||todayIso(),time:'09:00'};
+  var patOpts=S.patients.slice().sort(function(x,y){return x.name.localeCompare(y.name,'es');}).map(function(p){return [p.id,p.name+' ('+p.owner+')'];});
+  if(!patOpts.length){toast('Primero cargá un paciente en la sección Pacientes');return;}
+  openForm({title:isNew?'Nuevo turno':'Editar turno',
+    body:'<div class="fields">'+
+      fld('Paciente','patientId',{opts:patOpts,value:a.patientId,full:true})+
+      fld('Tipo de turno','type',{opts:APPT_TYPES,value:a.type})+
+      fld('Fecha','date',{type:'date',value:a.date,req:true})+
+      fld('Hora','time',{type:'time',value:a.time,req:true})+
+      fld('Título','title',{value:a.title,req:true,full:true,ph:'Ej.: Consulta de control'})+
+      fld('Descripción (opcional)','description',{type:'textarea',value:a.description,full:true})+
+    '</div>',
+    submit:isNew?'Agregar turno':'Guardar cambios',
+    onSubmit:async function(d){
+      var body={patientId:Number(d.patientId),title:d.title,description:d.description,date:d.date,time:d.time,type:d.type};
+      if(isNew)await api('/appointments',{body:body});else await api('/appointments/'+a.id,{method:'PUT',body:body});
+      await reloadCal();toast(isNew?'Turno agregado':'Turno guardado');
+    }});
+}
+// Modal de detalle con dos acciones propias (Editar / Eliminar), por eso arma el diálogo a
+// mano en vez de usar openForm (pensado para un único botón de guardar).
+function appointmentDetails(a){
+  dlg.innerHTML='<form class="dform"><h2>'+esc(a.title)+'</h2>'+
+    '<p><b>Paciente:</b> '+esc(a.patientName)+'</p>'+
+    '<p><b>Tipo:</b> '+esc(APPT_LABEL[a.type]||a.type)+'</p>'+
+    '<p><b>Cuándo:</b> '+fmtDate(a.date)+' a las '+a.time.slice(0,5)+' hs</p>'+
+    (a.description?'<p><b>Descripción:</b> '+esc(a.description)+'</p>':'')+
+    '<div class="actions"><button type="button" class="btn danger-o" data-x="del">Eliminar turno</button><button type="button" class="btn ghost" data-close>Cerrar</button><button type="button" class="btn primary" data-x="edit">Editar</button></div></form>';
+  dlg.querySelector('[data-close]').addEventListener('click',function(){dlg.close();});
+  dlg.querySelector('[data-x="edit"]').addEventListener('click',function(){dlg.close();appointmentForm(a);});
+  dlg.querySelector('[data-x="del"]').addEventListener('click',function(){
+    confirmForm('Eliminar turno','Se elimina el turno de '+esc(a.patientName)+' ("'+esc(a.title)+'") del '+fmtDate(a.date)+'.','Eliminar',async function(){
+      await api('/appointments/'+a.id,{method:'DELETE'});await reloadCal();toast('Turno eliminado');
+    });
+  });
+  dlg.showModal();
+}
+
+function cashForm(type){
+  openForm({title:type==='in'?'Registrar ingreso':'Registrar egreso',
+    body:'<div class="fields">'+fld('Fecha','date',{type:'date',value:todayIso(),req:true})+fld('Monto','amount',{type:'number',min:0,step:'1',req:true})+
+    fld('Concepto','concept',{req:true,full:true,ph:type==='in'?'Ej.: Venta de alimento':'Ej.: Pago de luz'})+
+    fld('Categoría','category',{opts:CASH_CATS,value:type==='in'?'Servicios':'Compra de stock'})+fld('Forma de pago','method',{opts:PAY,value:'Efectivo'})+'</div>',
+    submit:'Registrar',
+    onSubmit:async function(d){await api('/cash',{body:{date:d.date,type:type,concept:d.concept,category:d.category,method:d.method,amount:d.amount}});await reload();toast('Movimiento registrado');}});
+}
+function userForm(u){
+  var isNew=!u;u=u||{role:'staff',active:true};
+  openForm({title:isNew?'Nuevo usuario':'Editar usuario',
+    body:'<div class="fields">'+fld('Nombre','name',{value:u.name,req:true,full:true})+
+    (isNew?fld('Email (es el usuario para ingresar)','email',{type:'email',req:true,full:true,auto:'off'}):'<p class="full" style="grid-column:1/-1">'+esc(u.email)+'</p>')+
+    fld('Rol','role',{opts:[['staff','Ayudante'],['admin','Administrador']],value:u.role})+
+    fld(isNew?'Contraseña (mínimo 8 caracteres)':'Nueva contraseña (dejala vacía para no cambiarla)','password',{type:'password',req:isNew,auto:'new-password'})+
+    (isNew?'':fld('Usuario activo','active',{type:'checkbox',value:u.active,full:true}))+'</div>',
+    submit:isNew?'Crear usuario':'Guardar cambios',
+    onSubmit:async function(d){
+      if(isNew){await api('/users',{body:{name:d.name,email:d.email,role:d.role,password:d.password}});await reload();toast('Usuario creado');}
+      else{await api('/users/'+u.id,{method:'PATCH',body:{name:d.name,role:d.role,active:!!d.active,password:d.password}});await reload();toast('Usuario guardado');}
+    }});
+}
+function passwordForm(){
+  openForm({title:'Cambiar contraseña',
+    body:'<div class="fields">'+fld('Contraseña actual','current',{type:'password',req:true,full:true,auto:'current-password'})+
+    fld('Contraseña nueva (mínimo 8 caracteres)','password',{type:'password',req:true,full:true,auto:'new-password'})+
+    fld('Repetí la contraseña nueva','repeat',{type:'password',req:true,full:true,auto:'new-password'})+'</div>',
+    submit:'Cambiar contraseña',
+    onSubmit:async function(d){
+      if(d.password!==d.repeat)throw new Error('Las contraseñas nuevas no coinciden');
+      await api('/me/password',{body:{current:d.current,password:d.password}});
+      toast('Contraseña cambiada');
+    }});
+}
+async function downloadExport(){
+  var res=await api('/backup/export',{raw:true});
+  var blob=await res.blob();
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='copia-veterinaria-'+todayIso()+'.json';
+  document.body.appendChild(a);a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1500);
+  try{localStorage.setItem('vet_last_export',String(Date.now()));}catch(e){}
+  render();
+  toast('Copia descargada. Guardala en un lugar seguro.');
+}
+function restoreFileForm(data,label){
+  confirmForm('Restaurar copia','Se reemplazan todos los datos actuales (pacientes, stock, caja y precios) por los de: '+esc(label)+'. Antes se guarda una copia de los datos de ahora. Los usuarios no cambian.','Restaurar',async function(){
+    await api('/restore',{body:{data:data}});ui.sel=null;ui.detail=null;await reload();toast('Copia restaurada');
+  },false);
+}
+
+/* ============================================================
+   Acciones (botones de la pantalla)
+   ============================================================ */
+async function refreshView(){
+  render();
+  try{await loadView();}catch(e){toast(e.message);}
+  render();
+}
+var actions={
+  nav:function(id,b){return go(b.dataset.v);},
+  filter:function(id,b){ui.filter=b.dataset.v;render();},
+  select:function(id){ui.sel=Number(id);ui.detail=null;window.scrollTo(0,0);return refreshView();},
+  back:function(){ui.sel=null;ui.detail=null;render();},
+  'goto-vac':function(){ui.view='pacientes';ui.filter='alert';ui.sel=null;ui.detail=null;render();},
+  'goto-stock':function(){ui.view='farmacia';ui.tab='stock';render();},
+  'goto-backups':function(){return go('copias');},
+  'new-patient':function(){patientForm();},
+  'edit-patient':function(){if(ui.detail)patientForm(ui.detail);},
+  'del-patient':function(){
+    var p=ui.detail;if(!p)return;
+    confirmForm('Eliminar a '+esc(p.name),'Se borra el paciente con toda su historia clínica: vacunas, diagnósticos, medicación y cobros. Los movimientos de caja ya registrados no se borran. Esta acción no se puede deshacer.','Eliminar paciente',async function(){
+      await api('/patients/'+p.id,{method:'DELETE'});ui.sel=null;ui.detail=null;await reload();toast('Paciente eliminado');
+    });
+  },
+  'add-vac':function(){if(ui.detail)vaccineForm(ui.detail);},
+  'add-dx':function(){if(ui.detail)dxForm(ui.detail);},
+  'add-study':function(){if(ui.detail)studyForm(ui.detail);}, // v2
+  'add-med':function(){if(ui.detail)medForm(ui.detail);},
+  charge:function(){if(ui.detail)chargeForm(ui.detail);},
+  'del-vac':async function(id){await api('/vaccines/'+id,{method:'DELETE'});await reload();toast('Vacuna quitada');},
+  'del-dx':async function(id){await api('/diagnoses/'+id,{method:'DELETE'});await reload();toast('Diagnóstico quitado');},
+  'del-study':async function(id){await api('/studies/'+id,{method:'DELETE'});await reload();toast('Estudio quitado');}, // v2
+  'del-med':async function(id){await api('/medications/'+id,{method:'DELETE'});await reload();toast('Medicación quitada');},
+  'del-chg':function(id){
+    confirmForm('Quitar cobro','Se quita el cobro de la historia del paciente y también el ingreso que se registró en la caja.','Quitar cobro',async function(){
+      await api('/charges/'+id,{method:'DELETE'});await reload();toast('Cobro quitado');
+    });
+  },
+  tab:function(id,b){ui.tab=b.dataset.v;return refreshView();},
+  cat:function(id,b){ui.cat=b.dataset.v;render();},
+  cashp:function(id,b){ui.cashp=b.dataset.v;return refreshView();},
+  cashf:function(id,b){ui.cashf=b.dataset.v;return refreshView();},
+  cashm:function(id,b){ui.cashm=b.dataset.v;return refreshView();},
+  rep:function(id,b){ui.rep=b.dataset.v;return refreshView();},
+  'new-product':function(){productForm();},
+  'edit-product':function(id){productForm(S.products.find(function(x){return String(x.id)===String(id);}));},
+  'del-product':function(id){
+    var x=S.products.find(function(y){return String(y.id)===String(id);});if(!x)return;
+    confirmForm('Eliminar '+esc(x.name),'El producto se quita del stock. Su historial de movimientos queda en los reportes.','Eliminar',async function(){
+      await api('/products/'+id,{method:'DELETE'});await reload();toast('Producto eliminado');
+    });
+  },
+  'stock-add':function(id){buyForm(S.products.find(function(x){return String(x.id)===String(id);}));},
+  'stock-adjust':function(id){adjustForm(S.products.find(function(x){return String(x.id)===String(id);}));},
+  'stock-history':function(id){movementsDialog(S.products.find(function(x){return String(x.id)===String(id);}));}, // v2
+  sell:function(id){sellForm(S.products.find(function(x){return String(x.id)===String(id);}));},
+  'new-service':function(){serviceForm();},
+  'edit-service':function(id){serviceForm(S.services.find(function(x){return String(x.id)===String(id);}));},
+  'del-service':function(id){
+    var s=S.services.find(function(y){return String(y.id)===String(id);});if(!s)return;
+    confirmForm('Eliminar '+esc(s.name),'Se quita de la lista de precios. Los cobros ya registrados no cambian.','Eliminar',async function(){
+      await api('/services/'+id,{method:'DELETE'});await reload();toast('Precio eliminado');
+    });
+  },
+  'cash-in':function(){cashForm('in');},
+  'cash-out':function(){cashForm('out');},
+  'del-cash':function(id){
+    confirmForm('Eliminar movimiento','Se borra este movimiento de la caja. Esta acción no se puede deshacer.','Eliminar',async function(){
+      await api('/cash/'+id,{method:'DELETE'});await reload();toast('Movimiento eliminado');
+    });
+  },
+  'backup-download':function(){return downloadExport();},
+  'backup-now':async function(){await api('/backups',{body:{}});await reload();toast('Copia creada');},
+  'pick-file':function(){var f=$('#bfile');if(f)f.click();},
+  restore:function(id){
+    var b=(ui.backups||[]).find(function(x){return String(x.id)===String(id);});if(!b)return;
+    confirmForm('Restaurar copia','Se reemplazan todos los datos actuales (pacientes, stock, caja y precios) por los de la copia “'+esc(b.label)+'” del '+fmtTs(b.createdAt)+'. Antes se guarda una copia de los datos de ahora. Los usuarios no cambian.','Restaurar',async function(){
+      await api('/backups/'+id+'/restore',{body:{}});ui.sel=null;ui.detail=null;await reload();toast('Copia restaurada');
+    },false);
+  },
+  'del-backup':function(id){
+    confirmForm('Eliminar copia','Se borra esta copia guardada en el sistema.','Eliminar',async function(){
+      await api('/backups/'+id,{method:'DELETE'});await reload();toast('Copia eliminada');
+    });
+  },
+  'new-user':function(){userForm();},
+  'edit-user':function(id){userForm((ui.users||[]).find(function(x){return String(x.id)===String(id);}));},
+  'change-pass':function(){passwordForm();},
+
+  // v2: proveedores
+  'new-supplier':function(){supplierForm();},
+  'edit-supplier':function(id){supplierForm((ui.suppliers||[]).find(function(x){return String(x.id)===String(id);}));},
+  'del-supplier':function(id){
+    var s=(ui.suppliers||[]).find(function(x){return String(x.id)===String(id);});if(!s)return;
+    confirmForm('Eliminar '+esc(s.name),'Se quita este proveedor de la lista.','Eliminar',async function(){
+      await api('/suppliers/'+id,{method:'DELETE'});ui.suppliers=null;await refreshView();toast('Proveedor eliminado');
+    });
+  },
+
+  // v2: calendario de turnos
+  'new-appt':function(){appointmentForm(null, ui.cal.anchor);},
+  'cal-add-day':function(id,b){appointmentForm(null,b.dataset.v);},
+  'appt-view':function(id){var a=(ui.appts||[]).find(function(x){return String(x.id)===String(id);});if(a)appointmentDetails(a);},
+  'cal-prev':function(){calShift(-1);return reloadCal();},
+  'cal-next':function(){calShift(1);return reloadCal();},
+  'cal-today':function(){ui.cal.anchor=todayIso();return reloadCal();},
+  // El día del "ancla" no se toca al cambiar de vista (semana ↔ mes): así, si estabas mirando
+  // el 15 y pasás a "Mes" y volvés a "Semana", seguís viendo la semana del 15, no la del día 1.
+  'cal-view':function(id,b){ui.cal.view=b.dataset.v;return reloadCal();},
+  'cal-day-focus':function(id,b){ui.cal.view='week';ui.cal.anchor=b.dataset.v;return reloadCal();},
+
+  logout:async function(){
+    try{await api('/logout',{body:{}});}catch(e){}
+    S.user=null;ui.sel=null;ui.detail=null;ui.cash=null;ui.rmonthly=null;ui.backups=null;ui.users=null;
+    ui.suppliers=null;ui.appts=null;ui.cal={view:'week',anchor:todayIso()}; // v2
+    main.innerHTML='';
+    showLogin();
+  }
+};
+
+/* ============================================================
+   Eventos y arranque
+   ============================================================ */
+document.addEventListener('click',function(e){
+  var b=e.target.closest('[data-action]');
+  if(!b||dlg.contains(b))return;
+  var fn=actions[b.dataset.action];
+  if(!fn)return;
+  Promise.resolve().then(function(){return fn(b.dataset.id,b);}).catch(function(err){toast(err.message||'Ocurrió un error');});
+});
+document.addEventListener('input',function(e){
+  if(e.target.id==='q'){ui.q=e.target.value;$('#plist').innerHTML=listHTML();}
+});
+document.addEventListener('change',function(e){
+  if(e.target.id==='bfile'&&e.target.files&&e.target.files[0]){
+    var f=e.target.files[0],r=new FileReader();
+    r.onload=function(){
+      try{
+        var j=JSON.parse(r.result),x=j.data||j;
+        if(!x||!Array.isArray(x.patients)||!Array.isArray(x.products)||!Array.isArray(x.cash_movements))throw new Error('formato');
+        restoreFileForm(x,'el archivo '+f.name);
+      }catch(err){toast('El archivo no es una copia válida');}
+    };
+    r.readAsText(f);
+    e.target.value='';
+  }
+});
+$('#loginform').addEventListener('submit',async function(e){
+  e.preventDefault();
+  var err=$('#lerror'),btn=$('#lbtn');
+  err.textContent='';btn.disabled=true;
+  try{
+    await api('/login',{body:{email:$('#lemail').value,password:$('#lpass').value}});
+    $('#lpass').value='';
+    await start();
+  }catch(ex){err.textContent=ex.message;}
+  btn.disabled=false;
+});
+$('#boot-retry').addEventListener('click',function(){
+  $('#boot-retry').hidden=true;
+  $('#boot-msg').textContent='Iniciando el sistema…';
+  $('#boot-sub').textContent='La primera vez del día puede tardar hasta un minuto.';
+  boot();
+});
+boot();
+})();

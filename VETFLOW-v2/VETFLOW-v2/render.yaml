@@ -1,0 +1,21 @@
+# Atajo opcional para Render ("Blueprint"). Si lo usás, Render carga esta configuración
+# y solo te pide los valores marcados como secretos.
+services:
+  - type: web
+    name: veterinaria
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false

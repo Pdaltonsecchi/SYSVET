@@ -1,0 +1,16 @@
+{
+  "name": "veterinaria-sistema",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sistema de gestión para veterinaria: pacientes, farmacia, caja, reportes y copias de seguridad",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "pg": "^8.11.3"
+  }
+}
