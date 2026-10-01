@@ -65,15 +65,14 @@ CREATE TABLE IF NOT EXISTS products (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   category TEXT NOT NULL,
-  -- v2: el stock ya NO tiene CHECK >= 0 a nivel de base: aplicar una vacuna vinculada a este
-  -- producto puede dejarlo en negativo a propósito (para avisar que hay que reponer). Vender y
-  -- ajustar stock siguen sin permitir negativo, pero por código (server/api.js), no por la base.
+  -- El stock nunca puede quedar negativo: lo valida el servidor (server/api.js) y, si no hay
+  -- productos con stock negativo, también lo garantiza la base (ver "products_stock_nonneg" abajo).
   stock INTEGER NOT NULL DEFAULT 0,
   min_stock INTEGER NOT NULL DEFAULT 0,
   price NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (price >= 0)
 );
--- v2: en instalaciones ya desplegadas (v1) esta restricción ya existe con su nombre por
--- defecto de Postgres; se quita para permitir el stock negativo de vacunas.
+-- (instalaciones v1: se quita la restricción con su nombre por defecto; la reemplaza
+-- "products_stock_nonneg", definida al final de este archivo.)
 ALTER TABLE products DROP CONSTRAINT IF EXISTS products_stock_check;
 
 -- v2: nota interna sobre las categorías de producto — 'Pulguicidas' y 'Antiparasitarios' se
@@ -168,3 +167,149 @@ CREATE TABLE IF NOT EXISTS backups (
   counts TEXT NOT NULL DEFAULT '{}',
   data TEXT NOT NULL
 );
+
+-- ============================================================
+-- Bloque A (integridad de datos). Todo es idempotente: se puede ejecutar muchas veces.
+-- ============================================================
+
+-- A2: vacunas y medicación guardan qué producto descontaron, cuántas unidades y con qué
+-- movimiento de stock, para poder devolver el stock al quitarlas.
+ALTER TABLE vaccines    ADD COLUMN IF NOT EXISTS product_id INTEGER REFERENCES products(id) ON DELETE SET NULL;
+ALTER TABLE vaccines    ADD COLUMN IF NOT EXISTS stock_qty INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE vaccines    ADD COLUMN IF NOT EXISTS stock_movement_id INTEGER REFERENCES stock_movements(id) ON DELETE SET NULL;
+ALTER TABLE medications ADD COLUMN IF NOT EXISTS product_id INTEGER REFERENCES products(id) ON DELETE SET NULL;
+ALTER TABLE medications ADD COLUMN IF NOT EXISTS stock_qty INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE medications ADD COLUMN IF NOT EXISTS stock_movement_id INTEGER REFERENCES stock_movements(id) ON DELETE SET NULL;
+
+-- A3: el movimiento de caja generado por una venta o una compra de stock apunta al
+-- movimiento de stock correspondiente. "voided" marca los movimientos de stock anulados
+-- (para que los reportes no cuenten ventas o usos que ya se revirtieron).
+ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS voided BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE cash_movements  ADD COLUMN IF NOT EXISTS stock_movement_id INTEGER REFERENCES stock_movements(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS cash_stock_mov_idx ON cash_movements(stock_movement_id);
+
+-- A1: defensa extra en la base. Solo se agrega si hoy ningún producto tiene stock negativo
+-- (si alguno lo tiene, corregilo con "Ajustar" en Stock y se agrega en el próximo arranque).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'products_stock_nonneg')
+     AND NOT EXISTS (SELECT 1 FROM products WHERE stock < 0) THEN
+    ALTER TABLE products ADD CONSTRAINT products_stock_nonneg CHECK (stock >= 0);
+  END IF;
+END $$;
+
+-- ============================================================
+-- Bloque B (historia clínica)
+-- ============================================================
+-- B4: especie opcional (Perro / Gato / Ambos) en productos y servicios de vacunas. NULL = se ofrece siempre.
+ALTER TABLE products ADD COLUMN IF NOT EXISTS species TEXT;
+ALTER TABLE services ADD COLUMN IF NOT EXISTS species TEXT;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'products_species_check') THEN
+    ALTER TABLE products ADD CONSTRAINT products_species_check CHECK (species IS NULL OR species IN ('Perro', 'Gato', 'Ambos'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'services_species_check') THEN
+    ALTER TABLE services ADD CONSTRAINT services_species_check CHECK (species IS NULL OR species IN ('Perro', 'Gato', 'Ambos'));
+  END IF;
+END $$;
+
+-- ============================================================
+-- Bloque C (farmacia, stock y caja)
+-- ============================================================
+-- C5: nota opcional en los movimientos de stock (motivo de un ajuste, etc.).
+ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS note TEXT NOT NULL DEFAULT '';
+-- C9/C10: movimiento de stock generado por un cobro (producto vendido o producto vinculado a un servicio).
+-- Sin FOREIGN KEY a propósito: así las copias de seguridad se restauran sin ciclos entre tablas.
+ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS charge_id INTEGER;
+CREATE INDEX IF NOT EXISTS stock_mov_charge_idx ON stock_movements(charge_id);
+-- C9: cada línea de un cobro es un servicio o un producto (los reportes de servicios solo cuentan servicios).
+ALTER TABLE charges ADD COLUMN IF NOT EXISTS line_type TEXT NOT NULL DEFAULT 'service';
+-- C10: productos del stock (con cantidad) que se descuentan al cobrar un servicio.
+CREATE TABLE IF NOT EXISTS service_items (
+  id SERIAL PRIMARY KEY,
+  service_id INTEGER NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  qty INTEGER NOT NULL DEFAULT 1 CHECK (qty >= 1)
+);
+CREATE INDEX IF NOT EXISTS service_items_service_idx ON service_items(service_id);
+
+-- ============================================================
+-- Bloque D (proveedores) y E (calendario)
+-- ============================================================
+-- D1: proveedor habitual de un producto, y proveedor de cada compra (movimiento de stock y de caja).
+-- Si se elimina el proveedor, las compras y productos quedan sin proveedor (no se borran).
+ALTER TABLE products        ADD COLUMN IF NOT EXISTS supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL;
+ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL;
+ALTER TABLE cash_movements  ADD COLUMN IF NOT EXISTS supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS products_supplier_idx ON products(supplier_id);
+CREATE INDEX IF NOT EXISTS stock_mov_supplier_idx ON stock_movements(supplier_id);
+CREATE INDEX IF NOT EXISTS cash_supplier_idx ON cash_movements(supplier_id);
+
+-- E3: duración del turno en minutos. Los turnos que ya existían toman la duración habitual de su tipo
+-- (esto se hace una sola vez, cuando se crea la columna).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'appointments' AND column_name = 'duration_min') THEN
+    ALTER TABLE appointments ADD COLUMN duration_min INTEGER NOT NULL DEFAULT 30;
+    UPDATE appointments SET duration_min = CASE appointment_type WHEN 'consulta' THEN 20 WHEN 'vacuna' THEN 10 WHEN 'cirugia' THEN 120 ELSE 30 END;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'appointments_duration_check') THEN
+    ALTER TABLE appointments ADD CONSTRAINT appointments_duration_check CHECK (duration_min BETWEEN 5 AND 720);
+  END IF;
+END $$;
+
+-- ============================================================
+-- Bloque F (pacientes y validaciones)
+-- ============================================================
+-- F1: teléfono normalizado (solo dígitos), para búsquedas y para un futuro link de WhatsApp.
+ALTER TABLE patients  ADD COLUMN IF NOT EXISTS phone_norm TEXT NOT NULL DEFAULT '';
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS phone_norm TEXT NOT NULL DEFAULT '';
+UPDATE patients  SET phone_norm = regexp_replace(phone, '\D', '', 'g') WHERE phone_norm = '' AND phone <> '';
+UPDATE suppliers SET phone_norm = regexp_replace(phone, '\D', '', 'g') WHERE phone_norm = '' AND phone <> '';
+
+-- ============================================================
+-- Bloque G (papelera, historial de peso)
+-- ============================================================
+-- G1: borrado lógico. Lo "borrado" queda con deleted_at y se ve en la Papelera 30 días.
+ALTER TABLE patients              ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE vaccines              ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE diagnoses             ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE complementary_studies ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE medications           ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE charges               ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+-- Un cobro borrado también borra su ingreso en caja; esta marca permite recrearlo al restaurar.
+ALTER TABLE charges               ADD COLUMN IF NOT EXISTS cash_was BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS patients_deleted_idx ON patients(deleted_at) WHERE deleted_at IS NOT NULL;
+
+-- G3: historial de peso. El peso actual del paciente (patients.weight) es el del último registro.
+CREATE TABLE IF NOT EXISTS weights (
+  id SERIAL PRIMARY KEY,
+  patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  fecha DATE NOT NULL,
+  kg NUMERIC(6,2) NOT NULL CHECK (kg > 0 AND kg <= 150)
+);
+CREATE INDEX IF NOT EXISTS weights_patient_idx ON weights(patient_id, fecha);
+-- Se migra el peso actual de cada paciente como primer registro (solo a quien todavía no tiene ninguno).
+INSERT INTO weights (patient_id, fecha, kg)
+  SELECT p.id, p.created_at::date, p.weight FROM patients p
+  WHERE p.weight IS NOT NULL AND p.weight > 0 AND p.weight <= 150
+    AND NOT EXISTS (SELECT 1 FROM weights w WHERE w.patient_id = p.id);
+
+-- ============================================================
+-- Bloque H (adjuntos de estudios, en Supabase Storage)
+-- ============================================================
+-- Metadatos de los archivos adjuntos a un estudio complementario. Los archivos están en el bucket privado
+-- "estudios". Si el estudio va a la Papelera (G1), sus adjuntos quedan guardados con él y vuelven al restaurarlo;
+-- al eliminar el estudio (o el paciente) definitivamente, se borran también los archivos del bucket.
+CREATE TABLE IF NOT EXISTS study_attachments (
+  id SERIAL PRIMARY KEY,
+  study_id INTEGER NOT NULL REFERENCES complementary_studies(id) ON DELETE CASCADE,
+  file_path TEXT NOT NULL UNIQUE,
+  file_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS study_attachments_study_idx ON study_attachments(study_id);

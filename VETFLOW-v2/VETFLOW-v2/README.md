@@ -125,3 +125,21 @@ Si algún día cambian los archivos, subilos al repositorio de GitHub y Render v
 - Probarlo en una computadora: copiar `.env.example` como `.env`, cargar las variables, usar `DATABASE_SSL=false` si la base es local y ejecutar `npm start`.
 - Las sesiones son cookies firmadas (HttpOnly, SameSite=Strict, Secure en producción). Las contraseñas usan scrypt.
 - Los movimientos de stock y de caja son registros individuales; el stock de cada producto se actualiza en la misma transacción.
+
+---
+
+## Adjuntos de estudios (opcional): activar Supabase Storage
+
+Los estudios complementarios admiten archivos (ecografías, radiografías, análisis, informes en PDF, DICOM). Se guardan en un **bucket privado** de Supabase y se ven con enlaces firmados que vencen a los 10 minutos.
+
+1. En Supabase: **Storage → New bucket**. Nombre `estudios`, **Public bucket: apagado** (privado). Opcional: *File size limit* 10 MB. (Si te olvidás, el sistema intenta crearlo solo al arrancar.)
+2. No hace falta crear políticas: solo el servidor accede, con la clave `service_role`.
+3. En Supabase: **Project Settings → API**: copiá la **Project URL** y la clave **service_role** (secreta: no la compartas ni la subas a GitHub).
+4. En Render → tu servicio → **Environment**, agregá:
+   - `SUPABASE_URL` = la Project URL (por ejemplo `https://abcd1234.supabase.co`)
+   - `SUPABASE_SERVICE_ROLE_KEY` = la clave service_role
+   - `SUPABASE_BUCKET` = `estudios` (opcional)
+   - `CLINIC_NAME` = nombre de la veterinaria para las impresiones (opcional)
+5. Guardá: Render reinicia solo. En **Copias de seguridad** vas a ver cuánto espacio usan los adjuntos (el plan gratuito de Supabase da 1 GB).
+
+Permisos: el ayudante puede ver y subir adjuntos; solo el administrador puede borrarlos. Las copias de seguridad (JSON) guardan los datos de los adjuntos pero **no los archivos**, que quedan en Supabase Storage.

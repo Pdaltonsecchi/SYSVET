@@ -12,10 +12,17 @@ const HANDLED = Symbol('handled');
 const METHODS = ['Efectivo', 'Transferencia', 'Tarjeta de débito', 'Tarjeta de crédito'];
 // v2: se suman 'Pulguicidas' y 'Antiparasitarios' a las categorías de producto.
 const PROD_CATS = ['Medicamentos', 'Vacunas', 'Higiene', 'Pulguicidas', 'Antiparasitarios', 'Otros'];
+const SPECIES_OPTS = ['Perro', 'Gato', 'Ambos'];
 const SERV_CATS = ['Consultas', 'Vacunas', 'Cirugías', 'Otros'];
-const CASH_CATS = ['Servicios', 'Venta de productos', 'Compra de stock', 'Alquiler y servicios', 'Sueldos', 'Retiro de caja', 'Otros'];
+// C7: ingresos y egresos tienen categorías separadas.
+const CASH_IN_CATS = ['Servicios', 'Venta de productos', 'Aporte de capital', 'Otros'];
+const CASH_OUT_CATS = ['Compra de stock', 'Alquiler y servicios', 'Sueldos', 'Retiro de caja', 'Impuestos', 'Otros'];
+// C5: motivos permitidos al ajustar stock a mano.
+const ADJUST_REASONS = ['Rotura', 'Vencimiento', 'Error de carga', 'Uso interno', 'Otro'];
 // v2: tipos de turno del calendario, con su color de bloque (coherente en cualquier paleta del sistema).
 const APPT_TYPES = ['consulta', 'vacuna', 'cirugia', 'otro'];
+// E3: duración habitual (en minutos) de cada tipo de turno.
+const APPT_DURATIONS = { consulta: 20, vacuna: 10, cirugia: 120, otro: 30 };
 const APPT_LABELS = { consulta: 'Consulta', vacuna: 'Vacuna', cirugia: 'Cirugía', otro: 'Otro' };
 
 const TZ = 'America/Argentina/Buenos_Aires';
@@ -35,6 +42,12 @@ function monthStart(iso, back) {
   const m = Number(iso.slice(5, 7)) - 1 - (back || 0);
   return new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
 }
+/** Último día del mes de `iso`. */
+function monthEnd(iso) {
+  const y = Number(iso.slice(0, 4));
+  const m = Number(iso.slice(5, 7));
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+}
 const round2 = (x) => Math.round(x * 100) / 100;
 
 /* ---------- validaciones ---------- */
@@ -51,6 +64,18 @@ function optStr(v, max) {
   if (s.length > (max || 500)) throw bad('Hay un texto demasiado largo');
   return s;
 }
+/**
+ * F1: teléfono opcional. Solo dígitos, espacios, +, - y (); si se completa, con al menos 6 dígitos.
+ * Devuelve { phone, norm } (norm = solo dígitos).
+ */
+function optPhone(v) {
+  const s = optStr(v, 50);
+  if (!s) return { phone: '', norm: '' };
+  if (!/^[0-9 +()-]+$/.test(s)) throw bad('El teléfono solo puede tener números, espacios, + , - y paréntesis');
+  const norm = s.replace(/\D/g, '');
+  if (norm.length < 6) throw bad('El teléfono tiene que tener al menos 6 dígitos');
+  return { phone: s, norm };
+}
 function reqDate(v, label) {
   if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw bad('Fecha inválida: ' + label);
   const d = new Date(v + 'T00:00:00Z');
@@ -59,6 +84,15 @@ function reqDate(v, label) {
 }
 function optDate(v, label) {
   return v == null || v === '' ? null : reqDate(v, label);
+}
+/** Fecha que no puede ser posterior a hoy (nacimiento, diagnóstico, aplicación, cobro, compra...). */
+function pastDate(v, label) {
+  reqDate(v, label);
+  if (v > todayAR()) throw bad(label + ' no puede ser posterior a hoy');
+  return v;
+}
+function optPastDate(v, label) {
+  return v == null || v === '' ? null : pastDate(v, label);
 }
 /** Hora de un turno: acepta "HH:MM" o "HH:MM:SS" y siempre devuelve "HH:MM:SS". */
 function reqTime(v, label) {
@@ -79,6 +113,17 @@ function reqInt(v, label, min, max) {
 }
 function money(v, label) {
   return round2(reqNum(v, label, 0, 1e9));
+}
+/** Especie opcional de un producto o servicio de vacunas: solo se guarda si la categoría es Vacunas. */
+function optSpecies(v, category) {
+  if (category !== 'Vacunas' || v == null || v === '') return null;
+  return oneOf(v, SPECIES_OPTS, 'Especie');
+}
+/** Monto que tiene que ser mayor a cero (movimientos manuales de caja, compras de stock). */
+function moneyPos(v, label) {
+  const n = round2(reqNum(v, label, 0, 1e9));
+  if (n < 0.01) throw bad(label + ' tiene que ser de al menos 0,01');
+  return n;
 }
 function oneOf(v, list, label) {
   if (!list.includes(v)) throw bad('Valor inválido: ' + label);
@@ -132,6 +177,25 @@ function readBody(req, limit) {
   });
 }
 
+/** Cuerpo sin interpretar (archivos subidos), con tope de tamaño. */
+function readRaw(req, limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    let tooBig = false;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > limit) {
+        tooBig = true;
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => (tooBig ? reject(new HttpError(413, 'Los archivos enviados son demasiado grandes')) : resolve(Buffer.concat(chunks))));
+    req.on('error', reject);
+  });
+}
+
 function parseCookies(header) {
   const out = {};
   if (!header) return out;
@@ -151,8 +215,8 @@ function clientIp(req) {
 
 module.exports = {
   HttpError, bad, HANDLED,
-  METHODS, PROD_CATS, SERV_CATS, CASH_CATS, APPT_TYPES, APPT_LABELS,
-  TZ, todayAR, addDays, monthStart, round2,
-  reqStr, optStr, reqDate, optDate, reqTime, reqNum, reqInt, money, oneOf, idParam, checkEmail,
-  sendJson, readBody, parseCookies, clientIp,
+  METHODS, SPECIES_OPTS, PROD_CATS, SERV_CATS, CASH_IN_CATS, CASH_OUT_CATS, ADJUST_REASONS, APPT_TYPES, APPT_DURATIONS, APPT_LABELS,
+  TZ, todayAR, addDays, monthStart, monthEnd, round2,
+  reqStr, optStr, optPhone, reqDate, optDate, pastDate, optPastDate, reqTime, reqNum, reqInt, money, moneyPos, oneOf, optSpecies, idParam, checkEmail,
+  sendJson, readBody, readRaw, parseCookies, clientIp,
 };

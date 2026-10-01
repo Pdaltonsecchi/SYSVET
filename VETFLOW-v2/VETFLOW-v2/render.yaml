@@ -19,3 +19,12 @@ services:
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
+      # Adjuntos de estudios (Supabase Storage). Opcionales: sin ellas el sistema funciona, pero sin adjuntos.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: estudios
+      - key: CLINIC_NAME
+        sync: false

@@ -38,6 +38,16 @@ const api = require('./api');
 const backup = require('./backup');
 const U = require('./util');
 
+// Las miniaturas y la vista previa de los adjuntos se cargan desde Supabase Storage (URLs firmadas):
+// ese origen (y solo ese) se agrega a img-src.
+const STORAGE_ORIGIN = (() => {
+  try {
+    return process.env.SUPABASE_URL ? new URL(process.env.SUPABASE_URL).origin : '';
+  } catch (e) {
+    return '';
+  }
+})();
+
 function securityHeaders(res) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -46,7 +56,7 @@ function securityHeaders(res) {
   res.setHeader(
     'Content-Security-Policy',
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-      "font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; " +
+      "font-src https://fonts.gstatic.com; img-src 'self' data:" + (STORAGE_ORIGIN ? ' ' + STORAGE_ORIGIN : '') + "; connect-src 'self'; " +
       "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
   );
   if (PROD) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
@@ -125,6 +135,7 @@ const server = http.createServer(async (req, res) => {
 async function main() {
   await db.migrate();
   await auth.ensureAdmin();
+  require('./storage').ensureBucket();
   backup.ensureDaily().catch((e) => console.error('Copia diaria:', e.message));
   setInterval(() => backup.ensureDaily().catch((e) => console.error('Copia diaria:', e.message)), 60 * 60 * 1000).unref();
   server.listen(PORT, '0.0.0.0', () => {
