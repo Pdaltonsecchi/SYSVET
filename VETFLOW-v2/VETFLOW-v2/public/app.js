@@ -13,7 +13,8 @@ var shiftDays=function(n,base){var d=base?parse(base):new Date();d.setDate(d.get
 var shiftMonths=function(n,base){var d=base?parse(base):new Date();d.setMonth(d.getMonth()+n);return isoOf(d);};
 var diffDays=function(s){var t=new Date();t.setHours(0,0,0,0);return Math.round((parse(s)-t)/86400000);};
 var fmtDate=function(s){if(!s)return '—';var a=String(s).slice(0,10).split('-');return a[2]+'/'+a[1]+'/'+a[0];};
-var money=function(n){return new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0}).format(n||0);};
+// Los centavos se muestran solo cuando existen ($1.250 / $1.250,50).
+var money=function(n){n=Number(n)||0;var d=Math.abs(n*100-Math.round(n*100/100)*100)<0.5?0:2;return new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',minimumFractionDigits:d,maximumFractionDigits:2}).format(n);};
 var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});};
 var plural=function(n,a,b){return n+' '+(n===1?a:b);};
 var fmtTs=function(v){var d=new Date(v);if(isNaN(d.getTime()))return '';return d.toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});};
@@ -22,7 +23,9 @@ var mondayOf=function(iso){var d=parse(iso);var wd=d.getDay();wd=wd===0?7:wd;ret
 
 var PROD_CATS=['Medicamentos','Vacunas','Higiene','Pulguicidas','Antiparasitarios','Otros'];
 var SERV_CATS=['Consultas','Vacunas','Cirugías','Otros'];
-var CASH_CATS=['Servicios','Venta de productos','Compra de stock','Alquiler y servicios','Sueldos','Retiro de caja','Otros'];
+var CASH_IN_CATS=['Servicios','Venta de productos','Aporte de capital','Otros'];
+var CASH_OUT_CATS=['Compra de stock','Alquiler y servicios','Sueldos','Retiro de caja','Impuestos','Otros'];
+var ADJUST_REASONS=['Rotura','Vencimiento','Error de carga','Uso interno','Otro'];
 var PAY=['Efectivo','Transferencia','Tarjeta de débito','Tarjeta de crédito'];
 var VAC_SUGG=['Sextuple','Quíntuple','Antirrábica','Tos de las perreras','Triple felina','Leucemia felina','Desparasitación'];
 // B4: especie habitual de cada vacuna sugerida (las que no figuran, o 'Ambos', se ofrecen siempre).
@@ -438,18 +441,24 @@ function viewFarmacia(){
 function stockHTML(){
   var admin=isAdmin();
   var L=S.products.filter(function(x){return ui.cat==='all'||x.category===ui.cat;});
+  var totCost=0,totSale=0;
   var rows=L.map(function(x){
     var chip=x.stock<=0?'<span class="chip bad">Sin stock</span>':lowStock(x)?'<span class="chip warn">Poco stock</span>':'';
     var stockCell=admin?'<span class="stk"><span>'+x.stock+'</span><button data-action="stock-add" data-id="'+x.id+'" aria-label="Agregar stock" title="Agregar stock (compra)">+</button></span>':'<b>'+x.stock+'</b>';
     var acts='<button class="link" data-action="sell" data-id="'+x.id+'">Vender</button>'+
       (admin?'<button class="link" data-action="stock-adjust" data-id="'+x.id+'">Ajustar</button><button class="link" data-action="stock-history" data-id="'+x.id+'">Historial</button><button class="link" data-action="edit-product" data-id="'+x.id+'">Editar</button><button class="link bad" data-action="del-product" data-id="'+x.id+'">Eliminar</button>':'');
-    return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small></td><td>'+stockCell+'</td><td class="num">'+x.min+'</td><td>'+chip+'</td><td class="num">'+money(x.price)+'</td><td class="act">'+acts+'</td></tr>';
+    var units=Math.max(x.stock,0),val=x.cost!=null?units*x.cost:null;
+    if(admin){totCost+=val||0;totSale+=units*x.price;}
+    var costCells=admin?'<td class="num">'+(x.cost!=null?money(x.cost):'—')+'</td><td class="num">'+(val!=null?money(val):'—')+'</td>':'';
+    return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small></td><td>'+stockCell+'</td><td class="num">'+x.min+'</td><td>'+chip+'</td><td class="num">'+money(x.price)+'</td>'+costCells+'<td class="act">'+acts+'</td></tr>';
   }).join('');
+  var cols=admin?8:6;
   var empty=S.products.length?'No hay productos en esta categoría.':'Todavía no cargaste productos. '+(admin?'Empezá con “Nuevo producto”.':'Pedile al administrador que los cargue.');
+  var foot=admin&&L.length?'<tfoot><tr><td colspan="'+cols+'"><b>Stock valorizado:</b> '+money(totCost)+' a costo / '+money(totSale)+' a precio de venta</td></tr></tfoot>':'';
   return '<div class="toolbar">'+segHTML('cat',[['all','Todos']].concat(PROD_CATS.map(function(c){return [c,c];})),ui.cat)+
     (admin?'<button class="btn primary" data-action="new-product">Nuevo producto</button>':'')+'</div>'+
-    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Stock</th><th class="num">Mínimo</th><th>Estado</th><th class="num">Precio de venta</th><th></th></tr></thead><tbody>'+
-    (rows||'<tr><td colspan="6" class="empty">'+empty+'</td></tr>')+'</tbody></table></div>';
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Stock</th><th class="num">Mínimo</th><th>Estado</th><th class="num">Precio de venta</th>'+(admin?'<th class="num">Costo unit.</th><th class="num">Valor en stock</th>':'')+'<th></th></tr></thead><tbody>'+
+    (rows||'<tr><td colspan="'+cols+'" class="empty">'+empty+'</td></tr>')+'</tbody>'+foot+'</table></div>';
 }
 function cajaHTML(){
   if(!ui.cash||!S.summary)return '<p class="empty">Cargando…</p>';
@@ -459,7 +468,7 @@ function cajaHTML(){
   }).join('');
   var mes=new Date().toLocaleDateString('es-AR',{month:'long'});
   var pm=PAY.map(function(m){return '<div class="bk"><span>'+m+'</span><b>'+money(sm.month.byMethod[m]||0)+'</b></div>';}).join('');
-  return '<div class="cashbox"><div class="panel"><h3>Efectivo que debería haber en caja</h3><div class="big">'+money(sm.drawer)+'</div>'+
+  return '<div class="cashbox"><div class="panel"><h3>Efectivo que debería haber en caja</h3><div class="big'+(sm.drawer<0?' neg':'')+'">'+(sm.drawer<0?'<span aria-hidden="true">⚠️ </span>':'')+money(sm.drawer)+'</div>'+(sm.drawer<0?'<p class="negnote">La caja da negativa: revisá si algún egreso en efectivo se pagó con otro fondo.</p>':'')+''+
     '<p>Ingresos menos egresos en efectivo, desde el primer registro. Hoy entró '+money(sm.todayCash.in)+' y salió '+money(sm.todayCash.out)+' en efectivo. Si sacás plata de la caja, registrala como egreso en efectivo (categoría “Retiro de caja”).</p></div>'+
     '<div class="panel"><h3>Ingresos de '+mes+' por forma de pago</h3><div class="bk-list">'+pm+'</div></div></div>'+
     '<div class="toolbar"><div class="filters">'+
@@ -479,7 +488,7 @@ function preciosHTML(){
     return '<div class="grp"><h3>'+cat+'</h3><div class="tbl-wrap"><table class="tbl"><tbody>'+L.map(function(s){
       // v2: si esta vacuna está vinculada a un producto del stock, se muestra cuál.
       var linked=s.productId?S.products.find(function(x){return x.id===s.productId;}):null;
-      return '<tr><td><b>'+esc(s.name)+'</b>'+(linked?'<br><small>Descuenta: '+esc(linked.name)+'</small>':'')+'</td><td class="num">'+money(s.price)+'</td><td class="act">'+
+      return '<tr><td><b>'+esc(s.name)+'</b>'+(linked?'<br><small>Descuenta: '+esc(linked.name)+'</small>':'')+((s.items||[]).length?'<br><small>Descuenta al cobrar: '+s.items.map(function(it){var pr=prodById(it.productId);return (pr?esc(pr.name):'producto eliminado')+' ×'+it.qty;}).join(', ')+'</small>':'')+'</td><td class="num">'+money(s.price)+'</td><td class="act">'+
         (admin?'<button class="link" data-action="edit-service" data-id="'+s.id+'">Editar</button><button class="link bad" data-action="del-service" data-id="'+s.id+'">Eliminar</button>':'')+'</td></tr>';
     }).join('')+'</tbody></table></div></div>';
   }).join('');
@@ -771,21 +780,82 @@ function medForm(p,m){
   syncQty();
 }
 function chargeForm(p){
-  if(!S.services.length){toast(isAdmin()?'Primero cargá los precios en Farmacia y caja > Lista de precios':'Todavía no hay precios cargados. Pedile al administrador que los cargue.');return;}
-  var f=openForm({title:'Cobrar servicio a '+esc(p.name),
-    body:'<div class="fields">'+fld('Servicio','service',{opts:S.services.map(function(s){return [s.id,s.name+' — '+money(s.price)];}),full:true})+
-      fld('Monto a cobrar','amount',{type:'number',min:0,step:'1',value:S.services[0].price,req:true})+fld('Fecha','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+
-      fld('Forma de pago','method',{opts:PAY,value:'Efectivo',full:true})+
-      fld('Registrar como ingreso en caja','cash',{type:'checkbox',value:true,full:true})+'</div>',
+  var svcs=S.services,prods=S.products.filter(function(x){return x.stock>0;});
+  if(!svcs.length&&!prods.length){toast(isAdmin()?'Primero cargá los precios en Farmacia y caja > Lista de precios':'Todavía no hay precios cargados. Pedile al administrador que los cargue.');return;}
+  var itemOpts='<option value="">Elegí un servicio o producto…</option>'+
+    (svcs.length?'<optgroup label="Servicios">'+svcs.map(function(x){return '<option value="s'+x.id+'">'+esc(x.name)+' — '+money(x.price)+'</option>';}).join('')+'</optgroup>':'')+
+    (prods.length?'<optgroup label="Productos">'+prods.map(function(x){return '<option value="p'+x.id+'">'+esc(x.name)+' — '+money(x.price)+' (stock: '+x.stock+')</option>';}).join('')+'</optgroup>':'');
+  var lineHTML='<div class="cline"><select class="l-item" aria-label="Servicio o producto">'+itemOpts+'</select>'+
+    '<input class="l-qty" type="number" min="1" step="1" value="1" aria-label="Cantidad" disabled><input class="l-price" type="number" min="0" step="0.01" aria-label="Precio unitario">'+
+    '<span class="l-sub num"></span><button type="button" class="link bad l-del" aria-label="Quitar línea">✕</button></div>';
+  var f=openForm({title:'Cobrar a '+esc(p.name),
+    body:'<div class="cline head"><span>Servicio o producto</span><span>Cant.</span><span>Precio</span><span>Subtotal</span><span></span></div><div id="lines"></div>'+
+      '<button type="button" class="btn" id="addline">+ Agregar línea</button>'+
+      '<div class="fields" style="margin-top:.8rem">'+fld('Descuento','dtype',{opts:[['none','Sin descuento'],['amount','Monto ($)'],['percent','Porcentaje (%)']],value:'none'})+fld('Valor del descuento','dvalue',{type:'number',min:0,step:'0.01'})+
+      fld('Fecha','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+fld('Forma de pago','method',{opts:PAY,value:'Efectivo'})+
+      fld('Registrar como ingreso en caja','cash',{type:'checkbox',value:true,full:true})+'</div>'+
+      '<div class="ctotals"><div><span>Subtotal</span><span id="c-sub"></span></div><div><span>Descuento</span><span id="c-disc"></span></div><div class="grand"><span>Total</span><span id="c-tot"></span></div></div>',
     submit:'Cobrar',
     onSubmit:async function(d){
-      await api('/patients/'+p.id+'/charges',{body:{serviceId:Number(d.service),amount:d.amount,method:d.method,date:d.date,cash:!!d.cash}});
-      await reload();toast('Servicio cobrado');
+      var items=[];
+      f.querySelectorAll('.cline:not(.head)').forEach(function(r){
+        var v=r.querySelector('.l-item').value;if(!v)return;
+        items.push({type:v[0]==='s'?'service':'product',id:Number(v.slice(1)),qty:r.querySelector('.l-qty').value,price:r.querySelector('.l-price').value});
+      });
+      if(!items.length)throw new Error('Agregá al menos un servicio o producto');
+      var r=await api('/patients/'+p.id+'/charges',{body:{items:items,date:d.date,method:d.method,cash:!!d.cash,discount:d.dtype!=='none'&&d.dvalue!==''?{type:d.dtype,value:d.dvalue}:null}});
+      await reload();toast('Cobrado: '+money(r.total)+(items.length>1?' · '+items.length+' líneas':''));
     }});
-  f.querySelector('[name="service"]').addEventListener('change',function(){
-    var s=S.services.find(function(x){return String(x.id)===f.querySelector('[name="service"]').value;});
-    if(s)f.querySelector('[name="amount"]').value=s.price;
+  var linesEl=f.querySelector('#lines');
+  var recalc=function(){
+    var sub=0;
+    linesEl.querySelectorAll('.cline').forEach(function(r){
+      var ok=!!r.querySelector('.l-item').value,q=Number(r.querySelector('.l-qty').value)||0,pr=Number(r.querySelector('.l-price').value)||0;
+      var t=ok?Math.round(q*pr*100)/100:0;sub+=t;r.querySelector('.l-sub').textContent=ok?money(t):'';
+    });
+    var dt=f.querySelector('[name="dtype"]').value,dv=Number(f.querySelector('[name="dvalue"]').value)||0;
+    var disc=dt==='percent'?Math.round(sub*Math.min(dv,100))/100:dt==='amount'?Math.min(dv,sub):0;
+    f.querySelector('#c-sub').textContent=money(sub);f.querySelector('#c-disc').textContent=disc?'− '+money(disc):'—';f.querySelector('#c-tot').textContent=money(Math.round((sub-disc)*100)/100);
+    f.querySelector('[name="dvalue"]').disabled=dt==='none';
+  };
+  var addLine=function(){linesEl.insertAdjacentHTML('beforeend',lineHTML);recalc();};
+  f.querySelector('#addline').addEventListener('click',addLine);
+  f.addEventListener('input',recalc);
+  f.addEventListener('change',function(e){
+    if(e.target.classList.contains('l-item')){
+      var r=e.target.closest('.cline'),v=e.target.value,q=r.querySelector('.l-qty');
+      if(v[0]==='s'){var sv=S.services.find(function(x){return x.id===Number(v.slice(1));});r.querySelector('.l-price').value=sv.price;q.value=1;q.disabled=true;q.removeAttribute('max');}
+      else if(v[0]==='p'){var pr=prodById(Number(v.slice(1)));r.querySelector('.l-price').value=pr.price;q.disabled=false;q.max=pr.stock;}
+      else{r.querySelector('.l-price').value='';q.disabled=true;}
+    }
+    recalc();
   });
+  f.addEventListener('click',function(e){
+    var b=e.target.closest('.l-del');if(!b)return;
+    b.closest('.cline').remove();if(!linesEl.children.length)addLine();recalc();
+  });
+  addLine();
+}
+// C6: si un egreso en efectivo deja la caja en negativo, se avisa antes de guardar.
+// Devuelve true para seguir o false si el usuario prefiere corregir (por ejemplo, cambiar la forma de pago).
+async function confirmNegativeCash(amount,method){
+  if(method!=='Efectivo'||!S.summary||!(amount>0))return true;
+  var after=Math.round((S.summary.drawer-amount)*100)/100;
+  if(after>=0)return true;
+  var ch=await choiceDialog('La caja queda en negativo','<p>Con este egreso la caja queda en <b>-'+money(-after)+'</b>. ¿Lo pagaste con otro fondo?</p>',
+    [{label:'Cambiar forma de pago',value:'change',cls:'ghost'},{label:'Continuar igual',value:'go',cls:'primary'}]);
+  return ch==='go';
+}
+// C3: muestra en vivo "Total: 20 × $800 = $16.000" debajo de los campos de cantidad y precio unitario.
+function bindTotalPreview(f,qtyName,priceName){
+  var box=document.createElement('p');box.className='preview';
+  f.querySelector('.fields').insertAdjacentElement('afterend',box);
+  var q=f.querySelector('[name="'+qtyName+'"]'),u=f.querySelector('[name="'+priceName+'"]');
+  var sync=function(){
+    var n=Number(q.value),pr=Number(u.value);
+    box.textContent=n>0&&pr>0?'Total: '+n+' × '+money(pr)+' = '+money(Math.round(n*pr*100)/100):'';
+  };
+  q.addEventListener('input',sync);u.addEventListener('input',sync);sync();
 }
 // El campo "Especie" solo tiene sentido en la categoría Vacunas: se oculta en las demás.
 function bindSpecies(f){
@@ -796,31 +866,38 @@ function bindSpecies(f){
 function productForm(x){
   var isNew=!x;x=x||{category:'Medicamentos',min:5,price:0};
   var pf=openForm({title:isNew?'Nuevo producto':'Editar producto',
-    body:'<div class="fields">'+fld('Nombre','name',{value:x.name,req:true,full:true})+fld('Categoría','category',{opts:PROD_CATS,value:x.category})+fld('Precio de venta','price',{type:'number',min:0,step:'1',value:x.price,req:true})+
+    body:'<div class="fields">'+fld('Nombre','name',{value:x.name,req:true,full:true})+fld('Categoría','category',{opts:PROD_CATS,value:x.category})+fld('Precio de venta','price',{type:'number',min:0,step:'0.01',value:x.price,req:true})+
     fld('Especie (solo vacunas, opcional)','species',{opts:SPECIES_OPTS,value:x.species,full:true})+
     fld('Stock mínimo (para avisar)','min',{type:'number',min:0,step:'1',value:x.min,req:true})+
     (isNew?fld('Stock inicial','stock',{type:'number',min:0,step:'1',value:0,req:true})+
       // v2: se carga precio unitario; el costo total (para la caja) se calcula solo.
-      fld('Precio unitario que pagaste (opcional)','unitPrice',{type:'number',min:0,step:'1',ph:'El total se calcula solo'})+
+      fld('Precio unitario que pagaste (opcional)','unitPrice',{type:'number',min:0.01,step:'0.01',ph:'Ej.: 800'})+
       fld('Forma de pago','method',{opts:PAY,value:'Transferencia'}):'')+'</div>'+
     (isNew?'':'<p>Para cambiar la cantidad usá el botón + (llegó mercadería) o “Ajustar” (corrección).</p>'),
     submit:isNew?'Agregar producto':'Guardar cambios',
     onSubmit:async function(d){
-      if(isNew){await api('/products',{body:{name:d.name,category:d.category,price:d.price,min:d.min,stock:d.stock,unitPrice:d.unitPrice,method:d.method,species:d.species}});await reload();toast('Producto agregado');}
+      if(isNew){
+        var cost=Number(d.stock)*Number(d.unitPrice);
+        if(cost>0&&!(await confirmNegativeCash(cost,d.method)))return false;
+        await api('/products',{body:{name:d.name,category:d.category,price:d.price,min:d.min,stock:d.stock,unitPrice:d.unitPrice,method:d.method,species:d.species}});await reload();toast('Producto agregado');}
       else{await api('/products/'+x.id,{method:'PUT',body:{name:d.name,category:d.category,price:d.price,min:d.min,species:d.species}});await reload();toast('Producto guardado');}
     }});
   bindSpecies(pf);
+  if(isNew)bindTotalPreview(pf,'stock','unitPrice');
 }
 function buyForm(x){
-  openForm({title:'Agregar stock de '+esc(x.name),
-    body:'<div class="fields">'+fld('Cantidad que llegó','qty',{type:'number',min:1,step:'1',value:1,req:true})+fld('Precio unitario que pagaste','unitPrice',{type:'number',min:0,step:'1',req:true})+
+  var f=openForm({title:'Agregar stock de '+esc(x.name),
+    body:'<div class="fields">'+fld('Cantidad que llegó','qty',{type:'number',min:1,step:'1',value:1,req:true})+fld('Precio unitario que pagaste','unitPrice',{type:'number',min:0.01,step:'0.01',req:true})+
       fld('Forma de pago','method',{opts:PAY,value:'Transferencia'})+fld('Fecha','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+
-      fld('Registrar como egreso en caja','cash',{type:'checkbox',value:true,full:true})+'</div><p>Stock actual: '+x.stock+'. El total (cantidad × precio unitario) se calcula solo.</p>',
+      fld('Registrar como egreso en caja','cash',{type:'checkbox',value:true,full:true})+'</div><p>Stock actual: '+x.stock+'.</p>',
     submit:'Agregar stock',
     onSubmit:async function(d){
+      var cost=Math.round(Number(d.qty)*Number(d.unitPrice)*100)/100;
+      if(d.cash&&!(await confirmNegativeCash(cost,d.method)))return false;
       var r=await api('/products/'+x.id+'/purchase',{body:{qty:d.qty,unitPrice:d.unitPrice,method:d.method,date:d.date,cash:!!d.cash}});
       await reload();toast('Se agregaron '+d.qty+' al stock'+(d.cash&&r.cost>0?' · egreso de '+money(r.cost):''));
     }});
+  bindTotalPreview(f,'qty','unitPrice');
 }
 // v2: ver el historial de compras/ventas/ajustes de un producto, con precio unitario y total.
 function movementsDialog(x){
@@ -831,8 +908,8 @@ function movementsDialog(x){
   api('/products/'+x.id+'/movements').then(function(r){
     if(!dlg.open)return;
     var rows=r.items.map(function(m){
-      var total=m.qty>0&&m.unitPrice>0?money(m.unitPrice*m.qty):'—';
-      return '<tr><td>'+fmtDate(m.date)+'</td><td>'+esc(m.reason)+'</td><td class="num '+(m.qty<0?'out':'in')+'">'+(m.qty>0?'+':'')+m.qty+'</td>'+
+      var total=m.unitPrice>0?money(m.unitPrice*Math.abs(m.qty)):'—';
+      return '<tr><td>'+fmtDate(m.date)+'</td><td>'+esc(m.reason)+(m.note?'<br><small>'+esc(m.note)+'</small>':'')+'</td><td class="num '+(m.qty<0?'out':'in')+'">'+(m.qty>0?'+':'')+m.qty+'</td>'+
         '<td class="num">'+(m.unitPrice>0?money(m.unitPrice):'—')+'</td><td class="num">'+total+'</td></tr>';
     }).join('');
     var p=dlg.querySelector('p');
@@ -842,36 +919,60 @@ function movementsDialog(x){
 }
 function adjustForm(x){
   openForm({title:'Ajustar stock de '+esc(x.name),
-    body:'<div class="fields">'+fld('Cantidad a sumar o restar','delta',{type:'number',step:'1',req:true,ph:'Ej.: -2 para restar 2',full:true})+'</div>'+
+    body:'<div class="fields">'+fld('Cantidad a sumar o restar','delta',{type:'number',step:'1',req:true,ph:'Ej.: -2 para restar 2',full:true})+
+      fld('Motivo','reason',{opts:ADJUST_REASONS,full:true})+fld('Nota (opcional)','note',{full:true,ph:'Ej.: se cayó el estante'})+'</div>'+
       '<p>Stock actual: '+x.stock+'. Sirve para corregir el stock (una pérdida, un error de carga). No modifica la caja.</p>',
     submit:'Ajustar stock',
-    onSubmit:async function(d){await api('/products/'+x.id+'/adjust',{body:{delta:d.delta}});await reload();toast('Stock ajustado');}});
+    onSubmit:async function(d){await api('/products/'+x.id+'/adjust',{body:{delta:d.delta,reason:d.reason,note:d.note}});await reload();toast('Stock ajustado');}});
 }
 function sellForm(x){
   if(x.stock<1){toast('No queda stock de este producto');return;}
+  var pats=[['','Sin paciente (venta de mostrador)']].concat(S.patients.slice().sort(function(a,b){return a.name.localeCompare(b.name,'es');}).map(function(p){return [p.id,p.name+' ('+p.owner+')'];}));
   openForm({title:'Vender '+esc(x.name),
-    body:'<div class="fields">'+fld('Cantidad','qty',{type:'number',min:1,max:x.stock,step:'1',value:1,req:true})+fld('Forma de pago','method',{opts:PAY,value:'Efectivo'})+'</div><p>Precio por unidad: '+money(x.price)+'. Quedan '+x.stock+' en stock.</p>',
+    body:'<div class="fields">'+fld('Cantidad','qty',{type:'number',min:1,max:x.stock,step:'1',value:1,req:true})+fld('Forma de pago','method',{opts:PAY,value:'Efectivo'})+
+      fld('Paciente (opcional)','patientId',{opts:pats,full:true})+'</div><p>Precio por unidad: '+money(x.price)+'. Quedan '+x.stock+' en stock.</p>',
     submit:'Registrar venta',
-    onSubmit:async function(d){var r=await api('/products/'+x.id+'/sell',{body:{qty:d.qty,method:d.method}});await reload();toast('Venta registrada: '+money(r.total));}});
+    onSubmit:async function(d){var r=await api('/products/'+x.id+'/sell',{body:{qty:d.qty,method:d.method,patientId:d.patientId?Number(d.patientId):null}});await reload();toast('Venta registrada: '+money(r.total));}});
 }
 function serviceForm(s){
-  var isNew=!s;s=s||{category:'Consultas',price:0};
-  // v2: si el precio es de una vacuna, se puede vincular al producto del stock que se
-  // descuenta cada vez que se aplica esa vacuna a un paciente (Pacientes → Vacunas).
+  var isNew=!s;s=s||{category:'Consultas',price:0,items:[]};
+  // Las vacunas vinculan UN producto (se descuenta al aplicarlas en la historia clínica). Los demás servicios
+  // pueden vincular varios productos con cantidad, que se descuentan al cobrar el servicio.
   var vacProducts=S.products.filter(function(x){return x.category==='Vacunas';});
   var prodOpts=[['','Ninguno']].concat(vacProducts.map(function(x){return [x.id,x.name+' (stock: '+x.stock+')'];}));
+  var allOpts=[['','Elegí un producto…']].concat(S.products.map(function(x){return [x.id,x.name+' (stock: '+x.stock+')'];}));
+  var itemRow=function(it){
+    return '<div class="sline"><select class="si-prod" aria-label="Producto">'+allOpts.map(function(o){return '<option value="'+o[0]+'"'+(String(o[0])===String(it.productId||'')?' selected':'')+'>'+esc(o[1])+'</option>';}).join('')+'</select>'+
+      '<input class="si-qty" type="number" min="1" step="1" value="'+(it.qty||1)+'" aria-label="Cantidad"><button type="button" class="link bad si-del" aria-label="Quitar producto">✕</button></div>';
+  };
   var sf=openForm({title:isNew?'Nuevo precio':'Editar precio',
-    body:'<div class="fields">'+fld('Servicio','name',{value:s.name,req:true,full:true,ph:'Ej.: Consulta general'})+fld('Categoría','category',{opts:SERV_CATS,value:s.category})+fld('Precio','price',{type:'number',min:0,step:'1',value:s.price,req:true})+
+    body:'<div class="fields">'+fld('Servicio','name',{value:s.name,req:true,full:true,ph:'Ej.: Consulta general'})+fld('Categoría','category',{opts:SERV_CATS,value:s.category})+fld('Precio','price',{type:'number',min:0,step:'0.01',value:s.price,req:true})+
     fld('Especie (solo vacunas, opcional)','species',{opts:SPECIES_OPTS,value:s.species,full:true})+
     fld('Vacuna del stock que descuenta (opcional)','productId',{opts:prodOpts,value:s.productId,full:true})+'</div>'+
-    '<p>Si es una vacuna, vinculala a su producto del stock: cada vez que se aplique elegida de la lista de precios, se descuenta 1 unidad sola.</p>',
+    '<div id="sitems"><p><b>Productos que descuenta al cobrarlo</b> (opcional). Ej.: Castración → 1 collar isabelino + 1 meloxicam.</p><div id="sitemrows">'+(s.items||[]).map(itemRow).join('')+'</div>'+
+    '<button type="button" class="btn" id="si-add">+ Agregar producto</button></div>'+
+    '<p id="vacnote">Si es una vacuna, vinculala a su producto del stock: cada vez que se aplique elegida de la lista de precios, se descuenta 1 unidad sola.</p>',
     submit:isNew?'Agregar precio':'Guardar cambios',
     onSubmit:async function(d){
-      var body={name:d.name,category:d.category,price:d.price,productId:d.productId||null,species:d.species};
+      var items=[];
+      if(d.category!=='Vacunas')sf.querySelectorAll('.sline').forEach(function(r){
+        var pid=r.querySelector('.si-prod').value;
+        if(pid)items.push({productId:Number(pid),qty:r.querySelector('.si-qty').value});
+      });
+      var body={name:d.name,category:d.category,price:d.price,productId:d.productId||null,species:d.species,items:items};
       if(isNew)await api('/services',{body:body});else await api('/services/'+s.id,{method:'PUT',body:body});
       await reload();toast(isNew?'Precio agregado':'Precio guardado');
     }});
   bindSpecies(sf);
+  var cat=sf.querySelector('[name="category"]');
+  var syncCat=function(){
+    var vac=cat.value==='Vacunas';
+    sf.querySelector('#sitems').hidden=vac;sf.querySelector('#vacnote').hidden=!vac;
+    sf.querySelector('[name="productId"]').closest('label').hidden=!vac;
+  };
+  cat.addEventListener('change',syncCat);syncCat();
+  sf.querySelector('#si-add').addEventListener('click',function(){sf.querySelector('#sitemrows').insertAdjacentHTML('beforeend',itemRow({}));});
+  sf.addEventListener('click',function(e){var b=e.target.closest('.si-del');if(b)b.closest('.sline').remove();});
 }
 // v2: estudios complementarios (mismo patrón que diagnósticos).
 function studyForm(p,st){
@@ -943,9 +1044,9 @@ function appointmentDetails(a){
 
 function cashForm(type){
   openForm({title:type==='in'?'Registrar ingreso':'Registrar egreso',
-    body:'<div class="fields">'+fld('Fecha','date',{type:'date',value:todayIso(),req:true})+fld('Monto','amount',{type:'number',min:0,step:'1',req:true})+
+    body:'<div class="fields">'+fld('Fecha','date',{type:'date',value:todayIso(),req:true})+fld('Monto','amount',{type:'number',min:0.01,step:'0.01',req:true})+
     fld('Concepto','concept',{req:true,full:true,ph:type==='in'?'Ej.: Venta de alimento':'Ej.: Pago de luz'})+
-    fld('Categoría','category',{opts:CASH_CATS,value:type==='in'?'Servicios':'Compra de stock'})+fld('Forma de pago','method',{opts:PAY,value:'Efectivo'})+'</div>',
+    fld('Categoría','category',{opts:type==='in'?CASH_IN_CATS:CASH_OUT_CATS,value:type==='in'?'Servicios':'Compra de stock'})+fld('Forma de pago','method',{opts:PAY,value:'Efectivo'})+'</div>',
     submit:'Registrar',
     onSubmit:async function(d){
       // Los movimientos manuales pueden tener fecha futura, pero hay que confirmarlo.
@@ -955,6 +1056,7 @@ function cashForm(type){
           [{label:'Corregir la fecha',value:'no',cls:'ghost'},{label:'Sí, es correcta',value:'ok',cls:'primary'}]);
         if(ch!=='ok')return false;
       }
+      if(type==='out'&&!future&&!(await confirmNegativeCash(Number(d.amount),d.method)))return false;
       await api('/cash',{body:{date:d.date,type:type,concept:d.concept,category:d.category,method:d.method,amount:d.amount,confirmFuture:future}});await reload();toast('Movimiento registrado');
     }});
 }

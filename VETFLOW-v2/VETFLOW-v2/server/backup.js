@@ -10,16 +10,17 @@ const TABLES = [
   ['patients', ['id', 'name', 'species', 'breed', 'sex', 'neutered', 'birth', 'weight', 'owner_name', 'phone', 'email', 'notes']],
   // "products" y "stock_movements" van antes que vacunas, medicación y caja, que apuntan a ellos.
   ['products', ['id', 'name', 'category', 'stock', 'min_stock', 'price', 'species']],
-  ['stock_movements', ['id', 'product_id', 'product_name', 'on_date', 'qty', 'reason', 'unit_price', 'voided']],
+  ['stock_movements', ['id', 'product_id', 'product_name', 'on_date', 'qty', 'reason', 'unit_price', 'voided', 'note', 'charge_id']],
   ['vaccines', ['id', 'patient_id', 'name', 'applied_on', 'next_on', 'product_id', 'stock_qty', 'stock_movement_id']],
   ['diagnoses', ['id', 'patient_id', 'on_date', 'title', 'notes']],
   ['medications', ['id', 'patient_id', 'on_date', 'name', 'dose', 'duration', 'product_id', 'stock_qty', 'stock_movement_id']],
   ['services', ['id', 'name', 'category', 'price', 'product_id', 'species']],
+  ['service_items', ['id', 'service_id', 'product_id', 'qty']],
   ['suppliers', ['id', 'name', 'phone', 'email', 'description']],
   ['complementary_studies', ['id', 'patient_id', 'on_date', 'title', 'notes']],
   ['appointments', ['id', 'patient_id', 'title', 'description', 'appointment_date', 'appointment_time', 'appointment_type']],
   ['cash_movements', ['id', 'on_date', 'kind', 'concept', 'category', 'method', 'amount', 'stock_movement_id']],
-  ['charges', ['id', 'patient_id', 'on_date', 'concept', 'amount', 'method', 'cash_id']],
+  ['charges', ['id', 'patient_id', 'on_date', 'concept', 'amount', 'method', 'cash_id', 'line_type']],
 ];
 
 const KEEP_AUTO = 14;
@@ -28,9 +29,10 @@ const KEEP_MANUAL = 20;
 // v2: tablas y columnas que no existían en la v1. Un backup exportado antes de la v2 no las
 // tiene: se tratan como "sin datos" (tabla vacía) o con este valor por defecto, en vez de
 // rechazar la restauración de una copia vieja.
-const NEW_TABLES = new Set(['suppliers', 'complementary_studies', 'appointments']);
+const NEW_TABLES = new Set(['suppliers', 'complementary_studies', 'appointments', 'service_items']);
 const COL_DEFAULTS = {
-  stock_movements: { unit_price: 0, voided: false },
+  stock_movements: { unit_price: 0, voided: false, note: '' },
+  charges: { line_type: 'service' },
   vaccines: { stock_qty: 0 },
   medications: { stock_qty: 0 },
 };

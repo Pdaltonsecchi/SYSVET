@@ -14,7 +14,11 @@ const METHODS = ['Efectivo', 'Transferencia', 'Tarjeta de débito', 'Tarjeta de 
 const PROD_CATS = ['Medicamentos', 'Vacunas', 'Higiene', 'Pulguicidas', 'Antiparasitarios', 'Otros'];
 const SPECIES_OPTS = ['Perro', 'Gato', 'Ambos'];
 const SERV_CATS = ['Consultas', 'Vacunas', 'Cirugías', 'Otros'];
-const CASH_CATS = ['Servicios', 'Venta de productos', 'Compra de stock', 'Alquiler y servicios', 'Sueldos', 'Retiro de caja', 'Otros'];
+// C7: ingresos y egresos tienen categorías separadas.
+const CASH_IN_CATS = ['Servicios', 'Venta de productos', 'Aporte de capital', 'Otros'];
+const CASH_OUT_CATS = ['Compra de stock', 'Alquiler y servicios', 'Sueldos', 'Retiro de caja', 'Impuestos', 'Otros'];
+// C5: motivos permitidos al ajustar stock a mano.
+const ADJUST_REASONS = ['Rotura', 'Vencimiento', 'Error de carga', 'Uso interno', 'Otro'];
 // v2: tipos de turno del calendario, con su color de bloque (coherente en cualquier paleta del sistema).
 const APPT_TYPES = ['consulta', 'vacuna', 'cirugia', 'otro'];
 const APPT_LABELS = { consulta: 'Consulta', vacuna: 'Vacuna', cirugia: 'Cirugía', otro: 'Otro' };
@@ -101,6 +105,12 @@ function optSpecies(v, category) {
   if (category !== 'Vacunas' || v == null || v === '') return null;
   return oneOf(v, SPECIES_OPTS, 'Especie');
 }
+/** Monto que tiene que ser mayor a cero (movimientos manuales de caja, compras de stock). */
+function moneyPos(v, label) {
+  const n = round2(reqNum(v, label, 0, 1e9));
+  if (n < 0.01) throw bad(label + ' tiene que ser de al menos 0,01');
+  return n;
+}
 function oneOf(v, list, label) {
   if (!list.includes(v)) throw bad('Valor inválido: ' + label);
   return v;
@@ -172,8 +182,8 @@ function clientIp(req) {
 
 module.exports = {
   HttpError, bad, HANDLED,
-  METHODS, SPECIES_OPTS, PROD_CATS, SERV_CATS, CASH_CATS, APPT_TYPES, APPT_LABELS,
+  METHODS, SPECIES_OPTS, PROD_CATS, SERV_CATS, CASH_IN_CATS, CASH_OUT_CATS, ADJUST_REASONS, APPT_TYPES, APPT_LABELS,
   TZ, todayAR, addDays, monthStart, monthEnd, round2,
-  reqStr, optStr, reqDate, optDate, pastDate, optPastDate, reqTime, reqNum, reqInt, money, oneOf, optSpecies, idParam, checkEmail,
+  reqStr, optStr, reqDate, optDate, pastDate, optPastDate, reqTime, reqNum, reqInt, money, moneyPos, oneOf, optSpecies, idParam, checkEmail,
   sendJson, readBody, parseCookies, clientIp,
 };

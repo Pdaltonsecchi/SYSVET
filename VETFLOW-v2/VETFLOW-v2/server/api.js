@@ -106,9 +106,9 @@ const mapPatient = (r) => ({
   notes: r.notes,
 });
 const mapVaccine = (r) => ({ id: r.id, name: r.name, date: r.applied_on, next: r.next_on || '', productId: r.product_id || null, stockQty: r.stock_qty || 0 });
-const mapProduct = (r) => ({ id: r.id, name: r.name, category: r.category, stock: r.stock, min: r.min_stock, price: Number(r.price), species: r.species || '' });
+const mapProduct = (r) => ({ id: r.id, name: r.name, category: r.category, stock: r.stock, min: r.min_stock, price: Number(r.price), species: r.species || '', cost: r.cost == null ? null : Number(r.cost) });
 // v2: productId (nullable) es el producto del stock que se descuenta al aplicar esta vacuna.
-const mapService = (r) => ({ id: r.id, name: r.name, category: r.category, price: Number(r.price), productId: r.product_id || null, species: r.species || '' });
+const mapService = (r) => ({ id: r.id, name: r.name, category: r.category, price: Number(r.price), productId: r.product_id || null, species: r.species || '', items: [] });
 const mapSupplier = (r) => ({ id: r.id, name: r.name, phone: r.phone, email: r.email, description: r.description });
 const mapStudy = (r) => ({ id: r.id, date: r.on_date, title: r.title, notes: r.notes });
 const mapAppointment = (r) => ({
@@ -144,13 +144,24 @@ async function listPatients() {
   });
   return p.rows.map((r) => Object.assign(mapPatient(r), { vaccines: by[r.id] || [] }));
 }
-async function listProducts() {
-  const r = await db.query('SELECT id, name, category, stock, min_stock, price, species FROM products ORDER BY lower(name), id');
+// C1: el costo unitario (último precio pagado en una compra) es información financiera: solo para el administrador.
+async function listProducts(admin) {
+  const cost = admin
+    ? "(SELECT m.unit_price FROM stock_movements m WHERE m.product_id = p.id AND m.qty > 0 AND m.unit_price > 0 AND NOT m.voided AND m.reason IN ('Compra', 'Stock inicial') ORDER BY m.on_date DESC, m.id DESC LIMIT 1)"
+    : 'NULL';
+  const r = await db.query('SELECT p.id, p.name, p.category, p.stock, p.min_stock, p.price, p.species, ' + cost + ' AS cost FROM products p ORDER BY lower(p.name), p.id');
   return r.rows.map(mapProduct);
 }
 async function listServices() {
-  const r = await db.query('SELECT id, name, category, price, product_id, species FROM services ORDER BY lower(name), id');
-  return r.rows.map(mapService);
+  const [r, it] = await Promise.all([
+    db.query('SELECT id, name, category, price, product_id, species FROM services ORDER BY lower(name), id'),
+    db.query('SELECT service_id, product_id, qty FROM service_items ORDER BY id'),
+  ]);
+  const by = {};
+  it.rows.forEach((x) => {
+    (by[x.service_id] = by[x.service_id] || []).push({ productId: x.product_id, qty: x.qty });
+  });
+  return r.rows.map((x) => Object.assign(mapService(x), { items: by[x.id] || [] }));
 }
 
 async function cashSummary() {
@@ -211,7 +222,8 @@ async function mustExist(table, id, message) {
  * "No hay stock de {producto} (quedan {n})" y no toca nada. Registra el movimiento de stock.
  * Devuelve { movementId, name, stock, price }.
  */
-async function deductStock(c, productId, qty, reason, date, userId) {
+async function deductStock(c, productId, qty, reason, date, userId, o) {
+  o = o || {};
   const r = await c.query('UPDATE products SET stock = stock - $1 WHERE id = $2 AND stock >= $1 RETURNING name, stock, price', [qty, productId]);
   if (!r.rows[0]) {
     const e = await c.query('SELECT name, stock FROM products WHERE id = $1', [productId]);
@@ -219,8 +231,8 @@ async function deductStock(c, productId, qty, reason, date, userId) {
     throw new HttpError(409, 'No hay stock de ' + e.rows[0].name + ' (quedan ' + Math.max(0, e.rows[0].stock) + ')');
   }
   const m = await c.query(
-    'INSERT INTO stock_movements (product_id, product_name, on_date, qty, reason, created_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
-    [productId, r.rows[0].name, date, -qty, reason, userId]
+    'INSERT INTO stock_movements (product_id, product_name, on_date, qty, reason, created_by, unit_price, charge_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
+    [productId, r.rows[0].name, date, -qty, reason, userId, o.unitPrice || 0, o.chargeId || null]
   );
   return { movementId: m.rows[0].id, name: r.rows[0].name, stock: r.rows[0].stock, price: Number(r.rows[0].price) };
 }
@@ -255,6 +267,44 @@ async function reapplyStock(c, old, newProductId, newQty, o) {
   if (!newProductId) return { productId: null, qty: 0, movementId: null };
   const d = await deductStock(c, newProductId, newQty, o.reasonOut, o.date, o.userId);
   return { productId: newProductId, qty: newQty, movementId: d.movementId };
+}
+
+/**
+ * Revierte movimientos de stock de una venta o compra (los anula, devuelve o resta las unidades y deja
+ * "Anulación de venta/compra"). Si restar dejaría el stock en negativo, rechaza todo. Devuelve el neto.
+ */
+async function revertStockMovements(c, ids, userId) {
+  let net = 0;
+  for (const mid of ids) {
+    const sm = (await c.query('SELECT id, product_id, qty, voided FROM stock_movements WHERE id = $1 FOR UPDATE', [mid])).rows[0];
+    if (!sm || sm.voided || !sm.product_id) continue;
+    const delta = -sm.qty; // venta (qty < 0): vuelven al stock; compra (qty > 0): se restan
+    const u = await c.query('UPDATE products SET stock = stock + $1 WHERE id = $2 AND stock + $1 >= 0 RETURNING name', [delta, sm.product_id]);
+    if (!u.rows[0]) {
+      const e = (await c.query('SELECT name, stock FROM products WHERE id = $1', [sm.product_id])).rows[0];
+      if (!e) continue; // el producto ya no existe
+      throw new HttpError(409, 'No se puede eliminar: al restar ' + -delta + ' unidades de ' + e.name + ' el stock quedaría en negativo (hay ' + e.stock + ')');
+    }
+    await c.query('INSERT INTO stock_movements (product_id, product_name, on_date, qty, reason, created_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      sm.product_id, u.rows[0].name, U.todayAR(), delta, delta > 0 ? 'Anulación de venta' : 'Anulación de compra', userId,
+    ]);
+    await c.query('UPDATE stock_movements SET voided = TRUE WHERE id = $1', [sm.id]);
+    net += delta;
+  }
+  return net;
+}
+// Elimina un movimiento de caja y revierte, en la misma transacción, el stock que generó
+// (el vinculado directo y el de los cobros que lo usan).
+async function deleteCash(c, id, userId) {
+  const r = await c.query('SELECT stock_movement_id FROM cash_movements WHERE id = $1 FOR UPDATE', [id]);
+  if (!r.rows[0]) throw new HttpError(404, 'No se encontró el movimiento');
+  const ids = [];
+  if (r.rows[0].stock_movement_id) ids.push(r.rows[0].stock_movement_id);
+  const viaCharges = await c.query('SELECT id FROM stock_movements WHERE charge_id IN (SELECT id FROM charges WHERE cash_id = $1) ORDER BY id', [id]);
+  viaCharges.rows.forEach((x) => ids.indexOf(x.id) < 0 && ids.push(x.id));
+  const stockDelta = await revertStockMovements(c, ids, userId);
+  await c.query('DELETE FROM cash_movements WHERE id = $1', [id]);
+  return stockDelta;
 }
 
 /* ============================================================
@@ -353,7 +403,7 @@ add('PATCH', '/api/users/:id', { admin: true }, async (ctx) => {
    Arranque de la pantalla
    ============================================================ */
 add('GET', '/api/bootstrap', async (ctx) => {
-  const [patients, products, services] = await Promise.all([listPatients(), listProducts(), listServices()]);
+  const [patients, products, services] = await Promise.all([listPatients(), listProducts(ctx.user.role === 'admin'), listServices()]);
   const out = { user: ctx.user, patients, products, services };
   if (ctx.user.role === 'admin') out.summary = await cashSummary();
   return out;
@@ -616,42 +666,105 @@ add('DELETE', '/api/medications/:id', async (ctx) => {
   });
 });
 
+// C9: un cobro puede tener varias líneas (servicios de la lista de precios y productos del stock con
+// cantidad) y un descuento opcional (monto o %). Se crea un cargo en el historial por línea y, si se pide,
+// un ingreso en caja por línea (así cada línea se puede quitar sola y devuelve su propio stock). Las líneas
+// de producto y los productos vinculados a un servicio descuentan stock con la validación de A1: si algo
+// no alcanza, no se guarda nada.
 add('POST', '/api/patients/:id/charges', async (ctx) => {
   const id = U.idParam(ctx.params.id);
   const b = ctx.body;
-  const serviceId = U.idParam(b.serviceId);
-  const amount = U.money(b.amount, 'Monto');
   const method = U.oneOf(b.method, U.METHODS, 'Forma de pago');
   const date = U.pastDate(b.date, 'Fecha del cobro');
   const toCash = !!b.cash;
+  // Compatibilidad con el formato anterior (un solo servicio).
+  const raw = Array.isArray(b.items) ? b.items : b.serviceId ? [{ type: 'service', id: b.serviceId, price: b.amount }] : [];
+  if (!raw.length) throw U.bad('Agregá al menos un servicio o un producto');
+  if (raw.length > 30) throw U.bad('Hay demasiadas líneas en el cobro');
+  const lines = raw.map((it) => {
+    if (!it || typeof it !== 'object') throw U.bad('Hay una línea inválida');
+    const type = U.oneOf(it.type, ['service', 'product'], 'Tipo de línea');
+    return {
+      type,
+      id: U.idParam(it.id),
+      qty: type === 'product' ? U.reqInt(it.qty == null || it.qty === '' ? 1 : it.qty, 'Cantidad', 1, 100000) : 1,
+      price: it.price == null || it.price === '' ? null : U.money(it.price, 'Precio'),
+    };
+  });
+  const disc = b.discount && typeof b.discount === 'object' && b.discount.value !== '' && b.discount.value != null ? b.discount : null;
+  const discType = disc ? U.oneOf(disc.type, ['amount', 'percent'], 'Tipo de descuento') : null;
+  const discValue = disc ? U.reqNum(disc.value, 'Descuento', 0, 1e9) : 0;
+  if (discType === 'percent' && discValue > 100) throw U.bad('El descuento no puede ser mayor a 100%');
   return db.tx(async (c) => {
     const pat = await c.query('SELECT name FROM patients WHERE id = $1', [id]);
     if (!pat.rows[0]) throw new HttpError(404, 'No se encontró el paciente');
-    const svc = await c.query('SELECT name FROM services WHERE id = $1', [serviceId]);
-    if (!svc.rows[0]) throw new HttpError(404, 'No se encontró el servicio');
-    let cashId = null;
-    if (toCash) {
-      const r = await c.query(
-        'INSERT INTO cash_movements (on_date, kind, concept, category, method, amount, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
-        [date, 'in', svc.rows[0].name + ' – ' + pat.rows[0].name, 'Servicios', method, amount, ctx.user.id]
-      );
-      cashId = r.rows[0].id;
+    let subtotal = 0;
+    for (const ln of lines) {
+      if (ln.type === 'service') {
+        const sv = (await c.query('SELECT name, price, category FROM services WHERE id = $1', [ln.id])).rows[0];
+        if (!sv) throw new HttpError(404, 'No se encontró el servicio');
+        ln.name = sv.name;
+        ln.category = sv.category;
+        ln.items = (await c.query('SELECT product_id, qty FROM service_items WHERE service_id = $1 ORDER BY id', [ln.id])).rows;
+        if (ln.price == null) ln.price = Number(sv.price);
+      } else {
+        const pr = (await c.query('SELECT name, price FROM products WHERE id = $1', [ln.id])).rows[0];
+        if (!pr) throw new HttpError(404, 'No se encontró el producto');
+        ln.name = pr.name;
+        if (ln.price == null) ln.price = Number(pr.price);
+      }
+      ln.sub = U.round2(ln.price * ln.qty);
+      subtotal += ln.sub;
     }
-    await c.query('INSERT INTO charges (patient_id, on_date, concept, amount, method, cash_id) VALUES ($1, $2, $3, $4, $5, $6)', [
-      id, date, svc.rows[0].name, amount, method, cashId,
-    ]);
-    return { ok: true };
+    subtotal = U.round2(subtotal);
+    let discount = discType === 'percent' ? U.round2((subtotal * discValue) / 100) : U.round2(discValue);
+    if (discount > subtotal) throw U.bad('El descuento no puede ser mayor al subtotal');
+    // El descuento se reparte entre las líneas en proporción a su importe (la última absorbe el redondeo),
+    // así los cargos del historial suman exactamente el total cobrado.
+    let left = discount;
+    lines.forEach((ln, i) => {
+      const part = i === lines.length - 1 ? left : subtotal > 0 ? U.round2((discount * ln.sub) / subtotal) : 0;
+      ln.amount = U.round2(ln.sub - part);
+      left = U.round2(left - part);
+    });
+    for (const ln of lines) {
+      const label = (ln.qty > 1 ? ln.name + ' × ' + ln.qty : ln.name);
+      let cashId = null;
+      if (toCash && ln.amount > 0) {
+        const cash = await c.query(
+          'INSERT INTO cash_movements (on_date, kind, concept, category, method, amount, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+          [date, 'in', label + ' – ' + pat.rows[0].name, ln.type === 'service' ? 'Servicios' : 'Venta de productos', method, ln.amount, ctx.user.id]
+        );
+        cashId = cash.rows[0].id;
+      }
+      const ch = await c.query(
+        'INSERT INTO charges (patient_id, on_date, concept, amount, method, cash_id, line_type) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+        [id, date, label, ln.amount, method, cashId, ln.type]
+      );
+      const chargeId = ch.rows[0].id;
+      if (ln.type === 'product') {
+        await deductStock(c, ln.id, ln.qty, 'Venta', date, ctx.user.id, { chargeId, unitPrice: ln.price });
+      } else if (ln.category !== 'Vacunas') {
+        // C10: los productos vinculados al servicio se descuentan al cobrarlo. (Las vacunas descuentan al
+        // aplicarse, desde la historia clínica; acá no, para no descontar dos veces.)
+        for (const it of ln.items) await deductStock(c, it.product_id, it.qty, 'Servicio – ' + ln.name, date, ctx.user.id, { chargeId });
+      }
+    }
+    return { ok: true, total: U.round2(subtotal - discount), discount };
   });
 });
 
-// Quitar un cobro también quita el ingreso que se había registrado en caja.
+// Quitar un cobro también quita el ingreso que se había registrado en caja y devuelve el stock que descontó.
 add('DELETE', '/api/charges/:id', { admin: true }, async (ctx) => {
   const id = U.idParam(ctx.params.id);
-  await db.tx(async (c) => {
-    const r = await c.query('SELECT cash_id FROM charges WHERE id = $1', [id]);
+  return db.tx(async (c) => {
+    const r = await c.query('SELECT cash_id FROM charges WHERE id = $1 FOR UPDATE', [id]);
     if (!r.rows[0]) throw new HttpError(404, 'No se encontró el cobro');
+    const mv = await c.query('SELECT id FROM stock_movements WHERE charge_id = $1 ORDER BY id', [id]);
+    const stockDelta = await revertStockMovements(c, mv.rows.map((x) => x.id), ctx.user.id);
     await c.query('DELETE FROM charges WHERE id = $1', [id]);
-    if (r.rows[0].cash_id) await c.query('DELETE FROM cash_movements WHERE id = $1', [r.rows[0].cash_id]);
+    if (r.rows[0].cash_id) await deleteCash(c, r.rows[0].cash_id, ctx.user.id);
+    return { ok: true, stockDelta };
   });
 });
 
@@ -667,7 +780,7 @@ add('POST', '/api/products', { admin: true }, async (ctx) => {
   const min = U.reqInt(b.min == null || b.min === '' ? 0 : b.min, 'Stock mínimo', 0, 100000);
   const stock = U.reqInt(b.stock == null || b.stock === '' ? 0 : b.stock, 'Stock inicial', 0, 100000);
   // v2: se carga precio unitario y el costo total se calcula solo (cantidad × unitario).
-  const unitPrice = b.unitPrice == null || b.unitPrice === '' ? 0 : U.money(b.unitPrice, 'Precio unitario de compra');
+  const unitPrice = b.unitPrice == null || b.unitPrice === '' ? 0 : U.moneyPos(b.unitPrice, 'Precio unitario de compra');
   const cost = U.round2(unitPrice * stock);
   const method = stock > 0 && cost > 0 ? U.oneOf(b.method, U.METHODS, 'Forma de pago') : null;
   const today = U.todayAR();
@@ -717,7 +830,7 @@ add('POST', '/api/products/:id/purchase', { admin: true }, async (ctx) => {
   const b = ctx.body;
   const qty = U.reqInt(b.qty, 'Cantidad', 1, 100000);
   // v2: se carga precio unitario y el costo total (que va a caja) se calcula solo.
-  const unitPrice = b.unitPrice == null || b.unitPrice === '' ? 0 : U.money(b.unitPrice, 'Precio unitario');
+  const unitPrice = U.moneyPos(b.unitPrice, 'Precio unitario');
   const cost = U.round2(unitPrice * qty);
   const date = U.pastDate(b.date, 'Fecha de compra');
   const toCash = !!b.cash && cost > 0;
@@ -745,6 +858,8 @@ add('POST', '/api/products/:id/adjust', { admin: true }, async (ctx) => {
   const id = U.idParam(ctx.params.id);
   const delta = U.reqInt(ctx.body.delta, 'Cantidad', -100000, 100000);
   if (delta === 0) throw U.bad('La cantidad no puede ser cero');
+  const reason = U.oneOf(ctx.body.reason, U.ADJUST_REASONS, 'Motivo');
+  const note = U.optStr(ctx.body.note, 200);
   return db.tx(async (c) => {
     const r = await c.query('UPDATE products SET stock = stock + $1 WHERE id = $2 AND stock + $1 >= 0 RETURNING name, stock', [delta, id]);
     if (!r.rows[0]) {
@@ -752,26 +867,43 @@ add('POST', '/api/products/:id/adjust', { admin: true }, async (ctx) => {
       if (!e.rows[0]) throw new HttpError(404, 'No se encontró el producto');
       throw new HttpError(409, 'El stock no puede quedar en negativo (hay ' + e.rows[0].stock + ')');
     }
-    await c.query('INSERT INTO stock_movements (product_id, product_name, on_date, qty, reason, created_by) VALUES ($1, $2, $3, $4, $5, $6)', [
-      id, r.rows[0].name, U.todayAR(), delta, 'Ajuste', ctx.user.id,
+    await c.query('INSERT INTO stock_movements (product_id, product_name, on_date, qty, reason, created_by, note) VALUES ($1, $2, $3, $4, $5, $6, $7)', [
+      id, r.rows[0].name, U.todayAR(), delta, 'Ajuste – ' + reason, ctx.user.id, note,
     ]);
     return { ok: true, stock: r.rows[0].stock };
   });
 });
 
-// Venta de mostrador: baja el stock y registra el ingreso en caja.
+// Venta de mostrador: baja el stock y registra el ingreso en caja. C9: se puede asociar a un paciente
+// (queda también en su historia, en "Servicios cobrados").
 add('POST', '/api/products/:id/sell', async (ctx) => {
   const id = U.idParam(ctx.params.id);
   const qty = U.reqInt(ctx.body.qty, 'Cantidad', 1, 100000);
   const method = U.oneOf(ctx.body.method, U.METHODS, 'Forma de pago');
+  const patientId = ctx.body.patientId ? U.idParam(ctx.body.patientId) : null;
   const today = U.todayAR();
   return db.tx(async (c) => {
+    let patientName = null;
+    if (patientId) {
+      const pat = await c.query('SELECT name FROM patients WHERE id = $1', [patientId]);
+      if (!pat.rows[0]) throw new HttpError(404, 'No se encontró el paciente');
+      patientName = pat.rows[0].name;
+    }
     const d = await deductStock(c, id, qty, 'Venta', today, ctx.user.id);
     const total = U.round2(d.price * qty);
-    await c.query(
-      'INSERT INTO cash_movements (on_date, kind, concept, category, method, amount, created_by, stock_movement_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-      [today, 'in', 'Venta – ' + (qty > 1 ? qty + ' × ' : '') + d.name, 'Venta de productos', method, total, ctx.user.id, d.movementId]
+    const label = (qty > 1 ? qty + ' × ' : '') + d.name;
+    const cash = await c.query(
+      'INSERT INTO cash_movements (on_date, kind, concept, category, method, amount, created_by, stock_movement_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
+      [today, 'in', 'Venta – ' + label + (patientName ? ' – ' + patientName : ''), 'Venta de productos', method, total, ctx.user.id, d.movementId]
     );
+    await c.query('UPDATE stock_movements SET unit_price = $1 WHERE id = $2', [d.price, d.movementId]); // C2: precio del momento
+    if (patientId) {
+      const ch = await c.query(
+        'INSERT INTO charges (patient_id, on_date, concept, amount, method, cash_id, line_type) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+        [patientId, today, label, total, method, cash.rows[0].id, 'product']
+      );
+      await c.query('UPDATE stock_movements SET charge_id = $1 WHERE id = $2', [ch.rows[0].id, d.movementId]);
+    }
     return { ok: true, total, stock: d.stock };
   });
 });
@@ -782,10 +914,10 @@ add('GET', '/api/products/:id/movements', { admin: true }, async (ctx) => {
   const id = U.idParam(ctx.params.id);
   await mustExist('products', id, 'No se encontró el producto');
   const r = await db.query(
-    'SELECT id, on_date, qty, reason, unit_price FROM stock_movements WHERE product_id = $1 ORDER BY on_date DESC, id DESC LIMIT 200',
+    'SELECT id, on_date, qty, reason, unit_price, note FROM stock_movements WHERE product_id = $1 ORDER BY on_date DESC, id DESC LIMIT 200',
     [id]
   );
-  return { items: r.rows.map((x) => ({ id: x.id, date: x.on_date, qty: x.qty, reason: x.reason, unitPrice: Number(x.unit_price) })) };
+  return { items: r.rows.map((x) => ({ id: x.id, date: x.on_date, qty: x.qty, reason: x.reason, unitPrice: Number(x.unit_price), note: x.note || '' })) };
 });
 
 /* ============================================================
@@ -793,22 +925,52 @@ add('GET', '/api/products/:id/movements', { admin: true }, async (ctx) => {
    ============================================================ */
 // v2: productId (opcional) vincula un servicio de tipo "Vacunas" con el producto de stock que
 // tiene que descontarse cada vez que se aplica esa vacuna a un paciente.
+// C10: cualquier servicio puede vincular uno o más productos del stock con una cantidad (por ejemplo,
+// Castración → 1 collar isabelino + 1 meloxicam); se descuentan al cobrar el servicio. Las vacunas siguen
+// usando un único producto (productId) que se descuenta al aplicarlas en la historia clínica.
 function serviceInput(b) {
   const category = U.oneOf(b.category, U.SERV_CATS, 'Categoría');
-  return [U.reqStr(b.name, 'Servicio', 200), category, U.money(b.price, 'Precio'), b.productId ? U.idParam(b.productId) : null, U.optSpecies(b.species, category)];
+  let items = [];
+  if (category !== 'Vacunas' && Array.isArray(b.items)) {
+    if (b.items.length > 20) throw U.bad('Hay demasiados productos vinculados');
+    const seen = {};
+    items = b.items.map((it) => {
+      const productId = U.idParam(it && it.productId);
+      if (seen[productId]) throw U.bad('Un producto está repetido en el servicio');
+      seen[productId] = true;
+      return { productId, qty: U.reqInt(it.qty == null || it.qty === '' ? 1 : it.qty, 'Cantidad del producto', 1, 100000) };
+    });
+  }
+  return {
+    row: [U.reqStr(b.name, 'Servicio', 200), category, U.money(b.price, 'Precio'), category === 'Vacunas' && b.productId ? U.idParam(b.productId) : null, U.optSpecies(b.species, category)],
+    items,
+  };
+}
+async function saveServiceItems(c, serviceId, items) {
+  for (const it of items) {
+    if (!(await c.query('SELECT 1 FROM products WHERE id = $1', [it.productId])).rows[0]) throw new HttpError(404, 'No se encontró el producto de stock elegido');
+  }
+  await c.query('DELETE FROM service_items WHERE service_id = $1', [serviceId]);
+  for (const it of items) await c.query('INSERT INTO service_items (service_id, product_id, qty) VALUES ($1, $2, $3)', [serviceId, it.productId, it.qty]);
 }
 add('POST', '/api/services', { admin: true }, async (ctx) => {
-  const params = serviceInput(ctx.body);
-  if (params[3]) await mustExist('products', params[3], 'No se encontró el producto de stock elegido');
-  const r = await db.query('INSERT INTO services (name, category, price, product_id, species) VALUES ($1, $2, $3, $4, $5) RETURNING id', params);
-  return { id: r.rows[0].id };
+  const sv = serviceInput(ctx.body);
+  if (sv.row[3]) await mustExist('products', sv.row[3], 'No se encontró el producto de stock elegido');
+  return db.tx(async (c) => {
+    const r = await c.query('INSERT INTO services (name, category, price, product_id, species) VALUES ($1, $2, $3, $4, $5) RETURNING id', sv.row);
+    await saveServiceItems(c, r.rows[0].id, sv.items);
+    return { id: r.rows[0].id };
+  });
 });
 add('PUT', '/api/services/:id', { admin: true }, async (ctx) => {
   const id = U.idParam(ctx.params.id);
-  const params = serviceInput(ctx.body);
-  if (params[3]) await mustExist('products', params[3], 'No se encontró el producto de stock elegido');
-  const r = await db.query('UPDATE services SET name = $1, category = $2, price = $3, product_id = $4, species = $5 WHERE id = $6 RETURNING id', params.concat([id]));
-  if (!r.rows[0]) throw new HttpError(404, 'No se encontró el servicio');
+  const sv = serviceInput(ctx.body);
+  if (sv.row[3]) await mustExist('products', sv.row[3], 'No se encontró el producto de stock elegido');
+  return db.tx(async (c) => {
+    const r = await c.query('UPDATE services SET name = $1, category = $2, price = $3, product_id = $4, species = $5 WHERE id = $6 RETURNING id', sv.row.concat([id]));
+    if (!r.rows[0]) throw new HttpError(404, 'No se encontró el servicio');
+    await saveServiceItems(c, id, sv.items);
+  });
 });
 add('DELETE', '/api/services/:id', { admin: true }, async (ctx) => {
   await db.query('DELETE FROM services WHERE id = $1', [U.idParam(ctx.params.id)]);
@@ -845,8 +1007,10 @@ add('GET', '/api/cash', { admin: true }, async (ctx) => {
   else if (group === 'Tarjeta') where.push("c.method IN ('Tarjeta de débito', 'Tarjeta de crédito')");
   const sql =
     'SELECT c.id, c.on_date, c.kind, c.concept, c.category, c.method, c.amount, ' +
-    'CASE WHEN sm.id IS NOT NULL AND NOT sm.voided AND sm.product_id IS NOT NULL THEN -sm.qty ELSE 0 END AS stock_delta ' +
-    'FROM cash_movements c LEFT JOIN stock_movements sm ON sm.id = c.stock_movement_id' +
+    // Unidades que se mueven si se elimina: el movimiento vinculado directamente y los de los cobros que usan este ingreso.
+    'COALESCE((SELECT SUM(-m.qty) FROM stock_movements m WHERE NOT m.voided AND m.product_id IS NOT NULL AND ' +
+    '(m.id = c.stock_movement_id OR m.charge_id IN (SELECT ch.id FROM charges ch WHERE ch.cash_id = c.id))), 0) AS stock_delta ' +
+    'FROM cash_movements c' +
     (where.length ? ' WHERE ' + where.join(' AND ') : '') +
     ' ORDER BY c.on_date DESC, c.id DESC LIMIT 500';
   const r = await db.query(sql, params);
@@ -862,15 +1026,16 @@ add('POST', '/api/cash', { admin: true }, async (ctx) => {
   if (date > U.todayAR() && b.confirmFuture !== true) {
     throw new HttpError(409, 'La fecha es posterior a hoy, ¿es correcto?');
   }
+  const kind = U.oneOf(b.type, ['in', 'out'], 'Tipo');
   const r = await db.query(
     'INSERT INTO cash_movements (on_date, kind, concept, category, method, amount, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
     [
       date,
-      U.oneOf(b.type, ['in', 'out'], 'Tipo'),
+      kind,
       U.reqStr(b.concept, 'Concepto', 200),
-      U.oneOf(b.category, U.CASH_CATS, 'Categoría'),
+      U.oneOf(b.category, kind === 'in' ? U.CASH_IN_CATS : U.CASH_OUT_CATS, 'Categoría'),
       U.oneOf(b.method, U.METHODS, 'Forma de pago'),
-      U.money(b.amount, 'Monto'),
+      U.moneyPos(b.amount, 'Monto'),
       ctx.user.id,
     ]
   );
@@ -881,35 +1046,7 @@ add('POST', '/api/cash', { admin: true }, async (ctx) => {
 // el stock, en la misma transacción: o se hace todo, o no se hace nada.
 add('DELETE', '/api/cash/:id', { admin: true }, async (ctx) => {
   const id = U.idParam(ctx.params.id);
-  return db.tx(async (c) => {
-    const r = await c.query('SELECT stock_movement_id FROM cash_movements WHERE id = $1 FOR UPDATE', [id]);
-    if (!r.rows[0]) throw new HttpError(404, 'No se encontró el movimiento');
-    let stockDelta = 0;
-    if (r.rows[0].stock_movement_id) {
-      const sm = (await c.query('SELECT id, product_id, qty, voided FROM stock_movements WHERE id = $1 FOR UPDATE', [r.rows[0].stock_movement_id])).rows[0];
-      if (sm && !sm.voided && sm.product_id) {
-        const delta = -sm.qty; // venta (qty < 0): vuelven al stock; compra (qty > 0): se restan
-        const u = await c.query('UPDATE products SET stock = stock + $1 WHERE id = $2 AND stock + $1 >= 0 RETURNING name', [delta, sm.product_id]);
-        if (!u.rows[0]) {
-          const e = (await c.query('SELECT name, stock FROM products WHERE id = $1', [sm.product_id])).rows[0];
-          if (e) {
-            throw new HttpError(
-              409,
-              'No se puede eliminar: al restar ' + -delta + ' unidades de ' + e.name + ' el stock quedaría en negativo (hay ' + e.stock + ')'
-            );
-          }
-        } else {
-          await c.query('INSERT INTO stock_movements (product_id, product_name, on_date, qty, reason, created_by) VALUES ($1, $2, $3, $4, $5, $6)', [
-            sm.product_id, u.rows[0].name, U.todayAR(), delta, delta > 0 ? 'Anulación de venta' : 'Anulación de compra', ctx.user.id,
-          ]);
-          await c.query('UPDATE stock_movements SET voided = TRUE WHERE id = $1', [sm.id]);
-          stockDelta = delta;
-        }
-      }
-    }
-    await c.query('DELETE FROM cash_movements WHERE id = $1', [id]);
-    return { ok: true, stockDelta };
-  });
+  return db.tx(async (c) => ({ ok: true, stockDelta: await deleteCash(c, id, ctx.user.id) }));
 });
 
 /* ============================================================
@@ -958,7 +1095,7 @@ add('GET', '/api/reports/services', { admin: true }, async (ctx) => {
   const days = reportDays(ctx.query);
   const cutoff = U.addDays(U.todayAR(), -days);
   const r = await db.query(
-    'SELECT concept, COUNT(*) AS n, SUM(amount) AS total FROM charges WHERE on_date >= $1 GROUP BY concept ORDER BY n DESC, total DESC',
+    "SELECT concept, COUNT(*) AS n, SUM(amount) AS total FROM charges WHERE line_type = 'service' AND on_date >= $1 GROUP BY concept ORDER BY n DESC, total DESC",
     [cutoff]
   );
   return { days, items: r.rows.map((x) => ({ name: x.concept, n: Number(x.n), total: Number(x.total) })) };
@@ -972,7 +1109,7 @@ add('GET', '/api/reports/products', { admin: true }, async (ctx) => {
       'FROM products p LEFT JOIN stock_movements m ON m.product_id = p.id AND m.qty < 0 ' +
       // v2: se agregan las bajas por "Vacuna aplicada a ..." (antes solo contaba ventas y medicación).
       // Los movimientos anulados (venta eliminada, vacuna o medicación quitada) no cuentan.
-      "AND (m.reason IN ('Venta', 'Medicación') OR m.reason LIKE 'Vacuna aplicada a%') AND NOT m.voided AND m.on_date >= $1 " +
+      "AND (m.reason IN ('Venta', 'Medicación') OR m.reason LIKE 'Vacuna aplicada a%' OR m.reason LIKE 'Servicio –%') AND NOT m.voided AND m.on_date >= $1 " +
       'GROUP BY p.id ORDER BY units DESC, lower(p.name)',
     [cutoff]
   );
