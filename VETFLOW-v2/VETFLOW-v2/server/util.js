@@ -64,6 +64,18 @@ function optStr(v, max) {
   if (s.length > (max || 500)) throw bad('Hay un texto demasiado largo');
   return s;
 }
+/**
+ * F1: teléfono opcional. Solo dígitos, espacios, +, - y (); si se completa, con al menos 6 dígitos.
+ * Devuelve { phone, norm } (norm = solo dígitos).
+ */
+function optPhone(v) {
+  const s = optStr(v, 50);
+  if (!s) return { phone: '', norm: '' };
+  if (!/^[0-9 +()-]+$/.test(s)) throw bad('El teléfono solo puede tener números, espacios, + , - y paréntesis');
+  const norm = s.replace(/\D/g, '');
+  if (norm.length < 6) throw bad('El teléfono tiene que tener al menos 6 dígitos');
+  return { phone: s, norm };
+}
 function reqDate(v, label) {
   if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw bad('Fecha inválida: ' + label);
   const d = new Date(v + 'T00:00:00Z');
@@ -186,6 +198,6 @@ module.exports = {
   HttpError, bad, HANDLED,
   METHODS, SPECIES_OPTS, PROD_CATS, SERV_CATS, CASH_IN_CATS, CASH_OUT_CATS, ADJUST_REASONS, APPT_TYPES, APPT_DURATIONS, APPT_LABELS,
   TZ, todayAR, addDays, monthStart, monthEnd, round2,
-  reqStr, optStr, reqDate, optDate, pastDate, optPastDate, reqTime, reqNum, reqInt, money, moneyPos, oneOf, optSpecies, idParam, checkEmail,
+  reqStr, optStr, optPhone, reqDate, optDate, pastDate, optPastDate, reqTime, reqNum, reqInt, money, moneyPos, oneOf, optSpecies, idParam, checkEmail,
   sendJson, readBody, parseCookies, clientIp,
 };

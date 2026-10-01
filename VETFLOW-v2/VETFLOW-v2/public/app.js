@@ -26,6 +26,8 @@ var fmtTs=function(v){var d=new Date(v);if(isNaN(d.getTime()))return '';return d
 // v2: lunes de la semana que contiene "iso" (semana de lunes a domingo).
 var mondayOf=function(iso){var d=parse(iso);var wd=d.getDay();wd=wd===0?7:wd;return shiftDays(-(wd-1),iso);};
 
+// F1: teléfono con números, espacios, + , - y paréntesis (el servidor exige además 6 dígitos como mínimo).
+var PHONE_PAT='[0-9 +\\(\\)\\-]{6,50}';
 var PROD_CATS=['Medicamentos','Vacunas','Higiene','Pulguicidas','Antiparasitarios','Otros'];
 var SERV_CATS=['Consultas','Vacunas','Cirugías','Otros'];
 var CASH_IN_CATS=['Servicios','Venta de productos','Aporte de capital','Otros'];
@@ -49,7 +51,7 @@ var APPT_VIEWS=[['week','Semana'],['2weeks','2 semanas'],['3weeks','3 semanas'],
    ============================================================ */
 var S={user:null,patients:[],products:[],services:[],suppliers:[],summary:null};
 var ui={view:'pacientes',sel:null,detail:null,filter:'all',q:'',tab:'stock',cat:'all',
-  cashp:'month',cashf:'all',cashm:'all',cash:null,
+  stq:'',cq:'',cashp:'month',cashf:'all',cashm:'all',cash:null,
   rep:'90',rmonthly:null,rservices:null,rproducts:null,backups:null,users:null,
   suppliers:null,sq:'', // v2: proveedores y su búsqueda
   cal:{view:'week',anchor:todayIso()},appts:null}; // v2: calendario de turnos
@@ -209,7 +211,7 @@ function fld(label,name,o){
     return '<label class="fld check'+(o.full?' full':'')+'"><input type="checkbox" name="'+name+'"'+(value?' checked':'')+'><span>'+label+'</span></label>';
   }else{
     ctl='<input name="'+name+'" type="'+(o.type||'text')+'" value="'+esc(value)+'"'+(o.req?' required':'')+' placeholder="'+esc(o.ph||'')+'"'+
-      (o.step?' step="'+o.step+'"':'')+(o.min!=null?' min="'+o.min+'"':'')+(o.max!=null?' max="'+o.max+'"':'')+(o.list?' list="'+o.list+'"':'')+
+      (o.step?' step="'+o.step+'"':'')+(o.minlength?' minlength="'+o.minlength+'"':'')+(o.pattern?' pattern="'+o.pattern+'" title="'+esc(o.title||'')+'"':'')+(o.min!=null?' min="'+o.min+'"':'')+(o.max!=null?' max="'+o.max+'"':'')+(o.list?' list="'+o.list+'"':'')+
       (o.auto?' autocomplete="'+o.auto+'"':' autocomplete="off"')+'>';
   }
   return '<label class="fld'+(o.full?' full':'')+'"><span>'+label+'</span>'+ctl+'</label>';
@@ -221,12 +223,13 @@ function openForm(o){
   var f=dlg.querySelector('form');
   f.addEventListener('submit',async function(e){
     e.preventDefault();
-    var btn=f.querySelector('[type="submit"]'),errEl=f.querySelector('.err'),data={};
+    if(f.dataset.busy)return; // F10: nunca se envía dos veces
+    var btn=f.querySelector('[type="submit"]'),errEl=f.querySelector('.err'),data={},label=btn.innerHTML;
     new FormData(f).forEach(function(v,k){data[k]=v;});
-    errEl.textContent='';btn.disabled=true;
+    errEl.textContent='';f.dataset.busy='1';btn.disabled=true;btn.classList.add('busy');btn.textContent='Guardando…';
     try{var r=await o.onSubmit(data,f);if(r!==false)dlg.close();}
     catch(err){errEl.textContent=err.message||'Ocurrió un error';}
-    btn.disabled=false;
+    delete f.dataset.busy;btn.disabled=false;btn.classList.remove('busy');btn.innerHTML=label;
   });
   dlg.querySelector('[data-close]').addEventListener('click',function(){dlg.close();});
   dlg.showModal();
@@ -295,7 +298,7 @@ function latestIds(p){
   return ids;
 }
 function vacStatus(v,latest){
-  if(!latest)return {k:'none',t:'Reemplazada por dosis nueva'};
+  if(!latest)return {k:'none',t:'Reemplazada'};
   if(!v.next)return {k:'none',t:'Sin refuerzo'};
   var d=diffDays(v.next);
   if(d<0)return {k:'bad',t:'Vencida hace '+plural(-d,'día','días')};
@@ -335,21 +338,26 @@ function renderAlerts(){
    ============================================================ */
 var emo=function(p){return p.species==='Gato'?'🐱':'🐶';};
 
+// F7: edad con la fecha de nacimiento: "5 años (10/05/2021)"; en menores de 2 años, años y meses.
 function ageText(b){
   if(!b)return 'Edad sin datos';
   var a=b.split('-').map(Number),now=new Date();
   var months=(now.getFullYear()-a[0])*12+(now.getMonth()+1-a[1]);
   if(now.getDate()<a[2])months--;
   if(months<0)months=0;
-  if(months<12)return plural(months,'mes','meses');
-  return plural(Math.floor(months/12),'año','años');
+  var t;
+  if(months<1)t='menos de 1 mes';
+  else if(months<12)t=plural(months,'mes','meses');
+  else if(months<24){var m=months-12;t='1 año'+(m?' y '+plural(m,'mes','meses'):'');}
+  else t=plural(Math.floor(months/12),'año','años');
+  return t+' ('+fmtDate(b)+')';
 }
 function filteredPatients(){
-  var q=ui.q.trim().toLowerCase();
+  var q=norm(ui.q).trim(),qd=ui.q.replace(/\D/g,'');
   return S.patients.filter(function(p){
     if((ui.filter==='Perro'||ui.filter==='Gato')&&p.species!==ui.filter)return false;
     if(ui.filter==='alert'&&!patientAlert(p))return false;
-    if(q){var hay=(p.name+' '+p.owner+' '+p.breed+' '+p.phone).toLowerCase();if(hay.indexOf(q)<0)return false;}
+    if(q){var hay=norm(p.name+' '+p.owner+' '+p.breed+' '+p.phone);if(hay.indexOf(q)<0&&!(qd.length>=3&&p.phone.replace(/\D/g,'').indexOf(qd)>=0))return false;}
     return true;
   });
 }
@@ -364,11 +372,17 @@ function listHTML(){
       '<span class="pi-main"><b>'+esc(p.name)+'</b><small>'+esc(p.breed||p.species)+' · '+esc(p.owner)+'</small></span>'+chip+'</button></li>';
   }).join('');
 }
+var emptyPane=function(){return '<p class="empty">'+(S.patients.length?'Elegí un paciente de la lista para ver su historia clínica, o agregá uno nuevo.':'Cuando cargues el primer paciente vas a ver acá su historia clínica.')+'</p>';};
+// F4: si el paciente seleccionado queda fuera del filtro, se limpia el panel de detalle.
+function dropHiddenSelection(){
+  if(ui.sel&&!filteredPatients().some(function(p){return p.id===ui.sel;})){ui.sel=null;ui.detail=null;return true;}
+  return false;
+}
 function viewPacientes(){
   var p=ui.sel&&ui.detail&&ui.detail.id===ui.sel?ui.detail:null;
   var right;
   if(ui.sel)right=p?detailHTML(p):'<button class="btn back" data-action="back">Volver a la lista</button><p class="empty">Cargando…</p>';
-  else right='<p class="empty">'+(S.patients.length?'Elegí un paciente de la lista para ver su historia clínica, o agregá uno nuevo.':'Cuando cargues el primer paciente vas a ver acá su historia clínica.')+'</p>';
+  else right=emptyPane();
   return '<section class="pac '+(ui.sel?'show-detail':'')+'">'+
     '<div class="pac-list">'+
       '<div class="head"><h1>Pacientes</h1><button class="btn primary" data-action="new-patient">Nuevo paciente</button></div>'+
@@ -385,7 +399,7 @@ function detailHTML(p){
   var L=latestIds(p);
   var vacHTML=p.vaccines.length?'<div class="rows">'+p.vaccines.map(function(v){
     var s=vacStatus(v,!!L[v.id]);
-    return '<div class="row vac"><div><b>'+esc(v.name)+'</b></div><div><span class="k">Aplicada</span>'+fmtDate(v.date)+'</div><div><span class="k">Próxima dosis</span>'+fmtDate(v.next)+'</div><div class="chipcell"><span class="chip '+s.k+'">'+s.t+'</span></div><div class="racts"><button class="link" data-action="edit-vac" data-id="'+v.id+'">Editar</button><button class="link bad" data-action="del-vac" data-id="'+v.id+'">Quitar</button></div></div>';
+    return '<div class="row vac"><div class="vname"><b>'+esc(v.name)+'</b></div><div class="vap"><span class="k">Aplicada</span>'+fmtDate(v.date)+'</div><div class="vnext"><span class="k">Próxima dosis</span>'+fmtDate(v.next)+'</div><div class="chipcell"><span class="chip '+s.k+'">'+s.t+'</span></div><div class="racts"><button class="link" data-action="edit-vac" data-id="'+v.id+'">Editar</button><button class="link bad" data-action="del-vac" data-id="'+v.id+'">Quitar</button></div></div>';
   }).join('')+'</div>':'<p class="empty">Todavía no hay vacunas registradas.</p>';
 
   var dxHTML=p.diagnoses.length?'<div class="tl">'+p.diagnoses.map(function(d){
@@ -445,7 +459,8 @@ function viewFarmacia(){
 }
 function stockHTML(){
   var admin=isAdmin();
-  var L=S.products.filter(function(x){return ui.cat==='all'||x.category===ui.cat;});
+  var sq=norm(ui.stq).trim();
+  var L=S.products.filter(function(x){return (ui.cat==='all'||x.category===ui.cat)&&(!sq||norm(x.name+' '+x.category).indexOf(sq)>=0);});
   var totCost=0,totSale=0;
   var rows=L.map(function(x){
     var chip=x.stock<=0?'<span class="chip bad">Sin stock</span>':lowStock(x)?'<span class="chip warn">Poco stock</span>':'';
@@ -462,13 +477,15 @@ function stockHTML(){
   var foot=admin&&L.length?'<tfoot><tr><td colspan="'+cols+'"><b>Stock valorizado:</b> '+money(totCost)+' a costo / '+money(totSale)+' a precio de venta</td></tr></tfoot>':'';
   return '<div class="toolbar">'+segHTML('cat',[['all','Todos']].concat(PROD_CATS.map(function(c){return [c,c];})),ui.cat)+
     (admin?'<button class="btn primary" data-action="new-product">Nuevo producto</button>':'')+'</div>'+
+    '<input id="stq" type="search" placeholder="Buscar producto" value="'+esc(ui.stq)+'" aria-label="Buscar producto" style="margin-bottom:1rem">'+
     '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Stock</th><th class="num">Mínimo</th><th>Estado</th><th class="num">Precio de venta</th>'+(admin?'<th class="num">Costo unit.</th><th class="num">Valor en stock</th>':'')+'<th></th></tr></thead><tbody>'+
     (rows||'<tr><td colspan="'+cols+'" class="empty">'+empty+'</td></tr>')+'</tbody>'+foot+'</table></div>';
 }
 function cajaHTML(){
   if(!ui.cash||!S.summary)return '<p class="empty">Cargando…</p>';
   var sm=S.summary;
-  var rows=ui.cash.items.map(function(c){
+  var cq=norm(ui.cq).trim();
+  var rows=ui.cash.items.filter(function(c){return !cq||norm(c.concept+' '+c.category+' '+c.method).indexOf(cq)>=0;}).map(function(c){
     return '<tr><td>'+fmtDate(c.date)+'</td><td><b>'+esc(c.concept)+'</b></td><td>'+esc(c.category)+'</td><td>'+esc(c.method)+'</td><td class="num '+(c.type==='in'?'in':'out')+'">'+(c.type==='in'?'+ ':'− ')+money(c.amount)+'</td><td class="act"><button class="link bad" data-action="del-cash" data-id="'+c.id+'">Eliminar</button></td></tr>';
   }).join('');
   var mes=new Date().toLocaleDateString('es-AR',{month:'long'});
@@ -481,6 +498,7 @@ function cajaHTML(){
       segHTML('cashf',[['all','Ingresos y egresos'],['in','Ingresos'],['out','Egresos']],ui.cashf)+
       segHTML('cashm',[['all','Todas las formas de pago'],['Efectivo','Efectivo'],['Transferencia','Transferencias'],['Tarjeta','Tarjetas']],ui.cashm)+
     '</div><span><button class="btn" data-action="cash-out">Registrar egreso</button> <button class="btn primary" data-action="cash-in">Registrar ingreso</button></span></div>'+
+    '<input id="cq" type="search" placeholder="Buscar por concepto, categoría o forma de pago" value="'+esc(ui.cq)+'" aria-label="Buscar movimiento" style="margin-bottom:1rem">'+
     '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Concepto</th><th>Categoría</th><th>Forma de pago</th><th class="num">Monto</th><th></th></tr></thead><tbody>'+
     (rows||'<tr><td colspan="6" class="empty">No hay movimientos en este período.</td></tr>')+'</tbody></table></div>'+
     (ui.cash.limited?'<p class="empty">Se muestran los últimos 500 movimientos. Elegí un período más corto para ver el resto.</p>':'');
@@ -626,7 +644,7 @@ function calMonthGrid(){
       return '<button class="cal-chip '+a.type+'" data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'</button>';
     }).join('');
     var more=list.length>3?'<button class="cal-more" data-action="cal-day-list" data-v="'+d+'">+'+(list.length-3)+' más</button>':'';
-    cells+='<div class="cal-mday'+(out?' out':'')+(isToday?' today':'')+'"><div class="mhead"><span>'+Number(d.slice(8,10))+'</span>'+
+    cells+='<div class="cal-mday'+(out?' out':'')+(isToday?' today':'')+(list.length||isToday?' has':'')+'"><div class="mhead"><span>'+WEEKDAYS[(parse(d).getDay()+6)%7]+' '+Number(d.slice(8,10))+'</span>'+
       '<button class="cal-add" data-action="cal-add-day" data-v="'+d+'" aria-label="Agregar turno este día">+</button></div>'+shown+more+'</div>';
     d=shiftDays(1,d);
   }
@@ -687,9 +705,9 @@ function patientForm(p){
       fld('Raza','breed',{value:p.breed,ph:'Ej.: Labrador'})+
       fld('Sexo','sex',{opts:['Macho','Hembra'],value:p.sex})+
       fld('Fecha de nacimiento (aprox.)','birth',{type:'date',value:p.birth,max:todayIso()})+
-      fld('Peso (kg)','weight',{type:'number',step:'0.1',min:0,value:p.weight})+
+      fld('Peso (kg)','weight',{type:'number',step:'0.01',min:0.01,max:150,value:p.weight})+
       fld('Dueño','owner',{value:p.owner,req:true})+
-      fld('Teléfono','phone',{type:'tel',value:p.phone})+
+      fld('Teléfono','phone',{type:'tel',value:p.phone,pattern:PHONE_PAT,title:'Solo números, espacios, + , - y paréntesis (mínimo 6 dígitos)'})+
       fld('Email del dueño','email',{type:'email',value:p.email,full:true,ph:'nombre@correo.com'})+
       fld('Castrado/a','neutered',{type:'checkbox',value:p.neutered,full:true})+
       fld('Alergias o notas importantes','notes',{type:'textarea',value:p.notes,full:true,ph:'Ej.: alérgico a la penicilina'})+
@@ -697,7 +715,9 @@ function patientForm(p){
     submit:isNew?'Agregar paciente':'Guardar cambios',
     onSubmit:async function(d){
       var body={name:d.name,species:d.species,breed:d.breed,sex:d.sex,birth:d.birth,weight:d.weight,owner:d.owner,phone:d.phone,email:d.email,neutered:!!d.neutered,notes:d.notes};
-      if(isNew){var r=await api('/patients',{body:body});ui.sel=r.id;ui.detail=null;ui.view='pacientes';await reload();toast('Paciente agregado');}
+      if(isNew){
+        if(!(await confirmDuplicate(S.patients.some(function(x){return sameName(x.name,d.name)&&sameName(x.owner,d.owner);}))))return false;
+        var r=await api('/patients',{body:body});ui.sel=r.id;ui.detail=null;ui.view='pacientes';await reload();toast('Paciente agregado');}
       else{await api('/patients/'+p.id,{method:'PUT',body:body});await reload();toast('Datos guardados');}
     }});
 }
@@ -870,6 +890,13 @@ function chargeForm(p){
   });
   addLine();
 }
+// F5: aviso NO bloqueante si ya existe algo con ese nombre (se compara sin tildes ni mayúsculas).
+async function confirmDuplicate(exists){
+  if(!exists)return true;
+  var ch=await choiceDialog('Posible duplicado','<p>Ya existe uno con ese nombre. ¿Crear igual?</p>',[{label:'Cancelar',value:'no',cls:'ghost'},{label:'Crear igual',value:'ok',cls:'primary'}]);
+  return ch==='ok';
+}
+var sameName=function(a,b){return norm(a).trim()===norm(b).trim();};
 var supplierOpts=function(){return [['','Sin proveedor']].concat((S.suppliers||[]).map(function(x){return [x.id,x.name];}));};
 // C6: si un egreso en efectivo deja la caja en negativo, se avisa antes de guardar.
 // Devuelve true para seguir o false si el usuario prefiere corregir (por ejemplo, cambiar la forma de pago).
@@ -913,6 +940,7 @@ function productForm(x){
     submit:isNew?'Agregar producto':'Guardar cambios',
     onSubmit:async function(d){
       if(isNew){
+        if(!(await confirmDuplicate(S.products.some(function(x){return sameName(x.name,d.name);}))))return false;
         var cost=Number(d.stock)*Number(d.unitPrice);
         if(cost>0&&!(await confirmNegativeCash(cost,d.method)))return false;
         await api('/products',{body:{name:d.name,category:d.category,price:d.price,min:d.min,stock:d.stock,unitPrice:d.unitPrice,method:d.method,species:d.species,supplierId:d.supplierId||null}});await reload();toast('Producto agregado');}
@@ -997,6 +1025,7 @@ function serviceForm(s){
         if(pid)items.push({productId:Number(pid),qty:r.querySelector('.si-qty').value});
       });
       var body={name:d.name,category:d.category,price:d.price,productId:d.productId||null,species:d.species,items:items};
+      if(isNew&&!(await confirmDuplicate(S.services.some(function(x){return sameName(x.name,d.name);}))))return false;
       if(isNew)await api('/services',{body:body});else await api('/services/'+s.id,{method:'PUT',body:body});
       await reload();toast(isNew?'Precio agregado':'Precio guardado');
     }});
@@ -1029,11 +1058,12 @@ function studyForm(p,st){
 function supplierForm(s){
   var isNew=!s;s=s||{};
   openForm({title:isNew?'Nuevo proveedor':'Editar proveedor',
-    body:'<div class="fields">'+fld('Nombre','name',{value:s.name,req:true,full:true})+fld('Teléfono','phone',{type:'tel',value:s.phone})+fld('Email','email',{type:'email',value:s.email})+
+    body:'<div class="fields">'+fld('Nombre','name',{value:s.name,req:true,full:true})+fld('Teléfono','phone',{type:'tel',value:s.phone,pattern:PHONE_PAT,title:'Solo números, espacios, + , - y paréntesis (mínimo 6 dígitos)'})+fld('Email','email',{type:'email',value:s.email})+
     fld('Qué se le compra (opcional)','description',{type:'textarea',value:s.description,full:true,ph:'Ej.: vacunas y antiparasitarios'})+'</div>',
     submit:isNew?'Agregar proveedor':'Guardar cambios',
     onSubmit:async function(d){
       var body={name:d.name,phone:d.phone,email:d.email,description:d.description};
+      if(isNew&&!(await confirmDuplicate(S.suppliers.some(function(x){return sameName(x.name,d.name);}))))return false;
       if(isNew)await api('/suppliers',{body:body});else await api('/suppliers/'+s.id,{method:'PUT',body:body});
       ui.suppliers=null;await refreshView();toast(isNew?'Proveedor agregado':'Proveedor guardado');
     }});
@@ -1148,7 +1178,7 @@ function userForm(u){
     body:'<div class="fields">'+fld('Nombre','name',{value:u.name,req:true,full:true})+
     (isNew?fld('Email (es el usuario para ingresar)','email',{type:'email',req:true,full:true,auto:'off'}):'<p class="full" style="grid-column:1/-1">'+esc(u.email)+'</p>')+
     fld('Rol','role',{opts:[['staff','Ayudante'],['admin','Administrador']],value:u.role})+
-    fld(isNew?'Contraseña (mínimo 8 caracteres)':'Nueva contraseña (dejala vacía para no cambiarla)','password',{type:'password',req:isNew,auto:'new-password'})+
+    fld(isNew?'Contraseña (mínimo 8 caracteres)':'Nueva contraseña (dejala vacía para no cambiarla)','password',{type:'password',req:isNew,minlength:8,auto:'new-password'})+
     (isNew?'':fld('Usuario activo','active',{type:'checkbox',value:u.active,full:true}))+'</div>',
     submit:isNew?'Crear usuario':'Guardar cambios',
     onSubmit:async function(d){
@@ -1159,7 +1189,7 @@ function userForm(u){
 function passwordForm(){
   openForm({title:'Cambiar contraseña',
     body:'<div class="fields">'+fld('Contraseña actual','current',{type:'password',req:true,full:true,auto:'current-password'})+
-    fld('Contraseña nueva (mínimo 8 caracteres)','password',{type:'password',req:true,full:true,auto:'new-password'})+
+    fld('Contraseña nueva (mínimo 8 caracteres)','password',{type:'password',req:true,full:true,minlength:8,auto:'new-password'})+
     fld('Repetí la contraseña nueva','repeat',{type:'password',req:true,full:true,auto:'new-password'})+'</div>',
     submit:'Cambiar contraseña',
     onSubmit:async function(d){
@@ -1212,7 +1242,7 @@ async function refreshView(){
 function findRec(kind,id){return ((ui.detail&&ui.detail[kind])||[]).find(function(x){return String(x.id)===String(id);});}
 var actions={
   nav:function(id,b){return go(b.dataset.v);},
-  filter:function(id,b){ui.filter=b.dataset.v;render();},
+  filter:function(id,b){ui.filter=b.dataset.v;dropHiddenSelection();render();},
   select:function(id){ui.sel=Number(id);ui.detail=null;window.scrollTo(0,0);return refreshView();},
   back:function(){ui.sel=null;ui.detail=null;render();},
   'goto-vac':function(){ui.view='pacientes';ui.filter='alert';ui.sel=null;ui.detail=null;render();},
@@ -1222,7 +1252,7 @@ var actions={
   'edit-patient':function(){if(ui.detail)patientForm(ui.detail);},
   'del-patient':function(){
     var p=ui.detail;if(!p)return;
-    confirmForm('Eliminar a '+esc(p.name),'Se borra el paciente con toda su historia clínica: vacunas, diagnósticos, medicación y cobros. Los movimientos de caja ya registrados no se borran. Esta acción no se puede deshacer.','Eliminar paciente',async function(){
+    confirmForm('Eliminar a '+esc(p.name),'Se borra el paciente con toda su historia clínica: vacunas, diagnósticos, estudios, medicación, cobros'+(p.appointmentCount?' y '+plural(p.appointmentCount,'turno programado','turnos programados'):'')+'. Los movimientos de caja ya registrados no se borran. Esta acción no se puede deshacer.','Eliminar paciente',async function(){
       await api('/patients/'+p.id,{method:'DELETE'});ui.sel=null;ui.detail=null;await reload();toast('Paciente eliminado');
     });
   },
@@ -1366,10 +1396,17 @@ document.addEventListener('click',function(e){
   if(!b||dlg.contains(b))return;
   var fn=actions[b.dataset.action];
   if(!fn)return;
-  Promise.resolve().then(function(){return fn(b.dataset.id,b);}).catch(function(err){toast(err.message||'Ocurrió un error');});
+  if(b.dataset.busy)return; // F10: evita el doble clic mientras responde el servidor
+  b.dataset.busy='1';
+  Promise.resolve().then(function(){return fn(b.dataset.id,b);}).catch(function(err){toast(err.message||'Ocurrió un error');}).then(function(){delete b.dataset.busy;});
 });
 document.addEventListener('input',function(e){
-  if(e.target.id==='q'){ui.q=e.target.value;$('#plist').innerHTML=listHTML();}
+  if(e.target.id==='q'){
+    ui.q=e.target.value;
+    if(dropHiddenSelection()){var pac=$('.pac');pac.classList.remove('show-detail');pac.querySelector('.pac-detail').innerHTML=emptyPane();}
+    $('#plist').innerHTML=listHTML();
+  }
+  if(e.target.id==='stq'||e.target.id==='cq'){var id=e.target.id;ui[id]=e.target.value;render();var el=$('#'+id);if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length);}}
   if(e.target.id==='sq'){ui.sq=e.target.value;$('#srows').innerHTML=supplierRows();}
 });
 document.addEventListener('change',function(e){
@@ -1389,13 +1426,14 @@ document.addEventListener('change',function(e){
 $('#loginform').addEventListener('submit',async function(e){
   e.preventDefault();
   var err=$('#lerror'),btn=$('#lbtn');
-  err.textContent='';btn.disabled=true;
+  if(btn.disabled)return;
+  err.textContent='';btn.disabled=true;btn.textContent='Entrando…';
   try{
     await api('/login',{body:{email:$('#lemail').value,password:$('#lpass').value}});
     $('#lpass').value='';
     await start();
   }catch(ex){err.textContent=ex.message;}
-  btn.disabled=false;
+  btn.disabled=false;btn.textContent='Entrar';
 });
 $('#boot-retry').addEventListener('click',function(){
   $('#boot-retry').hidden=true;

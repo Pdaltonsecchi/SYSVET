@@ -436,6 +436,13 @@ add('GET', '/api/bootstrap', async (ctx) => {
 /* ============================================================
    Pacientes
    ============================================================ */
+// F2: si se completa, el peso tiene que ser mayor a 0 y como máximo 150 kg.
+function optWeight(v) {
+  if (v === '' || v == null) return null;
+  const n = U.reqNum(v, 'Peso', null, null);
+  if (!(n > 0) || n > 150) throw U.bad('El peso tiene que ser mayor a 0 y como máximo 150 kg');
+  return n;
+}
 function patientInput(b) {
   return {
     name: U.reqStr(b.name, 'Nombre', 100),
@@ -444,20 +451,20 @@ function patientInput(b) {
     sex: U.oneOf(b.sex, ['Macho', 'Hembra'], 'Sexo'),
     neutered: !!b.neutered,
     birth: U.optPastDate(b.birth, 'Fecha de nacimiento'),
-    weight: b.weight === '' || b.weight == null ? null : U.reqNum(b.weight, 'Peso', 0, 200),
+    weight: optWeight(b.weight),
     owner: U.reqStr(b.owner, 'Dueño', 150),
-    phone: U.optStr(b.phone, 50),
+    phone: U.optPhone(b.phone),
     email: U.checkEmail(U.optStr(b.email, 150)),
     notes: U.optStr(b.notes, 1000),
   };
 }
-const patientParams = (p) => [p.name, p.species, p.breed, p.sex, p.neutered, p.birth, p.weight, p.owner, p.phone, p.email, p.notes];
+const patientParams = (p) => [p.name, p.species, p.breed, p.sex, p.neutered, p.birth, p.weight, p.owner, p.phone.phone, p.email, p.notes, p.phone.norm];
 
 add('POST', '/api/patients', async (ctx) => {
   const p = patientInput(ctx.body);
   const r = await db.query(
-    'INSERT INTO patients (name, species, breed, sex, neutered, birth, weight, owner_name, phone, email, notes) ' +
-      'VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id',
+    'INSERT INTO patients (name, species, breed, sex, neutered, birth, weight, owner_name, phone, email, notes, phone_norm) ' +
+      'VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id',
     patientParams(p)
   );
   return { id: r.rows[0].id };
@@ -467,18 +474,20 @@ add('GET', '/api/patients/:id', async (ctx) => {
   const id = U.idParam(ctx.params.id);
   const r = await db.query('SELECT ' + PATIENT_COLS + ' FROM patients WHERE id = $1', [id]);
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el paciente');
-  const [v, d, m, c, s] = await Promise.all([
+  const [v, d, m, c, s, ap] = await Promise.all([
     db.query('SELECT id, name, applied_on, next_on, product_id, stock_qty FROM vaccines WHERE patient_id = $1 ORDER BY applied_on DESC, id DESC', [id]),
     db.query('SELECT id, on_date, title, notes FROM diagnoses WHERE patient_id = $1 ORDER BY on_date DESC, id DESC', [id]),
     db.query('SELECT id, on_date, name, dose, duration, product_id, stock_qty FROM medications WHERE patient_id = $1 ORDER BY on_date DESC, id DESC', [id]),
     db.query('SELECT id, on_date, concept, amount, method FROM charges WHERE patient_id = $1 ORDER BY on_date DESC, id DESC', [id]),
     db.query('SELECT id, on_date, title, notes FROM complementary_studies WHERE patient_id = $1 ORDER BY on_date DESC, id DESC', [id]),
+    db.query('SELECT COUNT(*) AS n FROM appointments WHERE patient_id = $1', [id]),
   ]);
   return Object.assign(mapPatient(r.rows[0]), {
     vaccines: v.rows.map(mapVaccine),
     diagnoses: d.rows.map((x) => ({ id: x.id, date: x.on_date, title: x.title, notes: x.notes })),
     meds: m.rows.map((x) => ({ id: x.id, date: x.on_date, name: x.name, dose: x.dose, duration: x.duration, productId: x.product_id || null, stockQty: x.stock_qty || 0 })),
     charges: c.rows.map((x) => ({ id: x.id, date: x.on_date, concept: x.concept, amount: Number(x.amount), method: x.method })),
+    appointmentCount: Number(ap.rows[0].n), // F6: turnos que se borran junto con el paciente
     studies: s.rows.map(mapStudy), // v2: estudios complementarios (ecografía, radiografía, análisis, etc.)
   });
 });
@@ -488,7 +497,7 @@ add('PUT', '/api/patients/:id', async (ctx) => {
   const p = patientInput(ctx.body);
   const r = await db.query(
     'UPDATE patients SET name = $1, species = $2, breed = $3, sex = $4, neutered = $5, birth = $6, weight = $7, ' +
-      'owner_name = $8, phone = $9, email = $10, notes = $11 WHERE id = $12 RETURNING id',
+      'owner_name = $8, phone = $9, email = $10, notes = $11, phone_norm = $12 WHERE id = $13 RETURNING id',
     patientParams(p).concat([id])
   );
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el paciente');
@@ -1186,7 +1195,8 @@ add('POST', '/api/restore', { admin: true, limit: 25 * 1024 * 1024 }, async (ctx
    v2 · Proveedores (ver a quién comprarle cada cosa)
    ============================================================ */
 function supplierInput(b) {
-  return [U.reqStr(b.name, 'Nombre', 200), U.optStr(b.phone, 50), U.checkEmail(U.optStr(b.email, 150)), U.optStr(b.description, 1000)];
+  const ph = U.optPhone(b.phone);
+  return [U.reqStr(b.name, 'Nombre', 200), ph.phone, U.checkEmail(U.optStr(b.email, 150)), U.optStr(b.description, 1000), ph.norm];
 }
 // Cualquier usuario logueado puede CONSULTAR proveedores (por ejemplo, para llamar a uno);
 // solo el administrador los da de alta, edita o elimina — mismo criterio que productos/servicios.
@@ -1225,13 +1235,13 @@ add('GET', '/api/suppliers/:id/detail', { admin: true }, async (ctx) => {
   };
 });
 add('POST', '/api/suppliers', { admin: true }, async (ctx) => {
-  const r = await db.query('INSERT INTO suppliers (name, phone, email, description) VALUES ($1, $2, $3, $4) RETURNING id', supplierInput(ctx.body));
+  const r = await db.query('INSERT INTO suppliers (name, phone, email, description, phone_norm) VALUES ($1, $2, $3, $4, $5) RETURNING id', supplierInput(ctx.body));
   return { id: r.rows[0].id };
 });
 add('PUT', '/api/suppliers/:id', { admin: true }, async (ctx) => {
   const id = U.idParam(ctx.params.id);
   const r = await db.query(
-    'UPDATE suppliers SET name = $1, phone = $2, email = $3, description = $4 WHERE id = $5 RETURNING id',
+    'UPDATE suppliers SET name = $1, phone = $2, email = $3, description = $4, phone_norm = $5 WHERE id = $6 RETURNING id',
     supplierInput(ctx.body).concat([id])
   );
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el proveedor');

@@ -114,10 +114,21 @@ textarea{resize:vertical}
 .rows{display:flex;flex-direction:column}
 .row{display:grid;gap:.75rem;align-items:center;padding:.65rem 0;border-top:1px solid var(--line)}
 .row:first-child{border-top:0}
-.row.vac{grid-template-columns:minmax(120px,1.4fr) 1fr 1fr minmax(150px,1.2fr) auto}
+.row>*{min-width:0}
+/* F8: grilla en dos líneas (nombre + acciones / fechas + estado): nada queda cortado ni desborda a 1150 px o a 360 px */
+.row.vac{grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;grid-template-areas:"name name acts" "ap next chip"}
+.row.vac .vname{grid-area:name;overflow-wrap:anywhere}
+.row.vac .vap{grid-area:ap}
+.row.vac .vnext{grid-area:next}
+.row.vac .chipcell{grid-area:chip}
+.row.vac .racts{grid-area:acts;justify-self:end}
+@media (min-width:1500px){
+  .row.vac{grid-template-columns:minmax(120px,1.4fr) 1fr 1fr minmax(130px,1fr) auto;grid-template-areas:"name ap next chip acts"}
+}
 .row .k{color:var(--muted);font-size:.82rem;display:block}
 .tl{display:flex;flex-direction:column}
-.tl-item{display:grid;grid-template-columns:96px 1fr auto;gap:.75rem;padding:.7rem 0;border-top:1px solid var(--line)}
+.tl-item>*{min-width:0;overflow-wrap:anywhere}
+.tl-item{display:grid;grid-template-columns:96px minmax(0,1fr) auto;gap:.75rem;padding:.7rem 0;border-top:1px solid var(--line)}
 .tl-item:first-child{border-top:0}
 .tl-item .d{color:var(--muted);font-variant-numeric:tabular-nums;font-size:.92rem}
 .tl-item p{margin:.15rem 0 0;color:var(--muted)}
@@ -224,15 +235,18 @@ dialog::backdrop{background:rgba(8,20,22,.55)}
   .pac.show-detail .pac-list{display:none}
   .pac:not(.show-detail) .pac-detail{display:none}
   .back{display:inline-flex}
-  .row.vac{grid-template-columns:1fr 1fr}
-  .row.vac .chipcell{grid-column:1/-1}
+  .row.vac{grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-areas:"name acts" "ap next" "chip chip"}
   .summary{grid-template-columns:1fr}
   .cashbox{grid-template-columns:1fr}
   .summary>div+div{border-left:0;border-top:1px solid var(--line)}
   .fields{grid-template-columns:1fr}
   .tl-item{grid-template-columns:1fr auto}
   .tl-item .d{grid-column:1/-1}
-  .cal-month{grid-template-columns:repeat(7,minmax(80px,1fr))}
+  /* En celular el mes se ve como agenda: una fila por día, solo los días con turnos (y hoy) */
+  .cal-month{grid-template-columns:1fr}
+  .cal-mday:not(.has){display:none}
+  .cal-mday{min-height:0}
+  .cal-mday.out{opacity:1}
   .cal-title{min-width:0}
 }
 @media (prefers-reduced-motion:reduce){#toast{transition:none}}
@@ -257,3 +271,8 @@ dialog::backdrop{background:rgba(8,20,22,.55)}
 .plainlist{margin:.2rem 0 .8rem;padding-left:1.2rem}
 .namebtn{font-size:1rem;padding-left:0}
 @media (max-width:820px){.cal-week{grid-template-columns:1fr}}
+
+/* F10: botón de envío ocupado ("Guardando…") */
+.btn.busy::before{content:"";display:inline-block;width:.85em;height:.85em;margin-right:.5em;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;vertical-align:-.1em;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.btn.busy::before{animation-duration:2s}}

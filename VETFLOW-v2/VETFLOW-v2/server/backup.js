@@ -202,6 +202,9 @@ async function restore(data, opts) {
         }
         await db.resetSequence(c, table);
       }
+      // El teléfono normalizado no viaja en las copias: se recalcula.
+      await c.query("UPDATE patients SET phone_norm = regexp_replace(phone, '\\D', '', 'g')");
+      await c.query("UPDATE suppliers SET phone_norm = regexp_replace(phone, '\\D', '', 'g')");
     });
   } catch (e) {
     console.error('Falló la restauración:', e.message);
