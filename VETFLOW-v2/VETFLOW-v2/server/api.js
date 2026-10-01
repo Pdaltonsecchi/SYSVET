@@ -106,7 +106,7 @@ const mapPatient = (r) => ({
   notes: r.notes,
 });
 const mapVaccine = (r) => ({ id: r.id, name: r.name, date: r.applied_on, next: r.next_on || '', productId: r.product_id || null, stockQty: r.stock_qty || 0 });
-const mapProduct = (r) => ({ id: r.id, name: r.name, category: r.category, stock: r.stock, min: r.min_stock, price: Number(r.price), species: r.species || '', cost: r.cost == null ? null : Number(r.cost) });
+const mapProduct = (r) => ({ id: r.id, name: r.name, category: r.category, stock: r.stock, min: r.min_stock, price: Number(r.price), species: r.species || '', cost: r.cost == null ? null : Number(r.cost), supplierId: r.supplier_id || null });
 // v2: productId (nullable) es el producto del stock que se descuenta al aplicar esta vacuna.
 const mapService = (r) => ({ id: r.id, name: r.name, category: r.category, price: Number(r.price), productId: r.product_id || null, species: r.species || '', items: [] });
 const mapSupplier = (r) => ({ id: r.id, name: r.name, phone: r.phone, email: r.email, description: r.description });
@@ -120,7 +120,18 @@ const mapAppointment = (r) => ({
   date: r.appointment_date,
   time: String(r.appointment_time).slice(0, 5),
   type: r.appointment_type,
+  duration: r.duration_min || 30,
+  endTime: addMinutes(String(r.appointment_time).slice(0, 5), r.duration_min || 30),
+  patientOwner: r.owner_name || '',
+  patientSpecies: r.species || '',
+  patientBreed: r.breed || '',
+  patientPhone: r.phone || '',
 });
+// Hora de fin ("HH:MM") sumando minutos a la de inicio (da la vuelta a las 24 h si hace falta).
+function addMinutes(hhmm, min) {
+  const t = (Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5)) + min) % 1440;
+  return String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0');
+}
 const mapCash = (r) => ({
   id: r.id,
   date: r.on_date,
@@ -149,7 +160,7 @@ async function listProducts(admin) {
   const cost = admin
     ? "(SELECT m.unit_price FROM stock_movements m WHERE m.product_id = p.id AND m.qty > 0 AND m.unit_price > 0 AND NOT m.voided AND m.reason IN ('Compra', 'Stock inicial') ORDER BY m.on_date DESC, m.id DESC LIMIT 1)"
     : 'NULL';
-  const r = await db.query('SELECT p.id, p.name, p.category, p.stock, p.min_stock, p.price, p.species, ' + cost + ' AS cost FROM products p ORDER BY lower(p.name), p.id');
+  const r = await db.query('SELECT p.id, p.name, p.category, p.stock, p.min_stock, p.price, p.species, p.supplier_id, ' + cost + ' AS cost FROM products p ORDER BY lower(p.name), p.id');
   return r.rows.map(mapProduct);
 }
 async function listServices() {
@@ -215,6 +226,14 @@ async function cashSummary() {
 async function mustExist(table, id, message) {
   const r = await db.query('SELECT id FROM ' + table + ' WHERE id = $1', [id]);
   if (!r.rows[0]) throw new HttpError(404, message);
+}
+
+/** Proveedor opcional: si se indica, tiene que existir. */
+async function optSupplier(q, v) {
+  if (v == null || v === '') return null;
+  const id = U.idParam(v);
+  if (!(await q.query('SELECT 1 FROM suppliers WHERE id = $1', [id])).rows[0]) throw new HttpError(404, 'No se encontró el proveedor');
+  return id;
 }
 
 /**
@@ -403,8 +422,13 @@ add('PATCH', '/api/users/:id', { admin: true }, async (ctx) => {
    Arranque de la pantalla
    ============================================================ */
 add('GET', '/api/bootstrap', async (ctx) => {
-  const [patients, products, services] = await Promise.all([listPatients(), listProducts(ctx.user.role === 'admin'), listServices()]);
-  const out = { user: ctx.user, patients, products, services };
+  const [patients, products, services, sup] = await Promise.all([
+    listPatients(),
+    listProducts(ctx.user.role === 'admin'),
+    listServices(),
+    db.query('SELECT id, name, phone, email, description FROM suppliers ORDER BY lower(name), id'),
+  ]);
+  const out = { user: ctx.user, patients, products, services, suppliers: sup.rows.map(mapSupplier) };
   if (ctx.user.role === 'admin') out.summary = await cashSummary();
   return out;
 });
@@ -777,6 +801,7 @@ add('POST', '/api/products', { admin: true }, async (ctx) => {
   const category = U.oneOf(b.category, U.PROD_CATS, 'Categoría');
   const price = U.money(b.price, 'Precio de venta');
   const species = U.optSpecies(b.species, category);
+  const supplierId = await optSupplier(db, b.supplierId);
   const min = U.reqInt(b.min == null || b.min === '' ? 0 : b.min, 'Stock mínimo', 0, 100000);
   const stock = U.reqInt(b.stock == null || b.stock === '' ? 0 : b.stock, 'Stock inicial', 0, 100000);
   // v2: se carga precio unitario y el costo total se calcula solo (cantidad × unitario).
@@ -785,19 +810,19 @@ add('POST', '/api/products', { admin: true }, async (ctx) => {
   const method = stock > 0 && cost > 0 ? U.oneOf(b.method, U.METHODS, 'Forma de pago') : null;
   const today = U.todayAR();
   return db.tx(async (c) => {
-    const r = await c.query('INSERT INTO products (name, category, stock, min_stock, price, species) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id', [
-      name, category, stock, min, price, species,
+    const r = await c.query('INSERT INTO products (name, category, stock, min_stock, price, species, supplier_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id', [
+      name, category, stock, min, price, species, supplierId,
     ]);
     const id = r.rows[0].id;
     if (stock > 0) {
       const mv = await c.query(
-        'INSERT INTO stock_movements (product_id, product_name, on_date, qty, reason, created_by, unit_price) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
-        [id, name, today, stock, 'Stock inicial', ctx.user.id, unitPrice]
+        'INSERT INTO stock_movements (product_id, product_name, on_date, qty, reason, created_by, unit_price, supplier_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
+        [id, name, today, stock, 'Stock inicial', ctx.user.id, unitPrice, supplierId]
       );
       if (cost > 0) {
         await c.query(
-          'INSERT INTO cash_movements (on_date, kind, concept, category, method, amount, created_by, stock_movement_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-          [today, 'out', 'Compra de stock – ' + (stock > 1 ? stock + ' × ' : '') + name, 'Compra de stock', method, cost, ctx.user.id, mv.rows[0].id]
+          'INSERT INTO cash_movements (on_date, kind, concept, category, method, amount, created_by, stock_movement_id, supplier_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+          [today, 'out', 'Compra de stock – ' + (stock > 1 ? stock + ' × ' : '') + name, 'Compra de stock', method, cost, ctx.user.id, mv.rows[0].id, supplierId]
         );
       }
     }
@@ -809,13 +834,15 @@ add('PUT', '/api/products/:id', { admin: true }, async (ctx) => {
   const id = U.idParam(ctx.params.id);
   const b = ctx.body;
   const category = U.oneOf(b.category, U.PROD_CATS, 'Categoría');
-  const r = await db.query('UPDATE products SET name = $1, category = $2, price = $3, min_stock = $4, species = $5 WHERE id = $6 RETURNING id', [
+  const supplierId = await optSupplier(db, b.supplierId);
+  const r = await db.query('UPDATE products SET name = $1, category = $2, price = $3, min_stock = $4, species = $5, supplier_id = $7 WHERE id = $6 RETURNING id', [
     U.reqStr(b.name, 'Nombre', 200),
     category,
     U.money(b.price, 'Precio de venta'),
     U.reqInt(b.min == null || b.min === '' ? 0 : b.min, 'Stock mínimo', 0, 100000),
     U.optSpecies(b.species, category),
     id,
+    supplierId,
   ]);
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el producto');
 });
@@ -835,18 +862,19 @@ add('POST', '/api/products/:id/purchase', { admin: true }, async (ctx) => {
   const date = U.pastDate(b.date, 'Fecha de compra');
   const toCash = !!b.cash && cost > 0;
   const method = toCash ? U.oneOf(b.method, U.METHODS, 'Forma de pago') : null;
+  const supplierId = await optSupplier(db, b.supplierId);
   return db.tx(async (c) => {
     const r = await c.query('UPDATE products SET stock = stock + $1 WHERE id = $2 RETURNING name, stock', [qty, id]);
     if (!r.rows[0]) throw new HttpError(404, 'No se encontró el producto');
     const p = r.rows[0];
     const mv = await c.query(
-      'INSERT INTO stock_movements (product_id, product_name, on_date, qty, reason, created_by, unit_price) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
-      [id, p.name, date, qty, 'Compra', ctx.user.id, unitPrice]
+      'INSERT INTO stock_movements (product_id, product_name, on_date, qty, reason, created_by, unit_price, supplier_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
+      [id, p.name, date, qty, 'Compra', ctx.user.id, unitPrice, supplierId]
     );
     if (toCash) {
       await c.query(
-        'INSERT INTO cash_movements (on_date, kind, concept, category, method, amount, created_by, stock_movement_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-        [date, 'out', 'Compra de stock – ' + (qty > 1 ? qty + ' × ' : '') + p.name, 'Compra de stock', method, cost, ctx.user.id, mv.rows[0].id]
+        'INSERT INTO cash_movements (on_date, kind, concept, category, method, amount, created_by, stock_movement_id, supplier_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+        [date, 'out', 'Compra de stock – ' + (qty > 1 ? qty + ' × ' : '') + p.name, 'Compra de stock', method, cost, ctx.user.id, mv.rows[0].id, supplierId]
       );
     }
     return { ok: true, stock: p.stock, cost };
@@ -1027,8 +1055,9 @@ add('POST', '/api/cash', { admin: true }, async (ctx) => {
     throw new HttpError(409, 'La fecha es posterior a hoy, ¿es correcto?');
   }
   const kind = U.oneOf(b.type, ['in', 'out'], 'Tipo');
+  const supplierId = kind === 'out' ? await optSupplier(db, b.supplierId) : null;
   const r = await db.query(
-    'INSERT INTO cash_movements (on_date, kind, concept, category, method, amount, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+    'INSERT INTO cash_movements (on_date, kind, concept, category, method, amount, created_by, supplier_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
     [
       date,
       kind,
@@ -1037,6 +1066,7 @@ add('POST', '/api/cash', { admin: true }, async (ctx) => {
       U.oneOf(b.method, U.METHODS, 'Forma de pago'),
       U.moneyPos(b.amount, 'Monto'),
       ctx.user.id,
+      supplierId,
     ]
   );
   return { id: r.rows[0].id };
@@ -1160,9 +1190,39 @@ function supplierInput(b) {
 }
 // Cualquier usuario logueado puede CONSULTAR proveedores (por ejemplo, para llamar a uno);
 // solo el administrador los da de alta, edita o elimina — mismo criterio que productos/servicios.
+// Compras de un proveedor: las de stock (con precio unitario) y los egresos manuales que no vienen de una compra.
+const SUPPLIER_PURCHASES =
+  "SELECT 'stock' AS src, m.id, m.on_date, m.product_name AS concept, m.qty, m.unit_price, ROUND(m.qty * m.unit_price, 2) AS total FROM stock_movements m " +
+  "WHERE m.supplier_id = $1 AND m.qty > 0 AND NOT m.voided AND m.unit_price > 0 AND m.reason IN ('Compra', 'Stock inicial') " +
+  "UNION ALL SELECT 'cash', c.id, c.on_date, c.concept, NULL, NULL, c.amount FROM cash_movements c " +
+  "WHERE c.supplier_id = $1 AND c.kind = 'out' AND c.stock_movement_id IS NULL";
 add('GET', '/api/suppliers', async () => {
-  const r = await db.query('SELECT id, name, phone, email, description FROM suppliers ORDER BY lower(name), id');
-  return { items: r.rows.map(mapSupplier) };
+  const r = await db.query(
+    'SELECT s.id, s.name, s.phone, s.email, s.description, ' +
+      '(SELECT COUNT(*) FROM products p WHERE p.supplier_id = s.id) AS products, ' +
+      "(SELECT COUNT(*) FROM stock_movements m WHERE m.supplier_id = s.id AND m.qty > 0 AND NOT m.voided AND m.unit_price > 0 AND m.reason IN ('Compra', 'Stock inicial')) + " +
+      "(SELECT COUNT(*) FROM cash_movements c WHERE c.supplier_id = s.id AND c.kind = 'out' AND c.stock_movement_id IS NULL) AS purchases " +
+      'FROM suppliers s ORDER BY lower(s.name), s.id'
+  );
+  return { items: r.rows.map((x) => Object.assign(mapSupplier(x), { productCount: Number(x.products), purchaseCount: Number(x.purchases) })) };
+});
+// D1: ficha de un proveedor: sus productos y su historial de compras con el total gastado (solo administrador: son montos).
+add('GET', '/api/suppliers/:id/detail', { admin: true }, async (ctx) => {
+  const id = U.idParam(ctx.params.id);
+  const sup = (await db.query('SELECT id, name, phone, email, description FROM suppliers WHERE id = $1', [id])).rows[0];
+  if (!sup) throw new HttpError(404, 'No se encontró el proveedor');
+  const [prods, buys, tot] = await Promise.all([
+    db.query('SELECT id, name, category, stock FROM products WHERE supplier_id = $1 ORDER BY lower(name)', [id]),
+    db.query('SELECT * FROM (' + SUPPLIER_PURCHASES + ') t ORDER BY on_date DESC, id DESC LIMIT 300', [id]),
+    db.query('SELECT COALESCE(SUM(total), 0) AS total, COUNT(*) AS n FROM (' + SUPPLIER_PURCHASES + ') t', [id]),
+  ]);
+  return {
+    supplier: mapSupplier(sup),
+    products: prods.rows,
+    purchases: buys.rows.map((x) => ({ source: x.src, date: x.on_date, concept: x.concept, qty: x.qty, unitPrice: x.unit_price == null ? null : Number(x.unit_price), total: Number(x.total) })),
+    totalSpent: U.round2(Number(tot.rows[0].total)),
+    purchaseCount: Number(tot.rows[0].n),
+  };
 });
 add('POST', '/api/suppliers', { admin: true }, async (ctx) => {
   const r = await db.query('INSERT INTO suppliers (name, phone, email, description) VALUES ($1, $2, $3, $4) RETURNING id', supplierInput(ctx.body));
@@ -1193,6 +1253,8 @@ function appointmentInput(b) {
     date: U.reqDate(b.date, 'Fecha'),
     time: U.reqTime(b.time, 'Hora'),
     type: U.oneOf(b.type, U.APPT_TYPES, 'Tipo de turno'),
+    // E3: duración en minutos; si no viene, la habitual del tipo de turno.
+    duration: U.reqInt(b.duration == null || b.duration === '' ? U.APPT_DURATIONS[U.oneOf(b.type, U.APPT_TYPES, 'Tipo de turno')] : b.duration, 'Duración', 5, 720),
   };
 }
 add('GET', '/api/appointments', async (ctx) => {
@@ -1200,7 +1262,7 @@ add('GET', '/api/appointments', async (ctx) => {
   const to = U.reqDate(ctx.query.get('to') || '', 'Hasta');
   if (to < from) throw U.bad('El rango de fechas no es válido');
   const r = await db.query(
-    'SELECT a.id, a.patient_id, p.name AS patient_name, a.title, a.description, a.appointment_date, a.appointment_time, a.appointment_type ' +
+    'SELECT a.id, a.patient_id, p.name AS patient_name, p.owner_name, p.species, p.breed, p.phone, a.title, a.description, a.appointment_date, a.appointment_time, a.appointment_type, a.duration_min ' +
       'FROM appointments a JOIN patients p ON p.id = a.patient_id ' +
       'WHERE a.appointment_date BETWEEN $1 AND $2 ORDER BY a.appointment_date, a.appointment_time, a.id',
     [from, to]
@@ -1211,9 +1273,9 @@ add('POST', '/api/appointments', async (ctx) => {
   const a = appointmentInput(ctx.body);
   await mustExist('patients', a.patientId, 'No se encontró el paciente');
   const r = await db.query(
-    'INSERT INTO appointments (patient_id, title, description, appointment_date, appointment_time, appointment_type) ' +
-      'VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
-    [a.patientId, a.title, a.description, a.date, a.time, a.type]
+    'INSERT INTO appointments (patient_id, title, description, appointment_date, appointment_time, appointment_type, duration_min) ' +
+      'VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+    [a.patientId, a.title, a.description, a.date, a.time, a.type, a.duration]
   );
   return { id: r.rows[0].id };
 });
@@ -1222,9 +1284,9 @@ add('PUT', '/api/appointments/:id', async (ctx) => {
   const a = appointmentInput(ctx.body);
   await mustExist('patients', a.patientId, 'No se encontró el paciente');
   const r = await db.query(
-    'UPDATE appointments SET patient_id = $1, title = $2, description = $3, appointment_date = $4, appointment_time = $5, appointment_type = $6 ' +
+    'UPDATE appointments SET patient_id = $1, title = $2, description = $3, appointment_date = $4, appointment_time = $5, appointment_type = $6, duration_min = $8 ' +
       'WHERE id = $7 RETURNING id',
-    [a.patientId, a.title, a.description, a.date, a.time, a.type, id]
+    [a.patientId, a.title, a.description, a.date, a.time, a.type, id, a.duration]
   );
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el turno');
 });

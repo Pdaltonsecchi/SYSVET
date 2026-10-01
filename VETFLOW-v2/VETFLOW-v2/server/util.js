@@ -21,6 +21,8 @@ const CASH_OUT_CATS = ['Compra de stock', 'Alquiler y servicios', 'Sueldos', 'Re
 const ADJUST_REASONS = ['Rotura', 'Vencimiento', 'Error de carga', 'Uso interno', 'Otro'];
 // v2: tipos de turno del calendario, con su color de bloque (coherente en cualquier paleta del sistema).
 const APPT_TYPES = ['consulta', 'vacuna', 'cirugia', 'otro'];
+// E3: duración habitual (en minutos) de cada tipo de turno.
+const APPT_DURATIONS = { consulta: 20, vacuna: 10, cirugia: 120, otro: 30 };
 const APPT_LABELS = { consulta: 'Consulta', vacuna: 'Vacuna', cirugia: 'Cirugía', otro: 'Otro' };
 
 const TZ = 'America/Argentina/Buenos_Aires';
@@ -182,7 +184,7 @@ function clientIp(req) {
 
 module.exports = {
   HttpError, bad, HANDLED,
-  METHODS, SPECIES_OPTS, PROD_CATS, SERV_CATS, CASH_IN_CATS, CASH_OUT_CATS, ADJUST_REASONS, APPT_TYPES, APPT_LABELS,
+  METHODS, SPECIES_OPTS, PROD_CATS, SERV_CATS, CASH_IN_CATS, CASH_OUT_CATS, ADJUST_REASONS, APPT_TYPES, APPT_DURATIONS, APPT_LABELS,
   TZ, todayAR, addDays, monthStart, monthEnd, round2,
   reqStr, optStr, reqDate, optDate, pastDate, optPastDate, reqTime, reqNum, reqInt, money, moneyPos, oneOf, optSpecies, idParam, checkEmail,
   sendJson, readBody, parseCookies, clientIp,

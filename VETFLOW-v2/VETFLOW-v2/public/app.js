@@ -16,6 +16,11 @@ var fmtDate=function(s){if(!s)return '—';var a=String(s).slice(0,10).split('-'
 // Los centavos se muestran solo cuando existen ($1.250 / $1.250,50).
 var money=function(n){n=Number(n)||0;var d=Math.abs(n*100-Math.round(n*100/100)*100)<0.5?0:2;return new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',minimumFractionDigits:d,maximumFractionDigits:2}).format(n);};
 var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});};
+// Texto sin tildes ni mayúsculas, para comparar y buscar ("Gómez" == "gomez").
+var norm=function(s){return String(s==null?'':s).normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase();};
+// Apellido del dueño (última palabra de su nombre), para distinguir pacientes homónimos.
+var surname=function(o){var w=String(o||'').trim().split(/\s+/);return w[w.length-1]||'';};
+var toMin=function(t){return Number(t.slice(0,2))*60+Number(t.slice(3,5));};
 var plural=function(n,a,b){return n+' '+(n===1?a:b);};
 var fmtTs=function(v){var d=new Date(v);if(isNaN(d.getTime()))return '';return d.toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});};
 // v2: lunes de la semana que contiene "iso" (semana de lunes a domingo).
@@ -42,11 +47,11 @@ var APPT_VIEWS=[['week','Semana'],['2weeks','2 semanas'],['3weeks','3 semanas'],
 /* ============================================================
    Estado
    ============================================================ */
-var S={user:null,patients:[],products:[],services:[],summary:null};
+var S={user:null,patients:[],products:[],services:[],suppliers:[],summary:null};
 var ui={view:'pacientes',sel:null,detail:null,filter:'all',q:'',tab:'stock',cat:'all',
   cashp:'month',cashf:'all',cashm:'all',cash:null,
   rep:'90',rmonthly:null,rservices:null,rproducts:null,backups:null,users:null,
-  suppliers:null, // v2
+  suppliers:null,sq:'', // v2: proveedores y su búsqueda
   cal:{view:'week',anchor:todayIso()},appts:null}; // v2: calendario de turnos
 var main=$('#main'),dlg=$('#dlg');
 var isAdmin=function(){return !!S.user&&S.user.role==='admin';};
@@ -83,7 +88,7 @@ function showLogin(msg){
   $('#lerror').textContent=msg||'';
 }
 function applyBootstrap(d){
-  S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.summary=d.summary||null;
+  S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.suppliers=d.suppliers||[];S.summary=d.summary||null;
 }
 async function start(){
   var d=await api('/bootstrap');
@@ -113,7 +118,7 @@ async function loadView(){
   }else if(ui.view==='farmacia'&&ui.tab==='caja'&&isAdmin()){
     await loadCash();
   }else if(ui.view==='proveedores'){
-    ui.suppliers=(await api('/suppliers')).items;
+    ui.suppliers=(await api('/suppliers')).items;S.suppliers=ui.suppliers;
   }else if(ui.view==='reportes'&&isAdmin()){
     await loadReports();
   }else if(ui.view==='copias'&&isAdmin()){
@@ -572,28 +577,42 @@ function viewUsers(){
 /* ============================================================
    v2 · Proveedores
    ============================================================ */
+function supplierRows(){
+  var admin=isAdmin(),q=norm(ui.sq).trim(),qd=ui.sq.replace(/\D/g,'');
+  var L=(ui.suppliers||[]).filter(function(s){
+    if(!q)return true;
+    return norm(s.name+' '+s.phone+' '+s.email+' '+s.description).indexOf(q)>=0||(qd.length>=3&&s.phone.replace(/\D/g,'').indexOf(qd)>=0);
+  });
+  var rows=L.map(function(s){
+    var name=admin?'<button class="link namebtn" data-action="supplier-view" data-id="'+s.id+'">'+esc(s.name)+'</button>':'<b>'+esc(s.name)+'</b>';
+    return '<tr><td>'+name+(s.description?'<br><small>'+esc(s.description)+'</small>':'')+'</td><td>'+esc(s.phone)+'</td><td>'+esc(s.email)+'</td>'+
+      (admin?'<td class="act"><button class="link" data-action="edit-supplier" data-id="'+s.id+'">Editar</button><button class="link bad" data-action="del-supplier" data-id="'+s.id+'">Eliminar</button></td>':'')+'</tr>';
+  }).join('');
+  var empty=(ui.suppliers||[]).length?'No hay proveedores con esa búsqueda.':admin?'Todavía no cargaste proveedores. Empezá con “Agregar proveedor”.':'Todavía no hay proveedores cargados.';
+  return rows||'<tr><td colspan="'+(admin?4:3)+'" class="empty">'+empty+'</td></tr>';
+}
 function viewProveedores(){
   if(!ui.suppliers)return '<section class="farm"><div class="head"><h1>Proveedores</h1></div><p class="empty">Cargando…</p></section>';
   var admin=isAdmin();
-  var rows=ui.suppliers.map(function(s){
-    return '<tr><td><b>'+esc(s.name)+'</b>'+(s.description?'<br><small>'+esc(s.description)+'</small>':'')+'</td><td>'+esc(s.phone)+'</td><td>'+esc(s.email)+'</td>'+
-      (admin?'<td class="act"><button class="link" data-action="edit-supplier" data-id="'+s.id+'">Editar</button><button class="link bad" data-action="del-supplier" data-id="'+s.id+'">Eliminar</button></td>':'')+'</tr>';
-  }).join('');
-  var empty=admin?'Todavía no cargaste proveedores. Empezá con “Agregar proveedor”.':'Todavía no hay proveedores cargados.';
   return '<section class="farm"><div class="head"><h1>Proveedores</h1>'+(admin?'<button class="btn primary" data-action="new-supplier">Agregar proveedor</button>':'')+'</div>'+
-    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Proveedor</th><th>Teléfono</th><th>Email</th>'+(admin?'<th></th>':'')+'</tr></thead><tbody>'+
-    (rows||'<tr><td colspan="'+(admin?4:3)+'" class="empty">'+empty+'</td></tr>')+'</tbody></table></div></section>';
+    '<input id="sq" type="search" placeholder="Buscar por nombre, teléfono, email o descripción" value="'+esc(ui.sq)+'" aria-label="Buscar proveedor" style="margin-bottom:1rem">'+
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Proveedor</th><th>Teléfono</th><th>Email</th>'+(admin?'<th></th>':'')+'</tr></thead><tbody id="srows">'+supplierRows()+'</tbody></table></div></section>';
 }
 
 /* ============================================================
    v2 · Calendario de turnos
    ============================================================ */
 var WEEKDAYS=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+// Texto de un turno en la grilla: "10:00 · Luna (Gómez)" (el apellido distingue pacientes homónimos).
+var apptLabel=function(a){return a.time.slice(0,5)+' · '+esc(a.patientName)+' ('+esc(surname(a.patientOwner))+')';};
+function dayAppts(iso){return (ui.appts||[]).filter(function(a){return a.date===iso;}).sort(function(a,b){return a.time.localeCompare(b.time);});}
 function calDayColumn(iso){
-  var list=(ui.appts||[]).filter(function(a){return a.date===iso;}).sort(function(a,b){return a.time.localeCompare(b.time);});
+  var list=dayAppts(iso);
   var d=parse(iso),isToday=iso===todayIso();
+  // E3: en la vista Semana el alto del bloque refleja la duración del turno.
   var blocks=list.map(function(a){
-    return '<button class="appt '+a.type+'" data-action="appt-view" data-id="'+a.id+'">'+a.time.slice(0,5)+' · '+esc(a.patientName)+'<small>'+esc(a.title)+'</small></button>';
+    var h=ui.cal.view==='week'?' style="min-height:'+Math.round(Math.min(Math.max(38,a.duration*0.9),180))+'px"':'';
+    return '<button class="appt '+a.type+'"'+h+' data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'<small>'+esc(a.title)+'</small></button>';
   }).join('');
   return '<div class="cal-day'+(isToday?' today':'')+'"><div class="cal-day-head"><span>'+WEEKDAYS[(d.getDay()+6)%7]+'</span><b>'+d.getDate()+'</b>'+
     '<button class="cal-add" data-action="cal-add-day" data-v="'+iso+'" aria-label="Agregar turno este día">+</button></div>'+blocks+'</div>';
@@ -601,27 +620,42 @@ function calDayColumn(iso){
 function calMonthGrid(){
   var r=calRange(),curMonth=ui.cal.anchor.slice(0,7),cells='',d=r[0];
   while(d<=r[1]){
-    var list=(ui.appts||[]).filter(function(a){return a.date===d;}).sort(function(a,b){return a.time.localeCompare(b.time);});
+    var list=dayAppts(d);
     var out=d.slice(0,7)!==curMonth,isToday=d===todayIso();
     var shown=list.slice(0,3).map(function(a){
-      return '<button class="cal-chip '+a.type+'" data-action="appt-view" data-id="'+a.id+'">'+a.time.slice(0,5)+' '+esc(a.patientName)+'</button>';
+      return '<button class="cal-chip '+a.type+'" data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'</button>';
     }).join('');
-    var more=list.length>3?'<button class="cal-more" data-action="cal-day-focus" data-v="'+d+'">+'+(list.length-3)+' más</button>':'';
+    var more=list.length>3?'<button class="cal-more" data-action="cal-day-list" data-v="'+d+'">+'+(list.length-3)+' más</button>':'';
     cells+='<div class="cal-mday'+(out?' out':'')+(isToday?' today':'')+'"><div class="mhead"><span>'+Number(d.slice(8,10))+'</span>'+
       '<button class="cal-add" data-action="cal-add-day" data-v="'+d+'" aria-label="Agregar turno este día">+</button></div>'+shown+more+'</div>';
     d=shiftDays(1,d);
   }
   return '<div class="cal-month">'+cells+'</div>';
 }
+// E1: "+N más" abre un listado con todos los turnos de ese día.
+function dayListDialog(iso){
+  var list=dayAppts(iso);
+  var rows=list.map(function(a){
+    return '<button type="button" class="appt '+a.type+'" data-id="'+a.id+'">'+apptLabel(a)+'<small>'+esc(a.title)+' · hasta las '+a.endTime+'</small></button>';
+  }).join('');
+  dlg.innerHTML='<form class="dform"><h2>Turnos del '+fmtDate(iso)+'</h2><div class="daylist">'+(rows||'<p class="empty">No hay turnos este día.</p>')+'</div>'+
+    '<div class="actions"><button type="button" class="btn ghost" data-close>Cerrar</button><button type="button" class="btn primary" data-x="add">Agregar turno</button></div></form>';
+  dlg.querySelector('[data-close]').addEventListener('click',function(){dlg.close();});
+  dlg.querySelector('[data-x="add"]').addEventListener('click',function(){dlg.close();appointmentForm(null,iso);});
+  dlg.querySelectorAll('.daylist .appt').forEach(function(b){b.addEventListener('click',function(){
+    var a=(ui.appts||[]).find(function(x){return String(x.id)===b.dataset.id;});if(a)appointmentDetails(a);
+  });});
+  dlg.showModal();
+}
 function viewCalendario(){
   if(!ui.appts)return '<section class="farm"><div class="head"><h1>Calendario</h1></div><p class="empty">Cargando…</p></section>';
-  var cols=ui.cal.view==='week'?7:ui.cal.view==='2weeks'?14:ui.cal.view==='3weeks'?21:null;
   var body;
   if(ui.cal.view==='month')body=calMonthGrid();
   else{
+    // E5: semana, 2 y 3 semanas se muestran como grilla de una fila por semana (7 columnas), sin scroll horizontal.
     var r=calRange(),cells='',d=r[0];
     while(d<=r[1]){cells+=calDayColumn(d);d=shiftDays(1,d);}
-    body='<div class="cal-scroll"><div class="cal-week" style="--cal-cols:'+cols+'">'+cells+'</div></div>';
+    body='<div class="cal-week">'+cells+'</div>';
   }
   return '<section class="farm"><div class="head"><h1>Calendario</h1><button class="btn primary" data-action="new-appt">Agregar turno</button></div>'+
     '<div class="cal-head"><div class="cal-nav"><button data-action="cal-prev" aria-label="Anterior">‹</button><button class="btn" data-action="cal-today">Hoy</button><button data-action="cal-next" aria-label="Siguiente">›</button></div>'+
@@ -836,6 +870,7 @@ function chargeForm(p){
   });
   addLine();
 }
+var supplierOpts=function(){return [['','Sin proveedor']].concat((S.suppliers||[]).map(function(x){return [x.id,x.name];}));};
 // C6: si un egreso en efectivo deja la caja en negativo, se avisa antes de guardar.
 // Devuelve true para seguir o false si el usuario prefiere corregir (por ejemplo, cambiar la forma de pago).
 async function confirmNegativeCash(amount,method){
@@ -868,6 +903,7 @@ function productForm(x){
   var pf=openForm({title:isNew?'Nuevo producto':'Editar producto',
     body:'<div class="fields">'+fld('Nombre','name',{value:x.name,req:true,full:true})+fld('Categoría','category',{opts:PROD_CATS,value:x.category})+fld('Precio de venta','price',{type:'number',min:0,step:'0.01',value:x.price,req:true})+
     fld('Especie (solo vacunas, opcional)','species',{opts:SPECIES_OPTS,value:x.species,full:true})+
+    fld('Proveedor habitual (opcional)','supplierId',{opts:supplierOpts(),value:x.supplierId,full:true})+
     fld('Stock mínimo (para avisar)','min',{type:'number',min:0,step:'1',value:x.min,req:true})+
     (isNew?fld('Stock inicial','stock',{type:'number',min:0,step:'1',value:0,req:true})+
       // v2: se carga precio unitario; el costo total (para la caja) se calcula solo.
@@ -879,8 +915,8 @@ function productForm(x){
       if(isNew){
         var cost=Number(d.stock)*Number(d.unitPrice);
         if(cost>0&&!(await confirmNegativeCash(cost,d.method)))return false;
-        await api('/products',{body:{name:d.name,category:d.category,price:d.price,min:d.min,stock:d.stock,unitPrice:d.unitPrice,method:d.method,species:d.species}});await reload();toast('Producto agregado');}
-      else{await api('/products/'+x.id,{method:'PUT',body:{name:d.name,category:d.category,price:d.price,min:d.min,species:d.species}});await reload();toast('Producto guardado');}
+        await api('/products',{body:{name:d.name,category:d.category,price:d.price,min:d.min,stock:d.stock,unitPrice:d.unitPrice,method:d.method,species:d.species,supplierId:d.supplierId||null}});await reload();toast('Producto agregado');}
+      else{await api('/products/'+x.id,{method:'PUT',body:{name:d.name,category:d.category,price:d.price,min:d.min,species:d.species,supplierId:d.supplierId||null}});await reload();toast('Producto guardado');}
     }});
   bindSpecies(pf);
   if(isNew)bindTotalPreview(pf,'stock','unitPrice');
@@ -889,12 +925,13 @@ function buyForm(x){
   var f=openForm({title:'Agregar stock de '+esc(x.name),
     body:'<div class="fields">'+fld('Cantidad que llegó','qty',{type:'number',min:1,step:'1',value:1,req:true})+fld('Precio unitario que pagaste','unitPrice',{type:'number',min:0.01,step:'0.01',req:true})+
       fld('Forma de pago','method',{opts:PAY,value:'Transferencia'})+fld('Fecha','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+
+      fld('Proveedor (opcional)','supplierId',{opts:supplierOpts(),value:x.supplierId,full:true})+
       fld('Registrar como egreso en caja','cash',{type:'checkbox',value:true,full:true})+'</div><p>Stock actual: '+x.stock+'.</p>',
     submit:'Agregar stock',
     onSubmit:async function(d){
       var cost=Math.round(Number(d.qty)*Number(d.unitPrice)*100)/100;
       if(d.cash&&!(await confirmNegativeCash(cost,d.method)))return false;
-      var r=await api('/products/'+x.id+'/purchase',{body:{qty:d.qty,unitPrice:d.unitPrice,method:d.method,date:d.date,cash:!!d.cash}});
+      var r=await api('/products/'+x.id+'/purchase',{body:{qty:d.qty,unitPrice:d.unitPrice,method:d.method,date:d.date,cash:!!d.cash,supplierId:d.supplierId||null}});
       await reload();toast('Se agregaron '+d.qty+' al stock'+(d.cash&&r.cost>0?' · egreso de '+money(r.cost):''));
     }});
   bindTotalPreview(f,'qty','unitPrice');
@@ -1002,15 +1039,48 @@ function supplierForm(s){
     }});
 }
 
+// D1: ficha del proveedor: productos que se le compran e historial de compras con el total gastado.
+function supplierDetail(id){
+  dlg.innerHTML='<form class="dform"><h2>Proveedor</h2><p class="empty">Cargando…</p><div class="actions"><button type="button" class="btn ghost" data-close>Cerrar</button></div></form>';
+  dlg.querySelector('[data-close]').addEventListener('click',function(){dlg.close();});
+  dlg.showModal();
+  api('/suppliers/'+id+'/detail').then(function(r){
+    if(!dlg.open)return;
+    var sp=r.supplier;
+    var prods=r.products.length?'<ul class="plainlist">'+r.products.map(function(p){return '<li><b>'+esc(p.name)+'</b> <small>'+esc(p.category)+' · stock: '+p.stock+'</small></li>';}).join('')+'</ul>':'<p class="empty">Todavía no hay productos con este proveedor habitual.</p>';
+    var buys=r.purchases.length?'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Concepto</th><th class="num">Cant.</th><th class="num">Precio unit.</th><th class="num">Total</th></tr></thead><tbody>'+r.purchases.map(function(x){
+      return '<tr><td>'+fmtDate(x.date)+'</td><td>'+esc(x.concept)+'</td><td class="num">'+(x.qty==null?'—':x.qty)+'</td><td class="num">'+(x.unitPrice==null?'—':money(x.unitPrice))+'</td><td class="num">'+money(x.total)+'</td></tr>';
+    }).join('')+'</tbody></table></div>':'<p class="empty">Todavía no hay compras registradas con este proveedor.</p>';
+    dlg.querySelector('form').innerHTML='<h2>'+esc(sp.name)+'</h2>'+
+      '<p>'+(sp.phone?esc(sp.phone):'')+(sp.phone&&sp.email?' · ':'')+(sp.email?esc(sp.email):'')+'</p>'+(sp.description?'<p><small>'+esc(sp.description)+'</small></p>':'')+
+      '<h3>Productos</h3>'+prods+'<h3>Historial de compras</h3>'+buys+
+      '<div class="sum"><span>Total gastado ('+plural(r.purchaseCount,'compra','compras')+')</span><span>'+money(r.totalSpent)+'</span></div>'+
+      '<div class="actions"><button type="button" class="btn ghost" data-close>Cerrar</button></div>';
+    dlg.querySelector('[data-close]').addEventListener('click',function(){dlg.close();});
+  }).catch(function(e){if(dlg.open){dlg.close();toast(e.message);}});
+}
+
 // v2: turnos del calendario.
+var APPT_DEFAULT_MIN={consulta:20,vacuna:10,cirugia:120,otro:30};
+// E2: aviso NO bloqueante si el turno se pisa con otro del mismo día (se tiene en cuenta la duración).
+async function confirmNoOverlap(body,selfId){
+  var list=(await api('/appointments?from='+body.date+'&to='+body.date)).items.filter(function(a){return a.id!==selfId;});
+  var s0=toMin(body.time),e0=s0+Number(body.duration);
+  var hit=list.find(function(a){var as=toMin(a.time);return s0<as+a.duration&&as<e0;});
+  if(!hit)return true;
+  var ch=await choiceDialog('Turno superpuesto','<p>Ya hay un turno a esa hora: '+esc(hit.patientName)+' ('+esc(surname(hit.patientOwner))+') – '+esc(hit.title)+'. ¿Agendar igual?</p>',
+    [{label:'Cambiar la hora',value:'no',cls:'ghost'},{label:'Agendar igual',value:'ok',cls:'primary'}]);
+  return ch==='ok';
+}
 function appointmentForm(a,presetDate){
   var isNew=!a;a=a||{type:'consulta',date:presetDate||ui.cal.anchor||todayIso(),time:'09:00'};
   var patOpts=S.patients.slice().sort(function(x,y){return x.name.localeCompare(y.name,'es');}).map(function(p){return [p.id,p.name+' ('+p.owner+')'];});
   if(!patOpts.length){toast('Primero cargá un paciente en la sección Pacientes');return;}
-  openForm({title:isNew?'Nuevo turno':'Editar turno',
+  var f=openForm({title:isNew?'Nuevo turno':'Editar turno',
     body:'<div class="fields">'+
       fld('Paciente','patientId',{opts:patOpts,value:a.patientId,full:true})+
       fld('Tipo de turno','type',{opts:APPT_TYPES,value:a.type})+
+      fld('Duración (minutos)','duration',{type:'number',min:5,max:720,step:'5',value:a.duration||APPT_DEFAULT_MIN[a.type],req:true})+
       fld('Fecha','date',{type:'date',value:a.date,req:true})+
       fld('Hora','time',{type:'time',value:a.time,req:true})+
       fld('Título','title',{value:a.title,req:true,full:true,ph:'Ej.: Consulta de control'})+
@@ -1018,35 +1088,47 @@ function appointmentForm(a,presetDate){
     '</div>',
     submit:isNew?'Agregar turno':'Guardar cambios',
     onSubmit:async function(d){
-      var body={patientId:Number(d.patientId),title:d.title,description:d.description,date:d.date,time:d.time,type:d.type};
+      var body={patientId:Number(d.patientId),title:d.title,description:d.description,date:d.date,time:d.time,type:d.type,duration:Number(d.duration)};
+      if(!(await confirmNoOverlap(body,isNew?null:a.id)))return false;
       if(isNew)await api('/appointments',{body:body});else await api('/appointments/'+a.id,{method:'PUT',body:body});
       await reloadCal();toast(isNew?'Turno agregado':'Turno guardado');
     }});
+  // E3: la duración sugerida sigue al tipo de turno hasta que se edite a mano.
+  var dur=f.querySelector('[name="duration"]'),touched=!isNew;
+  dur.addEventListener('input',function(){touched=true;});
+  f.querySelector('[name="type"]').addEventListener('change',function(e){if(!touched)dur.value=APPT_DEFAULT_MIN[e.target.value];});
 }
-// Modal de detalle con dos acciones propias (Editar / Eliminar), por eso arma el diálogo a
+// Modal de detalle con acciones propias (Editar / Eliminar / Ver ficha), por eso arma el diálogo a
 // mano en vez de usar openForm (pensado para un único botón de guardar).
 function appointmentDetails(a){
+  var tel=String(a.patientPhone||'').replace(/[^\d+]/g,'');
+  var kind=[a.patientSpecies,a.patientBreed].filter(Boolean).map(esc).join(' · ');
   dlg.innerHTML='<form class="dform"><h2>'+esc(a.title)+'</h2>'+
-    '<p><b>Paciente:</b> '+esc(a.patientName)+'</p>'+
+    '<p><b>Paciente:</b> '+esc(a.patientName)+(kind?' <small>('+kind+')</small>':'')+'</p>'+
+    '<p><b>Dueño:</b> '+esc(a.patientOwner)+(a.patientPhone?' · <a href="'+(tel?'tel:'+tel:'#')+'">'+esc(a.patientPhone)+'</a>':'')+'</p>'+
     '<p><b>Tipo:</b> '+esc(APPT_LABEL[a.type]||a.type)+'</p>'+
-    '<p><b>Cuándo:</b> '+fmtDate(a.date)+' a las '+a.time.slice(0,5)+' hs</p>'+
+    '<p><b>Cuándo:</b> '+fmtDate(a.date)+' de '+a.time.slice(0,5)+' a '+a.endTime+' hs <small>('+a.duration+' min)</small></p>'+
     (a.description?'<p><b>Descripción:</b> '+esc(a.description)+'</p>':'')+
-    '<div class="actions"><button type="button" class="btn danger-o" data-x="del">Eliminar turno</button><button type="button" class="btn ghost" data-close>Cerrar</button><button type="button" class="btn primary" data-x="edit">Editar</button></div></form>';
+    '<div class="actions"><button type="button" class="btn danger-o" data-x="del">Eliminar turno</button><button type="button" class="btn" data-x="ficha">Ver ficha</button><button type="button" class="btn ghost" data-close>Cerrar</button><button type="button" class="btn primary" data-x="edit">Editar</button></div></form>';
   dlg.querySelector('[data-close]').addEventListener('click',function(){dlg.close();});
   dlg.querySelector('[data-x="edit"]').addEventListener('click',function(){dlg.close();appointmentForm(a);});
+  dlg.querySelector('[data-x="ficha"]').addEventListener('click',function(){
+    dlg.close();ui.sel=a.patientId;ui.detail=null;ui.filter='all';ui.q='';go('pacientes');
+  });
   dlg.querySelector('[data-x="del"]').addEventListener('click',function(){
     confirmForm('Eliminar turno','Se elimina el turno de '+esc(a.patientName)+' ("'+esc(a.title)+'") del '+fmtDate(a.date)+'.','Eliminar',async function(){
       await api('/appointments/'+a.id,{method:'DELETE'});await reloadCal();toast('Turno eliminado');
     });
   });
-  dlg.showModal();
+  if(!dlg.open)dlg.showModal();
 }
 
 function cashForm(type){
   openForm({title:type==='in'?'Registrar ingreso':'Registrar egreso',
     body:'<div class="fields">'+fld('Fecha','date',{type:'date',value:todayIso(),req:true})+fld('Monto','amount',{type:'number',min:0.01,step:'0.01',req:true})+
     fld('Concepto','concept',{req:true,full:true,ph:type==='in'?'Ej.: Venta de alimento':'Ej.: Pago de luz'})+
-    fld('Categoría','category',{opts:type==='in'?CASH_IN_CATS:CASH_OUT_CATS,value:type==='in'?'Servicios':'Compra de stock'})+fld('Forma de pago','method',{opts:PAY,value:'Efectivo'})+'</div>',
+    fld('Categoría','category',{opts:type==='in'?CASH_IN_CATS:CASH_OUT_CATS,value:type==='in'?'Servicios':'Compra de stock'})+fld('Forma de pago','method',{opts:PAY,value:'Efectivo'})+
+    (type==='out'?fld('Proveedor (opcional)','supplierId',{opts:supplierOpts(),full:true}):'')+'</div>',
     submit:'Registrar',
     onSubmit:async function(d){
       // Los movimientos manuales pueden tener fecha futura, pero hay que confirmarlo.
@@ -1057,7 +1139,7 @@ function cashForm(type){
         if(ch!=='ok')return false;
       }
       if(type==='out'&&!future&&!(await confirmNegativeCash(Number(d.amount),d.method)))return false;
-      await api('/cash',{body:{date:d.date,type:type,concept:d.concept,category:d.category,method:d.method,amount:d.amount,confirmFuture:future}});await reload();toast('Movimiento registrado');
+      await api('/cash',{body:{date:d.date,type:type,concept:d.concept,category:d.category,method:d.method,amount:d.amount,confirmFuture:future,supplierId:d.supplierId||null}});await reload();toast('Movimiento registrado');
     }});
 }
 function userForm(u){
@@ -1245,10 +1327,15 @@ var actions={
   'edit-supplier':function(id){supplierForm((ui.suppliers||[]).find(function(x){return String(x.id)===String(id);}));},
   'del-supplier':function(id){
     var s=(ui.suppliers||[]).find(function(x){return String(x.id)===String(id);});if(!s)return;
-    confirmForm('Eliminar '+esc(s.name),'Se quita este proveedor de la lista.','Eliminar',async function(){
+    var warn=[];
+    if(s.productCount)warn.push(plural(s.productCount,'producto vinculado','productos vinculados'));
+    if(s.purchaseCount)warn.push(plural(s.purchaseCount,'compra registrada','compras registradas'));
+    var extra=warn.length?' Tiene '+warn.join(' y ')+': no se borran, quedan sin proveedor.':'';
+    confirmForm('Eliminar '+esc(s.name),'Se quita este proveedor de la lista.'+extra+' Esta acción no se puede deshacer.','Eliminar',async function(){
       await api('/suppliers/'+id,{method:'DELETE'});ui.suppliers=null;await refreshView();toast('Proveedor eliminado');
     });
   },
+  'supplier-view':function(id){supplierDetail(id);},
 
   // v2: calendario de turnos
   'new-appt':function(){appointmentForm(null, ui.cal.anchor);},
@@ -1260,7 +1347,7 @@ var actions={
   // El día del "ancla" no se toca al cambiar de vista (semana ↔ mes): así, si estabas mirando
   // el 15 y pasás a "Mes" y volvés a "Semana", seguís viendo la semana del 15, no la del día 1.
   'cal-view':function(id,b){ui.cal.view=b.dataset.v;return reloadCal();},
-  'cal-day-focus':function(id,b){ui.cal.view='week';ui.cal.anchor=b.dataset.v;return reloadCal();},
+  'cal-day-list':function(id,b){dayListDialog(b.dataset.v);},
 
   logout:async function(){
     try{await api('/logout',{body:{}});}catch(e){}
@@ -1283,6 +1370,7 @@ document.addEventListener('click',function(e){
 });
 document.addEventListener('input',function(e){
   if(e.target.id==='q'){ui.q=e.target.value;$('#plist').innerHTML=listHTML();}
+  if(e.target.id==='sq'){ui.sq=e.target.value;$('#srows').innerHTML=supplierRows();}
 });
 document.addEventListener('change',function(e){
   if(e.target.id==='bfile'&&e.target.files&&e.target.files[0]){

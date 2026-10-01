@@ -8,18 +8,18 @@ const U = require('./util');
 // No se incluyen los usuarios ni sus contraseñas.
 const TABLES = [
   ['patients', ['id', 'name', 'species', 'breed', 'sex', 'neutered', 'birth', 'weight', 'owner_name', 'phone', 'email', 'notes']],
+  ['suppliers', ['id', 'name', 'phone', 'email', 'description']], // antes que productos y compras, que lo referencian
   // "products" y "stock_movements" van antes que vacunas, medicación y caja, que apuntan a ellos.
-  ['products', ['id', 'name', 'category', 'stock', 'min_stock', 'price', 'species']],
-  ['stock_movements', ['id', 'product_id', 'product_name', 'on_date', 'qty', 'reason', 'unit_price', 'voided', 'note', 'charge_id']],
+  ['products', ['id', 'name', 'category', 'stock', 'min_stock', 'price', 'species', 'supplier_id']],
+  ['stock_movements', ['id', 'product_id', 'product_name', 'on_date', 'qty', 'reason', 'unit_price', 'voided', 'note', 'charge_id', 'supplier_id']],
   ['vaccines', ['id', 'patient_id', 'name', 'applied_on', 'next_on', 'product_id', 'stock_qty', 'stock_movement_id']],
   ['diagnoses', ['id', 'patient_id', 'on_date', 'title', 'notes']],
   ['medications', ['id', 'patient_id', 'on_date', 'name', 'dose', 'duration', 'product_id', 'stock_qty', 'stock_movement_id']],
   ['services', ['id', 'name', 'category', 'price', 'product_id', 'species']],
   ['service_items', ['id', 'service_id', 'product_id', 'qty']],
-  ['suppliers', ['id', 'name', 'phone', 'email', 'description']],
   ['complementary_studies', ['id', 'patient_id', 'on_date', 'title', 'notes']],
-  ['appointments', ['id', 'patient_id', 'title', 'description', 'appointment_date', 'appointment_time', 'appointment_type']],
-  ['cash_movements', ['id', 'on_date', 'kind', 'concept', 'category', 'method', 'amount', 'stock_movement_id']],
+  ['appointments', ['id', 'patient_id', 'title', 'description', 'appointment_date', 'appointment_time', 'appointment_type', 'duration_min']],
+  ['cash_movements', ['id', 'on_date', 'kind', 'concept', 'category', 'method', 'amount', 'stock_movement_id', 'supplier_id']],
   ['charges', ['id', 'patient_id', 'on_date', 'concept', 'amount', 'method', 'cash_id', 'line_type']],
 ];
 
@@ -33,6 +33,7 @@ const NEW_TABLES = new Set(['suppliers', 'complementary_studies', 'appointments'
 const COL_DEFAULTS = {
   stock_movements: { unit_price: 0, voided: false, note: '' },
   charges: { line_type: 'service' },
+  appointments: { duration_min: 30 },
   vaccines: { stock_qty: 0 },
   medications: { stock_qty: 0 },
 };
