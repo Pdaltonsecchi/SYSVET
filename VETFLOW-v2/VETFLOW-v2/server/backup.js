@@ -9,12 +9,12 @@ const U = require('./util');
 const TABLES = [
   ['patients', ['id', 'name', 'species', 'breed', 'sex', 'neutered', 'birth', 'weight', 'owner_name', 'phone', 'email', 'notes']],
   // "products" y "stock_movements" van antes que vacunas, medicación y caja, que apuntan a ellos.
-  ['products', ['id', 'name', 'category', 'stock', 'min_stock', 'price']],
+  ['products', ['id', 'name', 'category', 'stock', 'min_stock', 'price', 'species']],
   ['stock_movements', ['id', 'product_id', 'product_name', 'on_date', 'qty', 'reason', 'unit_price', 'voided']],
   ['vaccines', ['id', 'patient_id', 'name', 'applied_on', 'next_on', 'product_id', 'stock_qty', 'stock_movement_id']],
   ['diagnoses', ['id', 'patient_id', 'on_date', 'title', 'notes']],
   ['medications', ['id', 'patient_id', 'on_date', 'name', 'dose', 'duration', 'product_id', 'stock_qty', 'stock_movement_id']],
-  ['services', ['id', 'name', 'category', 'price', 'product_id']],
+  ['services', ['id', 'name', 'category', 'price', 'product_id', 'species']],
   ['suppliers', ['id', 'name', 'phone', 'email', 'description']],
   ['complementary_studies', ['id', 'patient_id', 'on_date', 'title', 'notes']],
   ['appointments', ['id', 'patient_id', 'title', 'description', 'appointment_date', 'appointment_time', 'appointment_type']],

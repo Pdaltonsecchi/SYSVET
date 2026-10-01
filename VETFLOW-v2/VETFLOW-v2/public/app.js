@@ -25,6 +25,13 @@ var SERV_CATS=['Consultas','Vacunas','Cirugías','Otros'];
 var CASH_CATS=['Servicios','Venta de productos','Compra de stock','Alquiler y servicios','Sueldos','Retiro de caja','Otros'];
 var PAY=['Efectivo','Transferencia','Tarjeta de débito','Tarjeta de crédito'];
 var VAC_SUGG=['Sextuple','Quíntuple','Antirrábica','Tos de las perreras','Triple felina','Leucemia felina','Desparasitación'];
+// B4: especie habitual de cada vacuna sugerida (las que no figuran, o 'Ambos', se ofrecen siempre).
+var VAC_SPECIES={'Sextuple':'Perro','Quíntuple':'Perro','Tos de las perreras':'Perro','Triple felina':'Gato','Leucemia felina':'Gato'};
+var SPECIES_OPTS=[['','Sin definir (se ofrece siempre)'],['Perro','Perro'],['Gato','Gato'],['Ambos','Ambos']];
+var speciesOk=function(sp,pat){return !sp||sp==='Ambos'||sp===pat;};
+var prodById=function(id){return id?S.products.find(function(x){return x.id===id;})||null:null;};
+// Especie de un servicio: la suya o, si no tiene, la del producto vinculado.
+var svcSpecies=function(s){var pr=prodById(s.productId);return s.species||(pr&&pr.species)||'';};
 var APPT_TYPES=[['consulta','Consulta'],['vacuna','Vacuna'],['cirugia','Cirugía'],['otro','Otro']];
 var APPT_LABEL={consulta:'Consulta',vacuna:'Vacuna',cirugia:'Cirugía',otro:'Otro'};
 var APPT_VIEWS=[['week','Semana'],['2weeks','2 semanas'],['3weeks','3 semanas'],['month','Mes']];
@@ -370,21 +377,21 @@ function detailHTML(p){
   var L=latestIds(p);
   var vacHTML=p.vaccines.length?'<div class="rows">'+p.vaccines.map(function(v){
     var s=vacStatus(v,!!L[v.id]);
-    return '<div class="row vac"><div><b>'+esc(v.name)+'</b></div><div><span class="k">Aplicada</span>'+fmtDate(v.date)+'</div><div><span class="k">Próxima dosis</span>'+fmtDate(v.next)+'</div><div class="chipcell"><span class="chip '+s.k+'">'+s.t+'</span></div><div><button class="link bad" data-action="del-vac" data-id="'+v.id+'">Quitar</button></div></div>';
+    return '<div class="row vac"><div><b>'+esc(v.name)+'</b></div><div><span class="k">Aplicada</span>'+fmtDate(v.date)+'</div><div><span class="k">Próxima dosis</span>'+fmtDate(v.next)+'</div><div class="chipcell"><span class="chip '+s.k+'">'+s.t+'</span></div><div class="racts"><button class="link" data-action="edit-vac" data-id="'+v.id+'">Editar</button><button class="link bad" data-action="del-vac" data-id="'+v.id+'">Quitar</button></div></div>';
   }).join('')+'</div>':'<p class="empty">Todavía no hay vacunas registradas.</p>';
 
   var dxHTML=p.diagnoses.length?'<div class="tl">'+p.diagnoses.map(function(d){
-    return '<div class="tl-item"><span class="d">'+fmtDate(d.date)+'</span><div><b>'+esc(d.title)+'</b>'+(d.notes?'<p>'+esc(d.notes)+'</p>':'')+'</div><button class="link bad" data-action="del-dx" data-id="'+d.id+'">Quitar</button></div>';
+    return '<div class="tl-item"><span class="d">'+fmtDate(d.date)+'</span><div><b>'+esc(d.title)+'</b>'+(d.notes?'<p>'+esc(d.notes)+'</p>':'')+'</div><span class="racts"><button class="link" data-action="edit-dx" data-id="'+d.id+'">Editar</button><button class="link bad" data-action="del-dx" data-id="'+d.id+'">Quitar</button></span></div>';
   }).join('')+'</div>':'<p class="empty">Todavía no hay diagnósticos ni consultas registradas.</p>';
 
   // v2: estudios complementarios (ecografía, radiografía, análisis, etc.)
   var stHTML=(p.studies||[]).length?'<div class="tl">'+p.studies.map(function(st){
-    return '<div class="tl-item"><span class="d">'+fmtDate(st.date)+'</span><div><b>'+esc(st.title)+'</b>'+(st.notes?'<p>'+esc(st.notes)+'</p>':'')+'</div><button class="link bad" data-action="del-study" data-id="'+st.id+'">Quitar</button></div>';
+    return '<div class="tl-item"><span class="d">'+fmtDate(st.date)+'</span><div><b>'+esc(st.title)+'</b>'+(st.notes?'<p>'+esc(st.notes)+'</p>':'')+'</div><span class="racts"><button class="link" data-action="edit-study" data-id="'+st.id+'">Editar</button><button class="link bad" data-action="del-study" data-id="'+st.id+'">Quitar</button></span></div>';
   }).join('')+'</div>':'<p class="empty">Todavía no hay estudios complementarios registrados.</p>';
 
   var mdHTML=p.meds.length?'<div class="tl">'+p.meds.map(function(m){
     var sub=[m.dose,m.duration].filter(Boolean).map(esc).join(' · ');
-    return '<div class="tl-item"><span class="d">'+fmtDate(m.date)+'</span><div><b>'+esc(m.name)+'</b>'+(sub?'<p>'+sub+'</p>':'')+'</div><button class="link bad" data-action="del-med" data-id="'+m.id+'">Quitar</button></div>';
+    return '<div class="tl-item"><span class="d">'+fmtDate(m.date)+'</span><div><b>'+esc(m.name)+'</b>'+(sub?'<p>'+sub+'</p>':'')+'</div><span class="racts"><button class="link" data-action="edit-med" data-id="'+m.id+'">Editar</button><button class="link bad" data-action="del-med" data-id="'+m.id+'">Quitar</button></span></div>';
   }).join('')+'</div>':'<p class="empty">Todavía no hay medicación registrada.</p>';
 
   var total=p.charges.reduce(function(s,c){return s+c.amount;},0);
@@ -651,73 +658,117 @@ function patientForm(p){
       else{await api('/patients/'+p.id,{method:'PUT',body:body});await reload();toast('Datos guardados');}
     }});
 }
-function vaccineForm(p){
-  // v2: si se elige una vacuna de la lista de precios que tiene un producto del stock
-  // vinculado, se descuenta 1 unidad sola al guardar (puede dejar el stock en negativo,
-  // como aviso de que hay que reponer).
-  var vacServices=S.services.filter(function(s){return s.category==='Vacunas';});
+function vaccineForm(p,v){
+  var isEdit=!!v;
+  // Se ofrecen las vacunas de la especie del paciente (las que no tienen especie, siempre).
+  var vacServices=S.services.filter(function(s){return s.category==='Vacunas'&&speciesOk(svcSpecies(s),p.species);});
+  var vacProducts=S.products.filter(function(x){return x.category==='Vacunas'&&(speciesOk(x.species,p.species)||(isEdit&&x.id===v.productId));});
   var svcOpts=[['','No vincular (no descuenta stock)']].concat(vacServices.map(function(s){
-    var pr=s.productId?S.products.find(function(x){return x.id===s.productId;}):null;
+    var pr=prodById(s.productId);
     return [s.id, s.name+(pr?' — stock: '+pr.stock:'')];
   }));
-  var f=openForm({title:'Agregar vacuna a '+esc(p.name),
-    body:(vacServices.length?'<div class="fields">'+fld('Vacuna de la lista de precios (opcional)','service',{opts:svcOpts,full:true})+'</div>':'')+
-    '<datalist id="vaclist">'+VAC_SUGG.map(function(v){return '<option value="'+v+'">';}).join('')+'</datalist>'+
-    '<div class="fields">'+fld('Vacuna','name',{req:true,list:'vaclist',full:true,ph:'Ej.: Sextuple'})+
-    fld('Fecha de aplicación','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+
-    fld('Próxima dosis (vencimiento)','next',{type:'date'})+'</div>'+
-    '<div class="quick"><span>Próxima dosis en:</span><button type="button" class="segb" data-q="d21">3 semanas</button><button type="button" class="segb" data-q="m6">6 meses</button><button type="button" class="segb" data-q="m12">1 año</button></div>',
-    submit:'Agregar vacuna',
+  var prodOpts=[['','Ninguno (no descuenta stock)']].concat(vacProducts.map(function(x){return [x.id,x.name+' (stock: '+x.stock+')'];}));
+  var names=VAC_SUGG.filter(function(n){return speciesOk(VAC_SPECIES[n],p.species);});
+  vacProducts.forEach(function(x){if(names.indexOf(x.name)<0)names.push(x.name);});
+  var top=isEdit?(vacProducts.length?'<div class="fields">'+fld('Producto del stock que descuenta 1 unidad','product',{opts:prodOpts,value:v.productId,full:true})+'</div>':'')
+    :(vacServices.length?'<div class="fields">'+fld('Vacuna de la lista de precios (opcional)','service',{opts:svcOpts,full:true})+'</div>':'');
+  var chargeBox=isEdit?'':'<div class="fields" id="chgbox" hidden>'+fld('Cobrar ahora (registra el cobro y el ingreso en caja)','chargeNow',{type:'checkbox',value:true,full:true})+
+    fld('Monto a cobrar','chargeAmount',{type:'number',min:0,step:'0.01'})+fld('Forma de pago','chargeMethod',{opts:PAY,value:'Efectivo'})+'</div>';
+  var f=openForm({title:(isEdit?'Editar vacuna de ':'Agregar vacuna a ')+esc(p.name),
+    body:top+
+    '<datalist id="vaclist">'+names.map(function(n){return '<option value="'+esc(n)+'">';}).join('')+'</datalist>'+
+    '<div class="fields">'+fld('Vacuna','name',{req:true,list:'vaclist',full:true,ph:'Ej.: Sextuple',value:isEdit?v.name:''})+
+    fld('Fecha de aplicación','date',{type:'date',value:isEdit?v.date:todayIso(),max:todayIso(),req:true})+
+    fld('Próxima dosis (vencimiento)','next',{type:'date',value:isEdit?v.next:''})+'</div>'+
+    '<div class="quick"><span>Próxima dosis en:</span><button type="button" class="segb" data-q="d21">3 semanas</button><button type="button" class="segb" data-q="m6">6 meses</button><button type="button" class="segb" data-q="m12">1 año</button></div>'+chargeBox,
+    submit:isEdit?'Guardar cambios':'Agregar vacuna',
     onSubmit:async function(d){
+      if(isEdit){
+        await api('/vaccines/'+v.id,{method:'PUT',body:{name:d.name,date:d.date,next:d.next,productId:d.product?Number(d.product):null}});
+        await reload();toast('Vacuna guardada');return;
+      }
       // Si el producto vinculado no tiene stock, se avisa antes de guardar. El servidor igual lo
       // rechaza si se intenta descontar sin stock: "Aplicar sin descontar" es la única salida.
       var skip=false;
       var svc=d.service?vacServices.find(function(x){return String(x.id)===String(d.service);}):null;
-      var prod=svc&&svc.productId?S.products.find(function(x){return x.id===svc.productId;}):null;
+      var prod=svc?prodById(svc.productId):null;
       if(prod&&prod.stock<=0){
         var ch=await choiceDialog('Sin stock de '+esc(prod.name),'<p>No hay stock de <b>'+esc(prod.name)+'</b> (quedan 0). ¿Querés aplicar la vacuna igual, sin descontar nada del stock?</p>',
           [{label:'Cancelar',value:'cancel',cls:'ghost'},{label:'Aplicar sin descontar stock',value:'skip',cls:'primary'}]);
         if(ch!=='skip')return false;
         skip=true;
       }
-      var r=await api('/patients/'+p.id+'/vaccines',{body:{name:d.name,date:d.date,next:d.next,serviceId:d.service||null,skipStock:skip}});
+      var body={name:d.name,date:d.date,next:d.next,serviceId:d.service||null,skipStock:skip};
+      if(svc&&d.chargeNow)body.charge={amount:d.chargeAmount,method:d.chargeMethod};
+      var r=await api('/patients/'+p.id+'/vaccines',{body:body});
       await reload();
-      toast('Vacuna agregada'+(r.deducted?' · se descontó 1 del stock':''));
+      toast('Vacuna agregada'+(r.deducted?' · se descontó 1 del stock':'')+(r.charged?' · cobro registrado':''));
     }});
   f.querySelectorAll('[data-q]').forEach(function(b){b.addEventListener('click',function(){
     var base=f.querySelector('[name="date"]').value||todayIso(),q=b.dataset.q;
     f.querySelector('[name="next"]').value=q==='d21'?shiftDays(21,base):q==='m6'?shiftMonths(6,base):shiftMonths(12,base);
   });});
   var svcSel=f.querySelector('[name="service"]');
-  if(svcSel)svcSel.addEventListener('change',function(){
-    var s=vacServices.find(function(x){return String(x.id)===svcSel.value;});
-    var nm=f.querySelector('[name="name"]');
-    if(s&&!nm.value)nm.value=s.name;
-  });
+  if(svcSel){
+    var lastAuto='';
+    var box=f.querySelector('#chgbox'),chk=f.querySelector('[name="chargeNow"]');
+    var sync=function(){var on=chk.checked;f.querySelector('[name="chargeAmount"]').disabled=!on;f.querySelector('[name="chargeMethod"]').disabled=!on;};
+    chk.addEventListener('change',sync);
+    svcSel.addEventListener('change',function(){
+      var s=vacServices.find(function(x){return String(x.id)===svcSel.value;});
+      var nm=f.querySelector('[name="name"]');
+      box.hidden=!s;
+      if(s){
+        // B3: el nombre de la vacuna es el del producto vinculado ("Triple felina"), no el del servicio ("... (aplicación)"); sigue siendo editable.
+        var pr=prodById(s.productId),auto=pr?pr.name:s.name;
+        if(!nm.value||nm.value===lastAuto){nm.value=auto;lastAuto=auto;}
+        f.querySelector('[name="chargeAmount"]').value=s.price;
+        sync();
+      }
+    });
+  }
 }
-function dxForm(p){
-  openForm({title:'Agregar diagnóstico a '+esc(p.name),
-    body:'<div class="fields">'+fld('Fecha','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+fld('Diagnóstico o motivo de consulta','title',{req:true,ph:'Ej.: Gastroenteritis'})+
-    fld('Detalle y tratamiento indicado','notes',{type:'textarea',full:true})+'</div>',
-    submit:'Agregar diagnóstico',
-    onSubmit:async function(d){await api('/patients/'+p.id+'/diagnoses',{body:{date:d.date,title:d.title,notes:d.notes}});await reload();toast('Diagnóstico agregado');}});
-}
-function medForm(p){
-  var opts=[['','Ninguno (no descontar)']].concat(S.products.filter(function(x){return x.category==='Medicamentos'||x.category==='Vacunas';}).map(function(x){return [x.id,x.name+' (stock: '+x.stock+')'];}));
-  var f=openForm({title:'Agregar medicación a '+esc(p.name),
-    body:'<div class="fields">'+fld('Producto del stock (descuenta 1 unidad)','product',{opts:opts,full:true})+
-    fld('Medicamento','name',{req:true,full:true})+fld('Dosis','dose',{ph:'Ej.: 250 mg cada 12 h'})+fld('Duración','duration',{ph:'Ej.: 7 días'})+
-    fld('Fecha','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+'</div>',
-    submit:'Agregar medicación',
+function dxForm(p,d0){
+  var e=!!d0;
+  openForm({title:(e?'Editar diagnóstico de ':'Agregar diagnóstico a ')+esc(p.name),
+    body:'<div class="fields">'+fld('Fecha','date',{type:'date',value:e?d0.date:todayIso(),max:todayIso(),req:true})+fld('Diagnóstico o motivo de consulta','title',{req:true,ph:'Ej.: Gastroenteritis',value:e?d0.title:''})+
+    fld('Detalle y tratamiento indicado','notes',{type:'textarea',full:true,value:e?d0.notes:''})+'</div>',
+    submit:e?'Guardar cambios':'Agregar diagnóstico',
     onSubmit:async function(d){
-      var r=await api('/patients/'+p.id+'/medications',{body:{date:d.date,name:d.name,dose:d.dose,duration:d.duration,productId:d.product||null}});
+      var body={date:d.date,title:d.title,notes:d.notes};
+      if(e)await api('/diagnoses/'+d0.id,{method:'PUT',body:body});else await api('/patients/'+p.id+'/diagnoses',{body:body});
+      await reload();toast(e?'Diagnóstico guardado':'Diagnóstico agregado');
+    }});
+}
+function medForm(p,m){
+  var e=!!m;
+  var opts=[['','Ninguno (no descontar)']].concat(S.products.filter(function(x){return x.category==='Medicamentos'||x.category==='Vacunas'||(e&&x.id===m.productId);}).map(function(x){return [x.id,x.name+' (stock: '+x.stock+')'];}));
+  var f=openForm({title:(e?'Editar medicación de ':'Agregar medicación a ')+esc(p.name),
+    body:'<div class="fields">'+fld('Producto del stock (descuenta unidades)','product',{opts:opts,full:true,value:e?m.productId:''})+
+    fld('Cantidad a descontar del stock','qty',{type:'number',min:1,step:'1',value:e&&m.stockQty?m.stockQty:1})+
+    fld('Medicamento','name',{req:true,full:true,value:e?m.name:''})+fld('Dosis','dose',{ph:'Ej.: 250 mg cada 12 h',value:e?m.dose:''})+fld('Duración','duration',{ph:'Ej.: 7 días',value:e?m.duration:''})+
+    fld('Fecha','date',{type:'date',value:e?m.date:todayIso(),max:todayIso(),req:true})+'</div>',
+    submit:e?'Guardar cambios':'Agregar medicación',
+    onSubmit:async function(d){
+      var body={date:d.date,name:d.name,dose:d.dose,duration:d.duration,productId:d.product?Number(d.product):null,qty:d.qty};
+      if(e){await api('/medications/'+m.id,{method:'PUT',body:body});await reload();toast('Medicación guardada');return;}
+      var r=await api('/patients/'+p.id+'/medications',{body:body});
       await reload();toast('Medicación agregada'+(r.deducted?' · se descontó '+r.qty+' del stock':''));
     }});
-  f.querySelector('[name="product"]').addEventListener('change',function(){
-    var pr=S.products.find(function(x){return String(x.id)===f.querySelector('[name="product"]').value;});
-    var nm=f.querySelector('[name="name"]');
+  var sel=f.querySelector('[name="product"]'),qty=f.querySelector('[name="qty"]'),nm=f.querySelector('[name="name"]');
+  // La cantidad solo aparece con un producto elegido, y no puede pasar del stock disponible
+  // (al editar, se cuenta también lo que esta medicación ya había descontado).
+  var syncQty=function(){
+    var pr=prodById(Number(sel.value));
+    qty.closest('label').hidden=!pr;
+    if(pr){var avail=pr.stock+(e&&m.productId===pr.id?m.stockQty:0);qty.max=Math.max(avail,1);}
+  };
+  sel.addEventListener('change',function(){
+    var pr=prodById(Number(sel.value));
     if(pr&&!nm.value)nm.value=pr.name;
+    syncQty();
   });
+  syncQty();
 }
 function chargeForm(p){
   if(!S.services.length){toast(isAdmin()?'Primero cargá los precios en Farmacia y caja > Lista de precios':'Todavía no hay precios cargados. Pedile al administrador que los cargue.');return;}
@@ -736,10 +787,17 @@ function chargeForm(p){
     if(s)f.querySelector('[name="amount"]').value=s.price;
   });
 }
+// El campo "Especie" solo tiene sentido en la categoría Vacunas: se oculta en las demás.
+function bindSpecies(f){
+  var cat=f.querySelector('[name="category"]'),sp=f.querySelector('[name="species"]').closest('label');
+  var sync=function(){sp.hidden=cat.value!=='Vacunas';};
+  cat.addEventListener('change',sync);sync();
+}
 function productForm(x){
   var isNew=!x;x=x||{category:'Medicamentos',min:5,price:0};
-  openForm({title:isNew?'Nuevo producto':'Editar producto',
+  var pf=openForm({title:isNew?'Nuevo producto':'Editar producto',
     body:'<div class="fields">'+fld('Nombre','name',{value:x.name,req:true,full:true})+fld('Categoría','category',{opts:PROD_CATS,value:x.category})+fld('Precio de venta','price',{type:'number',min:0,step:'1',value:x.price,req:true})+
+    fld('Especie (solo vacunas, opcional)','species',{opts:SPECIES_OPTS,value:x.species,full:true})+
     fld('Stock mínimo (para avisar)','min',{type:'number',min:0,step:'1',value:x.min,req:true})+
     (isNew?fld('Stock inicial','stock',{type:'number',min:0,step:'1',value:0,req:true})+
       // v2: se carga precio unitario; el costo total (para la caja) se calcula solo.
@@ -748,9 +806,10 @@ function productForm(x){
     (isNew?'':'<p>Para cambiar la cantidad usá el botón + (llegó mercadería) o “Ajustar” (corrección).</p>'),
     submit:isNew?'Agregar producto':'Guardar cambios',
     onSubmit:async function(d){
-      if(isNew){await api('/products',{body:{name:d.name,category:d.category,price:d.price,min:d.min,stock:d.stock,unitPrice:d.unitPrice,method:d.method}});await reload();toast('Producto agregado');}
-      else{await api('/products/'+x.id,{method:'PUT',body:{name:d.name,category:d.category,price:d.price,min:d.min}});await reload();toast('Producto guardado');}
+      if(isNew){await api('/products',{body:{name:d.name,category:d.category,price:d.price,min:d.min,stock:d.stock,unitPrice:d.unitPrice,method:d.method,species:d.species}});await reload();toast('Producto agregado');}
+      else{await api('/products/'+x.id,{method:'PUT',body:{name:d.name,category:d.category,price:d.price,min:d.min,species:d.species}});await reload();toast('Producto guardado');}
     }});
+  bindSpecies(pf);
 }
 function buyForm(x){
   openForm({title:'Agregar stock de '+esc(x.name),
@@ -801,24 +860,31 @@ function serviceForm(s){
   // descuenta cada vez que se aplica esa vacuna a un paciente (Pacientes → Vacunas).
   var vacProducts=S.products.filter(function(x){return x.category==='Vacunas';});
   var prodOpts=[['','Ninguno']].concat(vacProducts.map(function(x){return [x.id,x.name+' (stock: '+x.stock+')'];}));
-  openForm({title:isNew?'Nuevo precio':'Editar precio',
+  var sf=openForm({title:isNew?'Nuevo precio':'Editar precio',
     body:'<div class="fields">'+fld('Servicio','name',{value:s.name,req:true,full:true,ph:'Ej.: Consulta general'})+fld('Categoría','category',{opts:SERV_CATS,value:s.category})+fld('Precio','price',{type:'number',min:0,step:'1',value:s.price,req:true})+
+    fld('Especie (solo vacunas, opcional)','species',{opts:SPECIES_OPTS,value:s.species,full:true})+
     fld('Vacuna del stock que descuenta (opcional)','productId',{opts:prodOpts,value:s.productId,full:true})+'</div>'+
     '<p>Si es una vacuna, vinculala a su producto del stock: cada vez que se aplique elegida de la lista de precios, se descuenta 1 unidad sola.</p>',
     submit:isNew?'Agregar precio':'Guardar cambios',
     onSubmit:async function(d){
-      var body={name:d.name,category:d.category,price:d.price,productId:d.productId||null};
+      var body={name:d.name,category:d.category,price:d.price,productId:d.productId||null,species:d.species};
       if(isNew)await api('/services',{body:body});else await api('/services/'+s.id,{method:'PUT',body:body});
       await reload();toast(isNew?'Precio agregado':'Precio guardado');
     }});
+  bindSpecies(sf);
 }
 // v2: estudios complementarios (mismo patrón que diagnósticos).
-function studyForm(p){
-  openForm({title:'Agregar estudio complementario a '+esc(p.name),
-    body:'<div class="fields">'+fld('Fecha','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+fld('Tipo de estudio','title',{req:true,full:true,ph:'Ej.: Ecografía abdominal, radiografía, análisis de sangre'})+
-    fld('Notas técnicas','notes',{type:'textarea',full:true})+'</div>',
-    submit:'Agregar estudio',
-    onSubmit:async function(d){await api('/patients/'+p.id+'/studies',{body:{date:d.date,title:d.title,notes:d.notes}});await reload();toast('Estudio agregado');}});
+function studyForm(p,st){
+  var e=!!st;
+  openForm({title:(e?'Editar estudio de ':'Agregar estudio complementario a ')+esc(p.name),
+    body:'<div class="fields">'+fld('Fecha','date',{type:'date',value:e?st.date:todayIso(),max:todayIso(),req:true})+fld('Tipo de estudio','title',{req:true,full:true,ph:'Ej.: Ecografía abdominal, radiografía, análisis de sangre',value:e?st.title:''})+
+    fld('Notas técnicas','notes',{type:'textarea',full:true,value:e?st.notes:''})+'</div>',
+    submit:e?'Guardar cambios':'Agregar estudio',
+    onSubmit:async function(d){
+      var body={date:d.date,title:d.title,notes:d.notes};
+      if(e)await api('/studies/'+st.id,{method:'PUT',body:body});else await api('/patients/'+p.id+'/studies',{body:body});
+      await reload();toast(e?'Estudio guardado':'Estudio agregado');
+    }});
 }
 
 // v2: proveedores.
@@ -959,6 +1025,7 @@ async function refreshView(){
   try{await loadView();}catch(e){toast(e.message);}
   render();
 }
+function findRec(kind,id){return ((ui.detail&&ui.detail[kind])||[]).find(function(x){return String(x.id)===String(id);});}
 var actions={
   nav:function(id,b){return go(b.dataset.v);},
   filter:function(id,b){ui.filter=b.dataset.v;render();},
@@ -980,10 +1047,37 @@ var actions={
   'add-study':function(){if(ui.detail)studyForm(ui.detail);}, // v2
   'add-med':function(){if(ui.detail)medForm(ui.detail);},
   charge:function(){if(ui.detail)chargeForm(ui.detail);},
-  'del-vac':async function(id){var r=await api('/vaccines/'+id,{method:'DELETE'});await reload();toast('Vacuna quitada'+(r.restored?' · se devolvió '+r.restored+' al stock':''));},
-  'del-dx':async function(id){await api('/diagnoses/'+id,{method:'DELETE'});await reload();toast('Diagnóstico quitado');},
-  'del-study':async function(id){await api('/studies/'+id,{method:'DELETE'});await reload();toast('Estudio quitado');}, // v2
-  'del-med':async function(id){var r=await api('/medications/'+id,{method:'DELETE'});await reload();toast('Medicación quitada'+(r.restored?' · se devolvieron '+r.restored+' al stock':''));},
+  'edit-vac':function(id){var v=findRec('vaccines',id);if(v)vaccineForm(ui.detail,v);},
+  'edit-dx':function(id){var d=findRec('diagnoses',id);if(d)dxForm(ui.detail,d);},
+  'edit-study':function(id){var d=findRec('studies',id);if(d)studyForm(ui.detail,d);},
+  'edit-med':function(id){var d=findRec('meds',id);if(d)medForm(ui.detail,d);},
+  // B1: todo "Quitar" pide confirmación con el mismo diálogo que Proveedores y Turnos.
+  'del-vac':function(id){
+    var v=findRec('vaccines',id);if(!v)return;
+    var pr=prodById(v.productId),back=pr&&v.stockQty>0?' Se devuelve '+plural(v.stockQty,'unidad','unidades')+' de '+esc(pr.name)+' al stock.':'';
+    confirmForm('Eliminar vacuna','¿Eliminar la vacuna “'+esc(v.name)+'” del '+fmtDate(v.date)+'?'+back+' Esta acción no se puede deshacer.','Eliminar',async function(){
+      var r=await api('/vaccines/'+id,{method:'DELETE'});await reload();toast('Vacuna quitada'+(r.restored?' · se devolvió '+r.restored+' al stock':''));
+    });
+  },
+  'del-dx':function(id){
+    var d=findRec('diagnoses',id);if(!d)return;
+    confirmForm('Eliminar diagnóstico','¿Eliminar el diagnóstico “'+esc(d.title)+'” del '+fmtDate(d.date)+'? Esta acción no se puede deshacer.','Eliminar',async function(){
+      await api('/diagnoses/'+id,{method:'DELETE'});await reload();toast('Diagnóstico quitado');
+    });
+  },
+  'del-study':function(id){
+    var d=findRec('studies',id);if(!d)return;
+    confirmForm('Eliminar estudio','¿Eliminar el estudio “'+esc(d.title)+'” del '+fmtDate(d.date)+'? Esta acción no se puede deshacer.','Eliminar',async function(){
+      await api('/studies/'+id,{method:'DELETE'});await reload();toast('Estudio quitado');
+    });
+  },
+  'del-med':function(id){
+    var m=findRec('meds',id);if(!m)return;
+    var pr=prodById(m.productId),back=pr&&m.stockQty>0?' Se devuelven '+plural(m.stockQty,'unidad','unidades')+' de '+esc(pr.name)+' al stock.':'';
+    confirmForm('Eliminar medicación','¿Eliminar la medicación “'+esc(m.name)+'” del '+fmtDate(m.date)+'?'+back+' Esta acción no se puede deshacer.','Eliminar',async function(){
+      var r=await api('/medications/'+id,{method:'DELETE'});await reload();toast('Medicación quitada'+(r.restored?' · se devolvieron '+r.restored+' al stock':''));
+    });
+  },
   'del-chg':function(id){
     confirmForm('Quitar cobro','Se quita el cobro de la historia del paciente y también el ingreso que se registró en la caja.','Quitar cobro',async function(){
       await api('/charges/'+id,{method:'DELETE'});await reload();toast('Cobro quitado');

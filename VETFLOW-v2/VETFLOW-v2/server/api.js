@@ -105,10 +105,10 @@ const mapPatient = (r) => ({
   email: r.email,
   notes: r.notes,
 });
-const mapVaccine = (r) => ({ id: r.id, name: r.name, date: r.applied_on, next: r.next_on || '' });
-const mapProduct = (r) => ({ id: r.id, name: r.name, category: r.category, stock: r.stock, min: r.min_stock, price: Number(r.price) });
+const mapVaccine = (r) => ({ id: r.id, name: r.name, date: r.applied_on, next: r.next_on || '', productId: r.product_id || null, stockQty: r.stock_qty || 0 });
+const mapProduct = (r) => ({ id: r.id, name: r.name, category: r.category, stock: r.stock, min: r.min_stock, price: Number(r.price), species: r.species || '' });
 // v2: productId (nullable) es el producto del stock que se descuenta al aplicar esta vacuna.
-const mapService = (r) => ({ id: r.id, name: r.name, category: r.category, price: Number(r.price), productId: r.product_id || null });
+const mapService = (r) => ({ id: r.id, name: r.name, category: r.category, price: Number(r.price), productId: r.product_id || null, species: r.species || '' });
 const mapSupplier = (r) => ({ id: r.id, name: r.name, phone: r.phone, email: r.email, description: r.description });
 const mapStudy = (r) => ({ id: r.id, date: r.on_date, title: r.title, notes: r.notes });
 const mapAppointment = (r) => ({
@@ -136,7 +136,7 @@ const mapCash = (r) => ({
 async function listPatients() {
   const [p, v] = await Promise.all([
     db.query('SELECT ' + PATIENT_COLS + ' FROM patients ORDER BY lower(name), id'),
-    db.query('SELECT id, patient_id, name, applied_on, next_on FROM vaccines ORDER BY applied_on DESC, id DESC'),
+    db.query('SELECT id, patient_id, name, applied_on, next_on, product_id, stock_qty FROM vaccines ORDER BY applied_on DESC, id DESC'),
   ]);
   const by = {};
   v.rows.forEach((x) => {
@@ -145,11 +145,11 @@ async function listPatients() {
   return p.rows.map((r) => Object.assign(mapPatient(r), { vaccines: by[r.id] || [] }));
 }
 async function listProducts() {
-  const r = await db.query('SELECT id, name, category, stock, min_stock, price FROM products ORDER BY lower(name), id');
+  const r = await db.query('SELECT id, name, category, stock, min_stock, price, species FROM products ORDER BY lower(name), id');
   return r.rows.map(mapProduct);
 }
 async function listServices() {
-  const r = await db.query('SELECT id, name, category, price, product_id FROM services ORDER BY lower(name), id');
+  const r = await db.query('SELECT id, name, category, price, product_id, species FROM services ORDER BY lower(name), id');
   return r.rows.map(mapService);
 }
 
@@ -239,6 +239,22 @@ async function returnStock(c, productId, qty, movementId, reason, userId) {
   ]);
   if (movementId) await c.query('UPDATE stock_movements SET voided = TRUE WHERE id = $1', [movementId]);
   return qty;
+}
+
+/**
+ * Al editar una vacuna o medicación vinculada al stock: si cambió el producto o la cantidad,
+ * devuelve lo descontado antes y descuenta lo nuevo (todo dentro de la misma transacción).
+ * `old` es la fila actual; devuelve { productId, qty, movementId } para guardar en el registro.
+ */
+async function reapplyStock(c, old, newProductId, newQty, o) {
+  const oldQty = old.stock_qty || 0;
+  if ((old.product_id || null) === (newProductId || null) && (!newProductId || oldQty === newQty)) {
+    return { productId: old.product_id || null, qty: oldQty, movementId: old.stock_movement_id || null };
+  }
+  await returnStock(c, old.product_id, oldQty, old.stock_movement_id, o.reasonBack, o.userId);
+  if (!newProductId) return { productId: null, qty: 0, movementId: null };
+  const d = await deductStock(c, newProductId, newQty, o.reasonOut, o.date, o.userId);
+  return { productId: newProductId, qty: newQty, movementId: d.movementId };
 }
 
 /* ============================================================
@@ -378,16 +394,16 @@ add('GET', '/api/patients/:id', async (ctx) => {
   const r = await db.query('SELECT ' + PATIENT_COLS + ' FROM patients WHERE id = $1', [id]);
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el paciente');
   const [v, d, m, c, s] = await Promise.all([
-    db.query('SELECT id, name, applied_on, next_on FROM vaccines WHERE patient_id = $1 ORDER BY applied_on DESC, id DESC', [id]),
+    db.query('SELECT id, name, applied_on, next_on, product_id, stock_qty FROM vaccines WHERE patient_id = $1 ORDER BY applied_on DESC, id DESC', [id]),
     db.query('SELECT id, on_date, title, notes FROM diagnoses WHERE patient_id = $1 ORDER BY on_date DESC, id DESC', [id]),
-    db.query('SELECT id, on_date, name, dose, duration FROM medications WHERE patient_id = $1 ORDER BY on_date DESC, id DESC', [id]),
+    db.query('SELECT id, on_date, name, dose, duration, product_id, stock_qty FROM medications WHERE patient_id = $1 ORDER BY on_date DESC, id DESC', [id]),
     db.query('SELECT id, on_date, concept, amount, method FROM charges WHERE patient_id = $1 ORDER BY on_date DESC, id DESC', [id]),
     db.query('SELECT id, on_date, title, notes FROM complementary_studies WHERE patient_id = $1 ORDER BY on_date DESC, id DESC', [id]),
   ]);
   return Object.assign(mapPatient(r.rows[0]), {
     vaccines: v.rows.map(mapVaccine),
     diagnoses: d.rows.map((x) => ({ id: x.id, date: x.on_date, title: x.title, notes: x.notes })),
-    meds: m.rows.map((x) => ({ id: x.id, date: x.on_date, name: x.name, dose: x.dose, duration: x.duration })),
+    meds: m.rows.map((x) => ({ id: x.id, date: x.on_date, name: x.name, dose: x.dose, duration: x.duration, productId: x.product_id || null, stockQty: x.stock_qty || 0 })),
     charges: c.rows.map((x) => ({ id: x.id, date: x.on_date, concept: x.concept, amount: Number(x.amount), method: x.method })),
     studies: s.rows.map(mapStudy), // v2: estudios complementarios (ecografía, radiografía, análisis, etc.)
   });
@@ -420,6 +436,10 @@ add('POST', '/api/patients/:id/vaccines', async (ctx) => {
   const next = U.optDate(b.next, 'Próxima dosis');
   const serviceId = b.serviceId ? U.idParam(b.serviceId) : null;
   const skipStock = !!b.skipStock;
+  // B5: "Cobrar ahora" crea el cobro y el ingreso en caja junto con la vacuna (solo si se eligió un servicio).
+  const chargeNow = serviceId && b.charge && typeof b.charge === 'object';
+  const chargeAmount = chargeNow ? U.money(b.charge.amount, 'Monto a cobrar') : 0;
+  const chargeMethod = chargeNow ? U.oneOf(b.charge.method, U.METHODS, 'Forma de pago') : null;
   return db.tx(async (c) => {
     const pat = await c.query('SELECT name FROM patients WHERE id = $1', [id]);
     if (!pat.rows[0]) throw new HttpError(404, 'No se encontró el paciente');
@@ -427,7 +447,7 @@ add('POST', '/api/patients/:id/vaccines', async (ctx) => {
     let qty = 0;
     let movementId = null;
     if (serviceId) {
-      const svc = await c.query('SELECT product_id FROM services WHERE id = $1', [serviceId]);
+      const svc = await c.query('SELECT name, product_id FROM services WHERE id = $1', [serviceId]);
       if (!svc.rows[0]) throw new HttpError(404, 'No se encontró el servicio de la lista de precios');
       if (svc.rows[0].product_id && !skipStock) {
         const d = await deductStock(c, svc.rows[0].product_id, 1, 'Vacuna aplicada a ' + pat.rows[0].name, date, ctx.user.id);
@@ -440,7 +460,42 @@ add('POST', '/api/patients/:id/vaccines', async (ctx) => {
       'INSERT INTO vaccines (patient_id, name, applied_on, next_on, product_id, stock_qty, stock_movement_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
       [id, name, date, next, productId, qty, movementId]
     );
-    return { ok: true, deducted: qty > 0 };
+    if (chargeNow) {
+      const svcName = (await c.query('SELECT name FROM services WHERE id = $1', [serviceId])).rows[0].name;
+      const cash = await c.query(
+        'INSERT INTO cash_movements (on_date, kind, concept, category, method, amount, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+        [date, 'in', svcName + ' – ' + pat.rows[0].name, 'Servicios', chargeMethod, chargeAmount, ctx.user.id]
+      );
+      await c.query('INSERT INTO charges (patient_id, on_date, concept, amount, method, cash_id) VALUES ($1, $2, $3, $4, $5, $6)', [
+        id, date, svcName, chargeAmount, chargeMethod, cash.rows[0].id,
+      ]);
+    }
+    return { ok: true, deducted: qty > 0, charged: !!chargeNow };
+  });
+});
+// B2: editar una vacuna. Si cambia el producto del stock vinculado, se devuelve al anterior y se descuenta del nuevo.
+add('PUT', '/api/vaccines/:id', async (ctx) => {
+  const id = U.idParam(ctx.params.id);
+  const b = ctx.body;
+  const name = U.reqStr(b.name, 'Vacuna', 100);
+  const date = U.pastDate(b.date, 'Fecha de aplicación');
+  const next = U.optDate(b.next, 'Próxima dosis');
+  const productId = b.productId ? U.idParam(b.productId) : null;
+  return db.tx(async (c) => {
+    const r = await c.query(
+      'SELECT v.product_id, v.stock_qty, v.stock_movement_id, p.name AS patient_name FROM vaccines v JOIN patients p ON p.id = v.patient_id WHERE v.id = $1 FOR UPDATE OF v',
+      [id]
+    );
+    if (!r.rows[0]) throw new HttpError(404, 'No se encontró la vacuna');
+    const st = await reapplyStock(c, r.rows[0], productId, 1, {
+      reasonBack: 'Anulación de aplicación',
+      reasonOut: 'Vacuna aplicada a ' + r.rows[0].patient_name,
+      date,
+      userId: ctx.user.id,
+    });
+    await c.query('UPDATE vaccines SET name = $1, applied_on = $2, next_on = $3, product_id = $4, stock_qty = $5, stock_movement_id = $6 WHERE id = $7', [
+      name, date, next, st.productId, st.qty, st.movementId, id,
+    ]);
   });
 });
 // Quitar una vacuna que descontó stock lo devuelve (A2).
@@ -465,6 +520,16 @@ add('POST', '/api/patients/:id/diagnoses', async (ctx) => {
   await mustExist('patients', id, 'No se encontró el paciente');
   await db.query('INSERT INTO diagnoses (patient_id, on_date, title, notes) VALUES ($1, $2, $3, $4)', [id, date, title, notes]);
 });
+add('PUT', '/api/diagnoses/:id', async (ctx) => {
+  const b = ctx.body;
+  const r = await db.query('UPDATE diagnoses SET on_date = $1, title = $2, notes = $3 WHERE id = $4 RETURNING id', [
+    U.pastDate(b.date, 'Fecha del diagnóstico'),
+    U.reqStr(b.title, 'Diagnóstico', 200),
+    U.optStr(b.notes, 3000),
+    U.idParam(ctx.params.id),
+  ]);
+  if (!r.rows[0]) throw new HttpError(404, 'No se encontró el diagnóstico');
+});
 add('DELETE', '/api/diagnoses/:id', async (ctx) => {
   await db.query('DELETE FROM diagnoses WHERE id = $1', [U.idParam(ctx.params.id)]);
 });
@@ -478,6 +543,16 @@ add('POST', '/api/patients/:id/studies', async (ctx) => {
   const notes = U.optStr(b.notes, 3000);
   await mustExist('patients', id, 'No se encontró el paciente');
   await db.query('INSERT INTO complementary_studies (patient_id, on_date, title, notes) VALUES ($1, $2, $3, $4)', [id, date, title, notes]);
+});
+add('PUT', '/api/studies/:id', async (ctx) => {
+  const b = ctx.body;
+  const r = await db.query('UPDATE complementary_studies SET on_date = $1, title = $2, notes = $3 WHERE id = $4 RETURNING id', [
+    U.pastDate(b.date, 'Fecha del estudio'),
+    U.reqStr(b.title, 'Tipo de estudio', 200),
+    U.optStr(b.notes, 3000),
+    U.idParam(ctx.params.id),
+  ]);
+  if (!r.rows[0]) throw new HttpError(404, 'No se encontró el estudio');
 });
 add('DELETE', '/api/studies/:id', async (ctx) => {
   await db.query('DELETE FROM complementary_studies WHERE id = $1', [U.idParam(ctx.params.id)]);
@@ -501,6 +576,31 @@ add('POST', '/api/patients/:id/medications', async (ctx) => {
       [id, date, name, dose, duration, productId, qty, movementId]
     );
     return { ok: true, deducted: qty > 0, qty };
+  });
+});
+// B2: editar una medicación (si cambia el producto o la cantidad, se reajusta el stock).
+add('PUT', '/api/medications/:id', async (ctx) => {
+  const id = U.idParam(ctx.params.id);
+  const b = ctx.body;
+  const date = U.pastDate(b.date, 'Fecha de la medicación');
+  const name = U.reqStr(b.name, 'Medicamento', 200);
+  const dose = U.optStr(b.dose, 200);
+  const duration = U.optStr(b.duration, 200);
+  const productId = b.productId ? U.idParam(b.productId) : null;
+  const qty = productId ? U.reqInt(b.qty == null || b.qty === '' ? 1 : b.qty, 'Cantidad a descontar', 1, 100000) : 0;
+  return db.tx(async (c) => {
+    const r = await c.query('SELECT product_id, stock_qty, stock_movement_id FROM medications WHERE id = $1 FOR UPDATE', [id]);
+    if (!r.rows[0]) throw new HttpError(404, 'No se encontró la medicación');
+    const st = await reapplyStock(c, r.rows[0], productId, qty, {
+      reasonBack: 'Anulación de medicación',
+      reasonOut: 'Medicación',
+      date,
+      userId: ctx.user.id,
+    });
+    await c.query(
+      'UPDATE medications SET on_date = $1, name = $2, dose = $3, duration = $4, product_id = $5, stock_qty = $6, stock_movement_id = $7 WHERE id = $8',
+      [date, name, dose, duration, st.productId, st.qty, st.movementId, id]
+    );
   });
 });
 // Quitar una medicación que descontó stock lo devuelve (A2).
@@ -563,6 +663,7 @@ add('POST', '/api/products', { admin: true }, async (ctx) => {
   const name = U.reqStr(b.name, 'Nombre', 200);
   const category = U.oneOf(b.category, U.PROD_CATS, 'Categoría');
   const price = U.money(b.price, 'Precio de venta');
+  const species = U.optSpecies(b.species, category);
   const min = U.reqInt(b.min == null || b.min === '' ? 0 : b.min, 'Stock mínimo', 0, 100000);
   const stock = U.reqInt(b.stock == null || b.stock === '' ? 0 : b.stock, 'Stock inicial', 0, 100000);
   // v2: se carga precio unitario y el costo total se calcula solo (cantidad × unitario).
@@ -571,8 +672,8 @@ add('POST', '/api/products', { admin: true }, async (ctx) => {
   const method = stock > 0 && cost > 0 ? U.oneOf(b.method, U.METHODS, 'Forma de pago') : null;
   const today = U.todayAR();
   return db.tx(async (c) => {
-    const r = await c.query('INSERT INTO products (name, category, stock, min_stock, price) VALUES ($1, $2, $3, $4, $5) RETURNING id', [
-      name, category, stock, min, price,
+    const r = await c.query('INSERT INTO products (name, category, stock, min_stock, price, species) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id', [
+      name, category, stock, min, price, species,
     ]);
     const id = r.rows[0].id;
     if (stock > 0) {
@@ -594,11 +695,13 @@ add('POST', '/api/products', { admin: true }, async (ctx) => {
 add('PUT', '/api/products/:id', { admin: true }, async (ctx) => {
   const id = U.idParam(ctx.params.id);
   const b = ctx.body;
-  const r = await db.query('UPDATE products SET name = $1, category = $2, price = $3, min_stock = $4 WHERE id = $5 RETURNING id', [
+  const category = U.oneOf(b.category, U.PROD_CATS, 'Categoría');
+  const r = await db.query('UPDATE products SET name = $1, category = $2, price = $3, min_stock = $4, species = $5 WHERE id = $6 RETURNING id', [
     U.reqStr(b.name, 'Nombre', 200),
-    U.oneOf(b.category, U.PROD_CATS, 'Categoría'),
+    category,
     U.money(b.price, 'Precio de venta'),
     U.reqInt(b.min == null || b.min === '' ? 0 : b.min, 'Stock mínimo', 0, 100000),
+    U.optSpecies(b.species, category),
     id,
   ]);
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el producto');
@@ -691,24 +794,20 @@ add('GET', '/api/products/:id/movements', { admin: true }, async (ctx) => {
 // v2: productId (opcional) vincula un servicio de tipo "Vacunas" con el producto de stock que
 // tiene que descontarse cada vez que se aplica esa vacuna a un paciente.
 function serviceInput(b) {
-  return [
-    U.reqStr(b.name, 'Servicio', 200),
-    U.oneOf(b.category, U.SERV_CATS, 'Categoría'),
-    U.money(b.price, 'Precio'),
-    b.productId ? U.idParam(b.productId) : null,
-  ];
+  const category = U.oneOf(b.category, U.SERV_CATS, 'Categoría');
+  return [U.reqStr(b.name, 'Servicio', 200), category, U.money(b.price, 'Precio'), b.productId ? U.idParam(b.productId) : null, U.optSpecies(b.species, category)];
 }
 add('POST', '/api/services', { admin: true }, async (ctx) => {
   const params = serviceInput(ctx.body);
   if (params[3]) await mustExist('products', params[3], 'No se encontró el producto de stock elegido');
-  const r = await db.query('INSERT INTO services (name, category, price, product_id) VALUES ($1, $2, $3, $4) RETURNING id', params);
+  const r = await db.query('INSERT INTO services (name, category, price, product_id, species) VALUES ($1, $2, $3, $4, $5) RETURNING id', params);
   return { id: r.rows[0].id };
 });
 add('PUT', '/api/services/:id', { admin: true }, async (ctx) => {
   const id = U.idParam(ctx.params.id);
   const params = serviceInput(ctx.body);
   if (params[3]) await mustExist('products', params[3], 'No se encontró el producto de stock elegido');
-  const r = await db.query('UPDATE services SET name = $1, category = $2, price = $3, product_id = $4 WHERE id = $5 RETURNING id', params.concat([id]));
+  const r = await db.query('UPDATE services SET name = $1, category = $2, price = $3, product_id = $4, species = $5 WHERE id = $6 RETURNING id', params.concat([id]));
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el servicio');
 });
 add('DELETE', '/api/services/:id', { admin: true }, async (ctx) => {

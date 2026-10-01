@@ -12,6 +12,7 @@ const HANDLED = Symbol('handled');
 const METHODS = ['Efectivo', 'Transferencia', 'Tarjeta de débito', 'Tarjeta de crédito'];
 // v2: se suman 'Pulguicidas' y 'Antiparasitarios' a las categorías de producto.
 const PROD_CATS = ['Medicamentos', 'Vacunas', 'Higiene', 'Pulguicidas', 'Antiparasitarios', 'Otros'];
+const SPECIES_OPTS = ['Perro', 'Gato', 'Ambos'];
 const SERV_CATS = ['Consultas', 'Vacunas', 'Cirugías', 'Otros'];
 const CASH_CATS = ['Servicios', 'Venta de productos', 'Compra de stock', 'Alquiler y servicios', 'Sueldos', 'Retiro de caja', 'Otros'];
 // v2: tipos de turno del calendario, con su color de bloque (coherente en cualquier paleta del sistema).
@@ -95,6 +96,11 @@ function reqInt(v, label, min, max) {
 function money(v, label) {
   return round2(reqNum(v, label, 0, 1e9));
 }
+/** Especie opcional de un producto o servicio de vacunas: solo se guarda si la categoría es Vacunas. */
+function optSpecies(v, category) {
+  if (category !== 'Vacunas' || v == null || v === '') return null;
+  return oneOf(v, SPECIES_OPTS, 'Especie');
+}
 function oneOf(v, list, label) {
   if (!list.includes(v)) throw bad('Valor inválido: ' + label);
   return v;
@@ -166,8 +172,8 @@ function clientIp(req) {
 
 module.exports = {
   HttpError, bad, HANDLED,
-  METHODS, PROD_CATS, SERV_CATS, CASH_CATS, APPT_TYPES, APPT_LABELS,
+  METHODS, SPECIES_OPTS, PROD_CATS, SERV_CATS, CASH_CATS, APPT_TYPES, APPT_LABELS,
   TZ, todayAR, addDays, monthStart, monthEnd, round2,
-  reqStr, optStr, reqDate, optDate, pastDate, optPastDate, reqTime, reqNum, reqInt, money, oneOf, idParam, checkEmail,
+  reqStr, optStr, reqDate, optDate, pastDate, optPastDate, reqTime, reqNum, reqInt, money, oneOf, optSpecies, idParam, checkEmail,
   sendJson, readBody, parseCookies, clientIp,
 };
