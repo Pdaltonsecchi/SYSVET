@@ -295,3 +295,21 @@ INSERT INTO weights (patient_id, fecha, kg)
   SELECT p.id, p.created_at::date, p.weight FROM patients p
   WHERE p.weight IS NOT NULL AND p.weight > 0 AND p.weight <= 150
     AND NOT EXISTS (SELECT 1 FROM weights w WHERE w.patient_id = p.id);
+
+-- ============================================================
+-- Bloque H (adjuntos de estudios, en Supabase Storage)
+-- ============================================================
+-- Metadatos de los archivos adjuntos a un estudio complementario. Los archivos están en el bucket privado
+-- "estudios". Si el estudio va a la Papelera (G1), sus adjuntos quedan guardados con él y vuelven al restaurarlo;
+-- al eliminar el estudio (o el paciente) definitivamente, se borran también los archivos del bucket.
+CREATE TABLE IF NOT EXISTS study_attachments (
+  id SERIAL PRIMARY KEY,
+  study_id INTEGER NOT NULL REFERENCES complementary_studies(id) ON DELETE CASCADE,
+  file_path TEXT NOT NULL UNIQUE,
+  file_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS study_attachments_study_idx ON study_attachments(study_id);

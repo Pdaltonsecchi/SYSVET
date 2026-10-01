@@ -21,6 +21,7 @@ var norm=function(s){return String(s==null?'':s).normalize('NFD').replace(/\p{Di
 // Apellido del dueño (última palabra de su nombre), para distinguir pacientes homónimos.
 var surname=function(o){var w=String(o||'').trim().split(/\s+/);return w[w.length-1]||'';};
 var toMin=function(t){return Number(t.slice(0,2))*60+Number(t.slice(3,5));};
+var fmtBytes=function(n){n=Number(n)||0;if(n>=1073741824)return (n/1073741824).toFixed(n>=10737418240?0:1).replace('.',',')+' GB';if(n>=1048576)return (n/1048576).toFixed(n>=10485760?0:1).replace('.',',')+' MB';return Math.max(1,Math.round(n/1024))+' KB';};
 var plural=function(n,a,b){return n+' '+(n===1?a:b);};
 var fmtTs=function(v){var d=new Date(v);if(isNaN(d.getTime()))return '';return d.toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});};
 // v2: lunes de la semana que contiene "iso" (semana de lunes a domingo).
@@ -49,7 +50,7 @@ var APPT_VIEWS=[['week','Semana'],['2weeks','2 semanas'],['3weeks','3 semanas'],
 /* ============================================================
    Estado
    ============================================================ */
-var S={clinic:'VETFLOW',user:null,patients:[],products:[],services:[],suppliers:[],summary:null};
+var S={attachments:false,clinic:'VETFLOW',user:null,patients:[],products:[],services:[],suppliers:[],summary:null};
 var ui={view:'pacientes',sel:null,detail:null,filter:'all',q:'',tab:'stock',cat:'all',
   stq:'',cq:'',cashp:'month',cashf:'all',cashm:'all',cash:null,
   rep:'90',rmonthly:null,rservices:null,rproducts:null,backups:null,users:null,
@@ -90,7 +91,7 @@ function showLogin(msg){
   $('#lerror').textContent=msg||'';
 }
 function applyBootstrap(d){
-  S.clinic=d.clinic||'VETFLOW';S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.suppliers=d.suppliers||[];S.summary=d.summary||null;
+  S.clinic=d.clinic||'VETFLOW';S.attachments=!!d.attachments;S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.suppliers=d.suppliers||[];S.summary=d.summary||null;
 }
 async function start(){
   var d=await api('/bootstrap');
@@ -127,6 +128,7 @@ async function loadView(){
     ui.trash=await api('/trash');
   }else if(ui.view==='copias'&&isAdmin()){
     ui.backups=(await api('/backups')).items;
+    ui.attUsage=await api('/attachments/usage').catch(function(){return null;});
   }else if(ui.view==='usuarios'&&isAdmin()){
     ui.users=(await api('/users')).items;
   }
@@ -442,6 +444,62 @@ function weightHTML(p){
   }).join('');
   return '<div class="wbox"><div class="wlast"><small>Último peso</small><b>'+fmtKg(last.kg)+'</b><small>'+fmtDate(last.date)+'</small></div>'+weightChart(ws)+'<div class="wlist">'+recent+'</div></div>';
 }
+/* ============================================================
+   H · Adjuntos de estudios
+   ============================================================ */
+var ATT_EXT=['pdf','jpg','jpeg','png','webp','heic','dcm'];
+var ATT_MAX=10*1024*1024,ATT_MAX_FILES=5;
+var isImg=function(m){return m&&m.indexOf('image/')===0&&m!=='image/heic';};
+function attsHTML(st){
+  var L=st.attachments||[];
+  if(!L.length)return '';
+  return '<div class="atts">'+L.map(function(a){
+    var thumb=isImg(a.mime)&&S.attachments?'<img data-att="'+a.id+'" alt="" loading="lazy">':'<span class="aicon" aria-hidden="true">'+(a.mime==='application/pdf'?'📄':a.mime==='application/dicom'?'🩻':'🖼️')+'</span>';
+    return '<span class="att"><button class="attb" data-action="att-open" data-id="'+a.id+'" data-mime="'+esc(a.mime)+'" title="'+(a.mime==='application/dicom'||a.mime==='image/heic'?'Descargar':'Ver')+' '+esc(a.name)+'">'+thumb+'<span class="aname">'+esc(a.name)+'</span></button>'+
+      (isAdmin()?'<button class="link bad attx" data-action="att-del" data-id="'+a.id+'" aria-label="Quitar archivo '+esc(a.name)+'">✕</button>':'')+'</span>';
+  }).join('')+'</div>';
+}
+// Miniaturas: se piden con una URL firmada (vence a los 10 minutos); se guarda para no repetir el pedido.
+var thumbCache={};
+function loadThumbs(){
+  document.querySelectorAll('img[data-att]').forEach(function(img){
+    if(img.getAttribute('src'))return;
+    var id=img.dataset.att,c=thumbCache[id];
+    if(c&&c.exp>Date.now()){img.src=c.url;return;}
+    api('/attachments/'+id+'/url').then(function(r){thumbCache[id]={url:r.url,exp:Date.now()+(r.expiresIn-60)*1000};img.src=r.url;}).catch(function(){});
+  });
+}
+// Convierte JPG/PNG a JPG de hasta 2000 px de lado y calidad 0,8, si así pesa menos.
+function compressImage(file){
+  return new Promise(function(resolve){
+    if(!/^image\/(jpeg|png)$/.test(file.type)){resolve(file);return;}
+    var img=new Image(),url=URL.createObjectURL(file);
+    img.onload=function(){
+      URL.revokeObjectURL(url);
+      var w=img.naturalWidth,h=img.naturalHeight,k=Math.min(1,2000/Math.max(w,h));
+      var cv=document.createElement('canvas');cv.width=Math.round(w*k);cv.height=Math.round(h*k);
+      var cx=cv.getContext('2d');cx.fillStyle='#fff';cx.fillRect(0,0,cv.width,cv.height);cx.drawImage(img,0,0,cv.width,cv.height);
+      cv.toBlob(function(b){resolve(b&&b.size<file.size?new File([b],file.name.replace(/\.[^.]+$/,'')+'.jpg',{type:'image/jpeg'}):file);},'image/jpeg',0.8);
+    };
+    img.onerror=function(){URL.revokeObjectURL(url);resolve(file);};
+    img.src=url;
+  });
+}
+// Sube los archivos con barra de progreso (XMLHttpRequest, porque fetch no informa el avance de la subida).
+function uploadFiles(studyId,files,onProgress){
+  return new Promise(function(resolve,reject){
+    var fd=new FormData();files.forEach(function(f){fd.append('files',f,f.name);});
+    var x=new XMLHttpRequest();x.open('POST','/api/studies/'+studyId+'/attachments');
+    x.upload.onprogress=function(e){if(e.lengthComputable)onProgress(e.loaded/e.total);};
+    x.onload=function(){
+      var d=null;try{d=JSON.parse(x.responseText);}catch(_){}
+      if(x.status>=200&&x.status<300)resolve(d);
+      else reject(new Error((d&&d.error)||'No se pudieron subir los archivos ('+x.status+')'));
+    };
+    x.onerror=function(){reject(new Error('No hay conexión con el servidor. Revisá tu internet e intentá de nuevo.'));};
+    x.send(fd);
+  });
+}
 function detailHTML(p){
   var L=latestIds(p);
   var vacHTML=p.vaccines.length?'<div class="rows">'+p.vaccines.map(function(v){
@@ -455,7 +513,7 @@ function detailHTML(p){
 
   // v2: estudios complementarios (ecografía, radiografía, análisis, etc.)
   var stHTML=(p.studies||[]).length?'<div class="tl">'+p.studies.map(function(st){
-    return '<div class="tl-item"><span class="d">'+fmtDate(st.date)+'</span><div><b>'+esc(st.title)+'</b>'+(st.notes?'<p>'+esc(st.notes)+'</p>':'')+'</div><span class="racts"><button class="link" data-action="edit-study" data-id="'+st.id+'">Editar</button><button class="link bad" data-action="del-study" data-id="'+st.id+'">Quitar</button></span></div>';
+    return '<div class="tl-item"><span class="d">'+fmtDate(st.date)+'</span><div><b>'+esc(st.title)+'</b>'+(st.notes?'<p>'+esc(st.notes)+'</p>':'')+attsHTML(st)+'</div><span class="racts"><button class="link" data-action="edit-study" data-id="'+st.id+'">Editar</button><button class="link bad" data-action="del-study" data-id="'+st.id+'">Quitar</button></span></div>';
   }).join('')+'</div>':'<p class="empty">Todavía no hay estudios complementarios registrados.</p>';
 
   var mdHTML=p.meds.length?'<div class="tl">'+p.meds.map(function(m){
@@ -640,6 +698,19 @@ function viewTrash(){
 /* ============================================================
    Copias de seguridad y usuarios
    ============================================================ */
+// H: espacio que ocupan los adjuntos (plan gratuito de Supabase: 1 GB) y aclaración sobre las copias.
+function attachmentsPanel(){
+  var u=ui.attUsage;
+  var meter='';
+  if(u&&u.configured){
+    var pct=Math.min(100,Math.round(u.bytes/u.limit*100));
+    meter='<p><b>Adjuntos: '+fmtBytes(u.bytes)+' de '+fmtBytes(u.limit)+'</b> <small>('+plural(u.count,'archivo','archivos')+')</small></p>'+
+      '<div class="meter'+(pct>=80?' hot':'')+'" role="img" aria-label="'+pct+'% del espacio usado"><i style="width:'+Math.max(pct,u.bytes?1:0)+'%"></i></div>'+
+      (pct>=80?'<p class="warnbox">Queda poco espacio para adjuntos. Revisá los archivos pesados o ampliá el plan de Supabase.</p>':'');
+  }else meter='<p class="empty" style="padding:0">Los adjuntos todavía no están activados en el servidor.</p>';
+  return '<section class="sec"><h3>Archivos adjuntos de los estudios</h3>'+meter+
+    '<p class="warnbox">Los archivos adjuntos <b>no se incluyen</b> en la copia que descargás (el JSON solo guarda sus datos: nombre, tamaño y a qué estudio pertenecen). Los archivos quedan en <b>Supabase Storage</b>, en el bucket privado de estudios.</p></section>';
+}
 function viewBackups(){
   if(!ui.backups)return '<section class="farm"><div class="head"><h1>Copias de seguridad</h1></div><p class="empty">Cargando…</p></section>';
   var d=lastExportDays();
@@ -654,6 +725,7 @@ function viewBackups(){
     (d===null?' Todavía no descargaste ninguno desde esta computadora.':' La última descarga desde esta computadora fue hace '+plural(d,'día','días')+'.')+'</p>'+
     '<div class="cashbox" style="margin-top:1rem"><div class="panel"><h3>Copia automática diaria</h3><p>'+(lastAuto?'Última copia automática: '+fmtTs(lastAuto.createdAt)+'.':'Todavía no se hizo ninguna.')+' Se hace sola una vez por día y se conservan las últimas 14.</p></div>'+
     '<div class="panel"><h3>Archivo y copias manuales</h3><div class="filerow"><button class="btn primary" data-action="backup-download">Descargar copia a mi computadora</button><button class="btn" data-action="backup-now">Crear copia ahora</button><button class="btn" data-action="pick-file">Cargar desde archivo</button><input id="bfile" type="file" accept=".json,application/json" hidden></div></div></div>'+
+    attachmentsPanel()+
     '<section class="sec"><h3>Copias guardadas en el sistema</h3><div class="bk-list">'+rows+'</div></section></section>';
 }
 function viewUsers(){
@@ -765,6 +837,7 @@ function render(){
   var v=ui.view;
   main.innerHTML=v==='pacientes'?viewPacientes():v==='calendario'?viewCalendario():v==='farmacia'?viewFarmacia():v==='proveedores'?viewProveedores():
     v==='reportes'?viewReportes():v==='papelera'?viewTrash():v==='copias'?viewBackups():viewUsers();
+  if(v==='pacientes')loadThumbs();
 }
 
 /* ============================================================
@@ -1156,16 +1229,74 @@ function serviceForm(s){
 }
 // v2: estudios complementarios (mismo patrón que diagnósticos).
 function studyForm(p,st){
-  var e=!!st;
-  openForm({title:(e?'Editar estudio de ':'Agregar estudio complementario a ')+esc(p.name),
+  var e=!!st,pending=[],existing=e?(st.attachments||[]).slice():[];
+  var zone=S.attachments?
+    '<div class="attach"><div class="drop" id="drop"><p>Arrastrá archivos acá, o</p><div class="dropbtns"><button type="button" class="btn" id="pick">Adjuntar archivos</button><button type="button" class="btn" id="shoot">📷 Sacar foto</button></div>'+
+    '<small>PDF, JPG, PNG, WEBP, HEIC o DICOM (.dcm) · hasta 10 MB cada uno · máximo 5 por estudio</small></div>'+
+    '<input type="file" id="fin" multiple accept="image/*,application/pdf,.pdf,.dcm,.heic,.webp" hidden><input type="file" id="fcam" accept="image/*" capture="environment" hidden>'+
+    '<ul class="flist" id="flist"></ul><div class="progress" id="prog" hidden><div></div><span></span></div></div>':
+    '<p class="warnbox">Los adjuntos todavía no están activados en el servidor'+(isAdmin()?' (faltan las variables SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY en Render).':'. Pedile al administrador que los active.')+'</p>';
+  var f=openForm({title:(e?'Editar estudio de ':'Agregar estudio complementario a ')+esc(p.name),
     body:'<div class="fields">'+fld('Fecha','date',{type:'date',value:e?st.date:todayIso(),max:todayIso(),req:true})+fld('Tipo de estudio','title',{req:true,full:true,ph:'Ej.: Ecografía abdominal, radiografía, análisis de sangre',value:e?st.title:''})+
-    fld('Notas técnicas','notes',{type:'textarea',full:true,value:e?st.notes:''})+'</div>',
+    fld('Notas técnicas','notes',{type:'textarea',full:true,value:e?st.notes:''})+'</div><h3 class="attitle">Adjuntar archivos</h3>'+zone,
     submit:e?'Guardar cambios':'Agregar estudio',
     onSubmit:async function(d){
-      var body={date:d.date,title:d.title,notes:d.notes};
-      if(e)await api('/studies/'+st.id,{method:'PUT',body:body});else await api('/patients/'+p.id+'/studies',{body:body});
-      await reload();toast(e?'Estudio guardado':'Estudio agregado');
+      var body={date:d.date,title:d.title,notes:d.notes},id;
+      if(e){await api('/studies/'+st.id,{method:'PUT',body:body});id=st.id;}
+      else id=(await api('/patients/'+p.id+'/studies',{body:body})).id;
+      if(pending.length){
+        var prog=f.querySelector('#prog'),bar=prog.querySelector('div'),txt=prog.querySelector('span');
+        prog.hidden=false;txt.textContent='Subiendo…';
+        try{
+          await uploadFiles(id,pending,function(r){bar.style.width=Math.round(r*100)+'%';txt.textContent='Subiendo… '+Math.round(r*100)+'%';});
+        }catch(err){
+          await reload();
+          toast('El estudio se guardó, pero no se pudieron subir los archivos: '+err.message+' Reintentá desde “Editar”.',true);
+          return;
+        }
+      }
+      await reload();toast((e?'Estudio guardado':'Estudio agregado')+(pending.length?' · '+plural(pending.length,'archivo subido','archivos subidos'):''));
     }});
+  if(!S.attachments)return;
+  var list=f.querySelector('#flist'),errEl=f.querySelector('.err');
+  var draw=function(){
+    list.innerHTML=existing.map(function(a){
+      return '<li><span class="fname">'+esc(a.name)+'</span><small>'+fmtBytes(a.size)+'</small>'+(isAdmin()?'<button type="button" class="link bad" data-ex="'+a.id+'">Quitar</button>':'<span></span>')+'</li>';
+    }).join('')+pending.map(function(x,i){
+      return '<li class="new"><span class="fname">'+esc(x.name)+'</span><small>'+fmtBytes(x.size)+' · nuevo</small><button type="button" class="link bad" data-new="'+i+'" aria-label="Sacar '+esc(x.name)+' de la lista">✕</button></li>';
+    }).join('');
+  };
+  var add=async function(fl){
+    errEl.textContent='';
+    for(var i=0;i<fl.length;i++){
+      var file=fl[i],ext=(file.name.split('.').pop()||'').toLowerCase();
+      if(ATT_EXT.indexOf(ext)<0){errEl.textContent='“'+file.name+'”: tipo de archivo no permitido. Solo PDF, JPG, PNG, WEBP, HEIC y DICOM (.dcm).';continue;}
+      if(existing.length+pending.length>=ATT_MAX_FILES){errEl.textContent='Cada estudio admite hasta '+ATT_MAX_FILES+' archivos.';break;}
+      var ready=await compressImage(file);
+      if(ready.size>ATT_MAX){errEl.textContent='“'+file.name+'” pesa más de 10 MB.';continue;}
+      pending.push(ready);
+    }
+    draw();
+  };
+  f.querySelector('#pick').addEventListener('click',function(){f.querySelector('#fin').click();});
+  f.querySelector('#shoot').addEventListener('click',function(){f.querySelector('#fcam').click();});
+  ['#fin','#fcam'].forEach(function(sel){f.querySelector(sel).addEventListener('change',function(ev){add(Array.prototype.slice.call(ev.target.files));ev.target.value='';});});
+  var drop=f.querySelector('#drop');
+  ['dragenter','dragover'].forEach(function(n){drop.addEventListener(n,function(ev){ev.preventDefault();drop.classList.add('over');});});
+  ['dragleave','drop'].forEach(function(n){drop.addEventListener(n,function(ev){ev.preventDefault();drop.classList.remove('over');});});
+  drop.addEventListener('drop',function(ev){add(Array.prototype.slice.call(ev.dataTransfer.files));});
+  list.addEventListener('click',async function(ev){
+    var bn=ev.target.closest('[data-new]'),bx=ev.target.closest('[data-ex]');
+    if(bn){pending.splice(Number(bn.dataset.new),1);draw();}
+    if(bx){
+      var a=existing.find(function(y){return String(y.id)===bx.dataset.ex;});
+      var ch=await choiceDialog('Quitar archivo','<p>¿Quitar el archivo “'+esc(a.name)+'”? Se borra también del almacenamiento. Esta acción no se puede deshacer.</p>',[{label:'Cancelar',value:null,cls:'ghost'},{label:'Quitar',value:'ok',cls:'danger'}]);
+      if(ch!=='ok')return;
+      try{await api('/attachments/'+a.id,{method:'DELETE'});existing=existing.filter(function(y){return y!==a;});draw();reload();}
+      catch(err){errEl.textContent=err.message;}
+    }
+  });
+  draw();
 }
 
 // v2: proveedores.
@@ -1376,6 +1507,28 @@ var actions={
       [{label:'Cancelar',value:null,cls:'ghost'},{label:'Certificado de vacunación',value:'cert',cls:''},{label:'Historia clínica completa',value:'full',cls:'primary'}]);
     if(ch)printDoc(ch,p);
   },
+  'att-open':async function(id,b){
+    var mime=b.dataset.mime,pdf=mime==='application/pdf',w=pdf?window.open('about:blank','_blank'):null;
+    var r;
+    try{r=await api('/attachments/'+id+'/url');}catch(err){if(w)w.close();throw err;}
+    if(isImg(mime)){
+      dlg.innerHTML='<form class="dform preview"><h2>'+esc(r.name)+'</h2><img class="bigimg" src="'+esc(r.url)+'" alt="'+esc(r.name)+'"><div class="actions"><a class="btn" href="'+esc(r.url)+'" target="_blank" rel="noopener">Abrir en otra pestaña</a><button type="button" class="btn primary" data-close>Cerrar</button></div></form>';
+      dlg.querySelector('[data-close]').addEventListener('click',function(){dlg.close();});
+      dlg.showModal();
+    }else if(pdf){
+      if(w)w.location.href=r.url;else window.open(r.url,'_blank');
+    }else{
+      // DICOM y HEIC no se pueden mostrar en el navegador: se descargan.
+      var a=document.createElement('a');a.href=r.url;a.download=r.name;document.body.appendChild(a);a.click();a.remove();
+    }
+  },
+  'att-del':function(id){
+    var a=null;((ui.detail&&ui.detail.studies)||[]).forEach(function(st){(st.attachments||[]).forEach(function(x){if(String(x.id)===String(id))a=x;});});
+    if(!a)return;
+    confirmForm('Quitar archivo','¿Quitar el archivo “'+esc(a.name)+'”? Se borra también del almacenamiento. Esta acción no se puede deshacer.','Quitar',async function(){
+      await api('/attachments/'+id,{method:'DELETE'});await reload();toast('Archivo quitado');
+    });
+  },
   'add-weight':function(){if(ui.detail)weightForm(ui.detail);},
   'del-weight':function(id){
     var w=((ui.detail&&ui.detail.weights)||[]).find(function(x){return String(x.id)===String(id);});if(!w)return;
@@ -1408,7 +1561,7 @@ var actions={
   },
   'del-study':function(id){
     var d=findRec('studies',id);if(!d)return;
-    confirmForm('Eliminar estudio','¿Eliminar el estudio “'+esc(d.title)+'” del '+fmtDate(d.date)+'? Va a la Papelera: la podés restaurar durante 30 días.','Eliminar',async function(){
+    confirmForm('Eliminar estudio','¿Eliminar el estudio “'+esc(d.title)+'” del '+fmtDate(d.date)+'?'+((d.attachments||[]).length?' Sus '+plural(d.attachments.length,'archivo adjunto','archivos adjuntos')+' quedan guardados con él.':'')+' Va a la Papelera: la podés restaurar durante 30 días.','Eliminar',async function(){
       await api('/studies/'+id,{method:'DELETE'});await reload();toast('Estudio quitado');
     });
   },

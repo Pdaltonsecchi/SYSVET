@@ -19,6 +19,8 @@ const TABLES = [
   ['services', ['id', 'name', 'category', 'price', 'product_id', 'species']],
   ['service_items', ['id', 'service_id', 'product_id', 'qty']],
   ['complementary_studies', ['id', 'patient_id', 'on_date', 'title', 'notes', 'deleted_at']],
+  // Solo los metadatos de los adjuntos: los archivos quedan en Supabase Storage (no viajan en el JSON).
+  ['study_attachments', ['id', 'study_id', 'file_path', 'file_name', 'mime_type', 'size_bytes', 'created_at']],
   ['appointments', ['id', 'patient_id', 'title', 'description', 'appointment_date', 'appointment_time', 'appointment_type', 'duration_min']],
   ['cash_movements', ['id', 'on_date', 'kind', 'concept', 'category', 'method', 'amount', 'stock_movement_id', 'supplier_id']],
   ['charges', ['id', 'patient_id', 'on_date', 'concept', 'amount', 'method', 'cash_id', 'line_type', 'deleted_at', 'cash_was']],
@@ -30,11 +32,12 @@ const KEEP_MANUAL = 20;
 // v2: tablas y columnas que no existían en la v1. Un backup exportado antes de la v2 no las
 // tiene: se tratan como "sin datos" (tabla vacía) o con este valor por defecto, en vez de
 // rechazar la restauración de una copia vieja.
-const NEW_TABLES = new Set(['suppliers', 'complementary_studies', 'appointments', 'service_items', 'weights']);
+const NEW_TABLES = new Set(['suppliers', 'complementary_studies', 'appointments', 'service_items', 'weights', 'study_attachments']);
 const COL_DEFAULTS = {
   stock_movements: { unit_price: 0, voided: false, note: '' },
   charges: { line_type: 'service', cash_was: false },
   appointments: { duration_min: 30 },
+  study_attachments: { created_at: new Date().toISOString() },
   vaccines: { stock_qty: 0 },
   medications: { stock_qty: 0 },
 };

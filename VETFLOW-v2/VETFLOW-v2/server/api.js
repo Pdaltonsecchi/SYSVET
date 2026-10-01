@@ -3,6 +3,7 @@
 const db = require('./db');
 const auth = require('./auth');
 const backup = require('./backup');
+const storage = require('./storage');
 const U = require('./util');
 const { HttpError } = U;
 
@@ -10,7 +11,7 @@ const routes = [];
 
 /**
  * Registra una ruta. opts: { public: true } no pide sesión; { admin: true } solo administradores;
- * { limit: bytes } tamaño máximo de los datos que se reciben.
+ * { limit: bytes } tamaño máximo de los datos que se reciben; { multipart: true } recibe archivos (ctx.raw).
  */
 function add(method, pattern, opts, fn) {
   if (typeof opts === 'function') {
@@ -73,14 +74,17 @@ async function dispatch(req, res, url) {
     if (route.opts.admin && user.role !== 'admin') throw new HttpError(403, 'No tenés permiso para hacer esto');
   }
   let body = {};
-  if (writes && req.method !== 'DELETE') {
+  let raw = null;
+  if (writes && route.opts.multipart) {
+    raw = await U.readRaw(req, route.opts.limit);
+  } else if (writes && req.method !== 'DELETE') {
     const len = Number(req.headers['content-length'] || 0);
     if (len > 0 && !String(req.headers['content-type'] || '').includes('application/json')) {
       throw new HttpError(415, 'Formato no permitido');
     }
     body = await U.readBody(req, route.opts.limit || 1024 * 1024);
   }
-  const ctx = { req, res, params, query: url.searchParams, body, user };
+  const ctx = { req, res, params, query: url.searchParams, body, user, raw };
   const result = await route.fn(ctx);
   if (result === U.HANDLED) return;
   U.sendJson(res, 200, result === undefined ? { ok: true } : result);
@@ -430,7 +434,7 @@ add('GET', '/api/bootstrap', async (ctx) => {
     listServices(),
     db.query('SELECT id, name, phone, email, description FROM suppliers ORDER BY lower(name), id'),
   ]);
-  const out = { user: ctx.user, clinic: process.env.CLINIC_NAME || 'VETFLOW', patients, products, services, suppliers: sup.rows.map(mapSupplier) };
+  const out = { user: ctx.user, clinic: process.env.CLINIC_NAME || 'VETFLOW', attachments: storage.configured(), patients, products, services, suppliers: sup.rows.map(mapSupplier) };
   if (ctx.user.role === 'admin') out.summary = await cashSummary();
   return out;
 });
@@ -486,6 +490,12 @@ add('GET', '/api/patients/:id', async (ctx) => {
     db.query('SELECT COUNT(*) AS n FROM appointments WHERE patient_id = $1', [id]),
     db.query('SELECT id, fecha, kg FROM weights WHERE patient_id = $1 ORDER BY fecha, id', [id]),
   ]);
+  // H: adjuntos de cada estudio (solo metadatos; los archivos se piden con una URL firmada).
+  const att = {};
+  if (s.rows.length) {
+    const ar = await db.query('SELECT id, study_id, file_name, mime_type, size_bytes FROM study_attachments WHERE study_id = ANY($1::int[]) ORDER BY id', [s.rows.map((x) => x.id)]);
+    ar.rows.forEach((x) => (att[x.study_id] = att[x.study_id] || []).push({ id: x.id, name: x.file_name, mime: x.mime_type, size: x.size_bytes }));
+  }
   return Object.assign(mapPatient(r.rows[0]), {
     vaccines: v.rows.map(mapVaccine),
     diagnoses: d.rows.map((x) => ({ id: x.id, date: x.on_date, title: x.title, notes: x.notes })),
@@ -493,7 +503,7 @@ add('GET', '/api/patients/:id', async (ctx) => {
     charges: c.rows.map((x) => ({ id: x.id, date: x.on_date, concept: x.concept, amount: Number(x.amount), method: x.method })),
     weights: wt.rows.map((x) => ({ id: x.id, date: x.fecha, kg: Number(x.kg) })), // G3
     appointmentCount: Number(ap.rows[0].n), // F6: turnos que se borran junto con el paciente
-    studies: s.rows.map(mapStudy), // v2: estudios complementarios (ecografía, radiografía, análisis, etc.)
+    studies: s.rows.map((x) => Object.assign(mapStudy(x), { attachments: att[x.id] || [] })), // v2: estudios complementarios (ecografía, radiografía, análisis, etc.)
   });
 });
 
@@ -664,7 +674,8 @@ add('POST', '/api/patients/:id/studies', async (ctx) => {
   const title = U.reqStr(b.title, 'Tipo de estudio', 200);
   const notes = U.optStr(b.notes, 3000);
   await mustExist('patients', id, 'No se encontró el paciente');
-  await db.query('INSERT INTO complementary_studies (patient_id, on_date, title, notes) VALUES ($1, $2, $3, $4)', [id, date, title, notes]);
+  const r = await db.query('INSERT INTO complementary_studies (patient_id, on_date, title, notes) VALUES ($1, $2, $3, $4) RETURNING id', [id, date, title, notes]);
+  return { id: r.rows[0].id };
 });
 add('PUT', '/api/studies/:id', async (ctx) => {
   const b = ctx.body;
@@ -679,6 +690,90 @@ add('PUT', '/api/studies/:id', async (ctx) => {
 add('DELETE', '/api/studies/:id', async (ctx) => {
   const r = await db.query('UPDATE complementary_studies SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id', [U.idParam(ctx.params.id)]);
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el estudio');
+});
+
+/* ---------- H · adjuntos de estudios (Supabase Storage, bucket privado) ---------- */
+const attRow = (x) => ({ id: x.id, name: x.file_name, mime: x.mime_type, size: x.size_bytes, createdAt: x.created_at });
+const ATT_COLS = 'id, file_name, mime_type, size_bytes, created_at';
+
+// Sube uno o varios archivos (multipart/form-data, campo "files"). Valida tipo, contenido, tamaño (10 MB),
+// cantidad (5 por estudio) y espacio total; todo antes de guardar: si algo falla, no queda nada a medias.
+add('POST', '/api/studies/:id/attachments', { multipart: true, limit: 5 * storage.MAX_FILE_BYTES + 1024 * 1024 }, async (ctx) => {
+  storage.need();
+  const studyId = U.idParam(ctx.params.id);
+  const st = (await db.query('SELECT s.id, s.patient_id FROM complementary_studies s JOIN patients p ON p.id = s.patient_id WHERE s.id = $1 AND s.deleted_at IS NULL AND p.deleted_at IS NULL', [studyId])).rows[0];
+  if (!st) throw new HttpError(404, 'No se encontró el estudio');
+  const files = storage.parseMultipart(ctx.raw, ctx.req.headers['content-type']);
+  if (!files.length) throw U.bad('No se recibió ningún archivo');
+  if (files.length > storage.MAX_FILES_PER_STUDY) throw U.bad('Se pueden adjuntar hasta ' + storage.MAX_FILES_PER_STUDY + ' archivos por estudio');
+  const checked = files.map((f) => Object.assign({ data: f.data, size: f.data.length }, storage.checkFile(f)));
+  const have = (await db.query('SELECT COUNT(*) AS n FROM study_attachments WHERE study_id = $1', [studyId])).rows[0].n;
+  if (have + checked.length > storage.MAX_FILES_PER_STUDY) {
+    throw U.bad('Cada estudio admite hasta ' + storage.MAX_FILES_PER_STUDY + ' archivos (ya tiene ' + have + ').');
+  }
+  const used = Number((await db.query('SELECT COALESCE(SUM(size_bytes), 0) AS b FROM study_attachments')).rows[0].b);
+  const incoming = checked.reduce((n, f) => n + f.size, 0);
+  if (used + incoming > storage.LIMIT_BYTES) throw new HttpError(413, 'No hay espacio de almacenamiento suficiente para estos archivos.');
+  const uploaded = [];
+  try {
+    for (const f of checked) {
+      f.path = storage.newPath(st.patient_id, studyId, f.name);
+      await storage.upload(f.path, f.data, f.mime);
+      uploaded.push(f.path);
+    }
+    const items = await db.tx(async (c) => {
+      await c.query('SELECT id FROM complementary_studies WHERE id = $1 FOR UPDATE', [studyId]);
+      const n = (await c.query('SELECT COUNT(*) AS n FROM study_attachments WHERE study_id = $1', [studyId])).rows[0].n;
+      if (n + checked.length > storage.MAX_FILES_PER_STUDY) throw U.bad('Cada estudio admite hasta ' + storage.MAX_FILES_PER_STUDY + ' archivos.');
+      const out = [];
+      for (const f of checked) {
+        const r = await c.query(
+          'INSERT INTO study_attachments (study_id, file_path, file_name, mime_type, size_bytes, created_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING ' + ATT_COLS,
+          [studyId, f.path, f.name, f.mime, f.size, ctx.user.id]
+        );
+        out.push(attRow(r.rows[0]));
+      }
+      return out;
+    });
+    return { items };
+  } catch (e) {
+    await storage.remove(uploaded); // no dejar archivos sueltos si algo falló
+    throw e;
+  }
+});
+
+add('GET', '/api/studies/:id/attachments', async (ctx) => {
+  const id = U.idParam(ctx.params.id);
+  await mustExist('complementary_studies', id, 'No se encontró el estudio');
+  const r = await db.query('SELECT ' + ATT_COLS + ' FROM study_attachments WHERE study_id = $1 ORDER BY id', [id]);
+  return { items: r.rows.map(attRow) };
+});
+
+// URL firmada de 10 minutos (solo con sesión iniciada). Los DICOM se piden como descarga.
+add('GET', '/api/attachments/:id/url', async (ctx) => {
+  storage.need();
+  const r = await db.query(
+    'SELECT a.file_path, a.file_name, a.mime_type FROM study_attachments a JOIN complementary_studies s ON s.id = a.study_id JOIN patients p ON p.id = s.patient_id ' +
+      'WHERE a.id = $1 AND s.deleted_at IS NULL AND p.deleted_at IS NULL',
+    [U.idParam(ctx.params.id)]
+  );
+  const a = r.rows[0];
+  if (!a) throw new HttpError(404, 'No se encontró el archivo');
+  const url = await storage.signedUrl(a.file_path, a.mime_type === 'application/dicom' ? a.file_name : null);
+  return { url, expiresIn: storage.SIGNED_SECONDS, name: a.file_name, mime: a.mime_type };
+});
+
+// Quitar un adjunto lo borra también del bucket. El ayudante puede ver y subir, pero no borrar.
+add('DELETE', '/api/attachments/:id', { admin: true }, async (ctx) => {
+  const r = await db.query('DELETE FROM study_attachments WHERE id = $1 RETURNING file_path', [U.idParam(ctx.params.id)]);
+  if (!r.rows[0]) throw new HttpError(404, 'No se encontró el archivo');
+  await storage.remove([r.rows[0].file_path]);
+});
+
+// Espacio usado por los adjuntos, para la pantalla de Copias de seguridad.
+add('GET', '/api/attachments/usage', { admin: true }, async () => {
+  const r = await db.query('SELECT COALESCE(SUM(size_bytes), 0) AS bytes, COUNT(*) AS n FROM study_attachments');
+  return { configured: storage.configured(), bytes: Number(r.rows[0].bytes), count: Number(r.rows[0].n), limit: storage.LIMIT_BYTES };
 });
 
 add('POST', '/api/patients/:id/medications', async (ctx) => {
@@ -1472,19 +1567,37 @@ add('POST', '/api/trash/:kind/:id/restore', { admin: true, limit: 1024 }, async 
 // Eliminación definitiva de un elemento de la Papelera (no se puede deshacer).
 add('DELETE', '/api/trash/:kind/:id', { admin: true }, async (ctx) => {
   const table = trashTable(ctx.params.kind);
-  const r = await db.query('DELETE FROM ' + table + ' WHERE id = $1 AND deleted_at IS NOT NULL RETURNING id', [U.idParam(ctx.params.id)]);
+  const id = U.idParam(ctx.params.id);
+  // H: al eliminar definitivamente un estudio (o un paciente), también se borran sus archivos del bucket.
+  let paths = [];
+  if (ctx.params.kind === 'study') {
+    paths = (await db.query('SELECT file_path FROM study_attachments WHERE study_id = $1', [id])).rows.map((x) => x.file_path);
+  } else if (ctx.params.kind === 'patient') {
+    paths = (await db.query('SELECT a.file_path FROM study_attachments a JOIN complementary_studies s ON s.id = a.study_id WHERE s.patient_id = $1', [id])).rows.map((x) => x.file_path);
+  }
+  const r = await db.query('DELETE FROM ' + table + ' WHERE id = $1 AND deleted_at IS NOT NULL RETURNING id', [id]);
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró lo que querés eliminar');
+  await storage.remove(paths);
 });
 // Elimina definitivamente todo lo que lleva más de 30 días en la Papelera.
 add('POST', '/api/trash/purge-expired', { admin: true, limit: 1024 }, async () => {
   let n = 0;
+  let paths = [];
   await db.tx(async (c) => {
+    // H: archivos adjuntos de lo que se va a eliminar (estudios vencidos o pacientes vencidos).
+    paths = (
+      await c.query(
+        'SELECT a.file_path FROM study_attachments a JOIN complementary_studies s ON s.id = a.study_id JOIN patients p ON p.id = s.patient_id ' +
+          "WHERE s.deleted_at < now() - interval '" + TRASH_DAYS + " days' OR p.deleted_at < now() - interval '" + TRASH_DAYS + " days'"
+      )
+    ).rows.map((x) => x.file_path);
     // Los pacientes van al final: al borrarlos se llevan en cascada lo que les quede.
     for (const t of ['charges', 'vaccines', 'diagnoses', 'complementary_studies', 'medications', 'patients']) {
       const r = await c.query('DELETE FROM ' + t + " WHERE deleted_at < now() - interval '" + TRASH_DAYS + " days'");
       n += r.rowCount;
     }
   });
+  await storage.remove(paths);
   return { ok: true, purged: n };
 });
 

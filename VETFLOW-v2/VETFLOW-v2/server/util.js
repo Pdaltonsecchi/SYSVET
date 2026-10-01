@@ -177,6 +177,25 @@ function readBody(req, limit) {
   });
 }
 
+/** Cuerpo sin interpretar (archivos subidos), con tope de tamaño. */
+function readRaw(req, limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    let tooBig = false;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > limit) {
+        tooBig = true;
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => (tooBig ? reject(new HttpError(413, 'Los archivos enviados son demasiado grandes')) : resolve(Buffer.concat(chunks))));
+    req.on('error', reject);
+  });
+}
+
 function parseCookies(header) {
   const out = {};
   if (!header) return out;
@@ -199,5 +218,5 @@ module.exports = {
   METHODS, SPECIES_OPTS, PROD_CATS, SERV_CATS, CASH_IN_CATS, CASH_OUT_CATS, ADJUST_REASONS, APPT_TYPES, APPT_DURATIONS, APPT_LABELS,
   TZ, todayAR, addDays, monthStart, monthEnd, round2,
   reqStr, optStr, optPhone, reqDate, optDate, pastDate, optPastDate, reqTime, reqNum, reqInt, money, moneyPos, oneOf, optSpecies, idParam, checkEmail,
-  sendJson, readBody, parseCookies, clientIp,
+  sendJson, readBody, readRaw, parseCookies, clientIp,
 };
