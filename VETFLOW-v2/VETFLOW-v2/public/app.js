@@ -49,11 +49,11 @@ var APPT_VIEWS=[['week','Semana'],['2weeks','2 semanas'],['3weeks','3 semanas'],
 /* ============================================================
    Estado
    ============================================================ */
-var S={user:null,patients:[],products:[],services:[],suppliers:[],summary:null};
+var S={clinic:'VETFLOW',user:null,patients:[],products:[],services:[],suppliers:[],summary:null};
 var ui={view:'pacientes',sel:null,detail:null,filter:'all',q:'',tab:'stock',cat:'all',
   stq:'',cq:'',cashp:'month',cashf:'all',cashm:'all',cash:null,
   rep:'90',rmonthly:null,rservices:null,rproducts:null,backups:null,users:null,
-  suppliers:null,sq:'', // v2: proveedores y su búsqueda
+  suppliers:null,sq:'',trash:null,cfrom:'',cto:'',rfrom:'',rto:'', // v2: proveedores y su búsqueda
   cal:{view:'week',anchor:todayIso()},appts:null}; // v2: calendario de turnos
 var main=$('#main'),dlg=$('#dlg');
 var isAdmin=function(){return !!S.user&&S.user.role==='admin';};
@@ -90,7 +90,7 @@ function showLogin(msg){
   $('#lerror').textContent=msg||'';
 }
 function applyBootstrap(d){
-  S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.suppliers=d.suppliers||[];S.summary=d.summary||null;
+  S.clinic=d.clinic||'VETFLOW';S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.suppliers=d.suppliers||[];S.summary=d.summary||null;
 }
 async function start(){
   var d=await api('/bootstrap');
@@ -123,6 +123,8 @@ async function loadView(){
     ui.suppliers=(await api('/suppliers')).items;S.suppliers=ui.suppliers;
   }else if(ui.view==='reportes'&&isAdmin()){
     await loadReports();
+  }else if(ui.view==='papelera'&&isAdmin()){
+    ui.trash=await api('/trash');
   }else if(ui.view==='copias'&&isAdmin()){
     ui.backups=(await api('/backups')).items;
   }else if(ui.view==='usuarios'&&isAdmin()){
@@ -166,16 +168,35 @@ function calTitle(){
   var r=calRange();
   return fmtDate(r[0])+' – '+fmtDate(r[1]);
 }
-async function loadCash(){
+// Filtros de Caja como parámetros de la dirección (los usa la lista y la exportación a CSV).
+function cashQuery(){
   var q=['period='+ui.cashp];
+  if(ui.cashp==='range'){q.push('from='+ui.cfrom);q.push('to='+ui.cto);}
   if(ui.cashf!=='all')q.push('type='+ui.cashf);
   if(ui.cashm!=='all')q.push('group='+encodeURIComponent(ui.cashm));
-  var r=await Promise.all([api('/cash?'+q.join('&')),api('/cash/summary')]);
+  return q.join('&');
+}
+// G4: descarga un archivo del servidor (CSV).
+async function downloadFile(path,name){
+  var res=await api(path,{raw:true});
+  var blob=await res.blob();
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);a.download=name;
+  document.body.appendChild(a);a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1500);
+}
+// Rango "Desde – Hasta" (inputs de fecha): HTML común a Caja y Reportes.
+var rangeHTML=function(idFrom,idTo,from,to){
+  return '<span class="rng"><label>Desde <input type="date" id="'+idFrom+'" value="'+esc(from)+'" max="'+todayIso()+'" style="width:auto"></label> <label>Hasta <input type="date" id="'+idTo+'" value="'+esc(to)+'" style="width:auto"></label></span>';
+};
+async function loadCash(){
+  var r=await Promise.all([api('/cash?'+cashQuery()),api('/cash/summary')]);
   ui.cash=r[0];S.summary=r[1];
 }
 async function loadReports(){
-  var r=await Promise.all([api('/reports/monthly'),api('/reports/services?days='+ui.rep),api('/reports/products?days='+ui.rep)]);
-  ui.rmonthly=r[0].months;ui.rservices=r[1].items;ui.rproducts=r[2].items;
+  var rq=ui.rfrom&&ui.rto?'from='+ui.rfrom+'&to='+ui.rto:'days='+ui.rep;
+  var r=await Promise.all([api('/reports/monthly'),api('/reports/services?'+rq),api('/reports/products?'+rq)]);
+  ui.rmonthly=r[0].months;ui.rservices=r[1].items;ui.rproducts=r[2].items;ui.rdays=r[2].days;
 }
 /* Después de guardar algo: vuelve a pedir los datos y redibuja. */
 async function reload(){
@@ -269,7 +290,7 @@ function navItems(){
   // v2: Calendario y Proveedores son visibles para admin y ayudante (agendar turnos y
   // consultar a quién comprarle es tarea del día a día, no solo del administrador).
   var a=[['pacientes','Pacientes'],['calendario','Calendario'],['farmacia','Farmacia y caja'],['proveedores','Proveedores']];
-  if(isAdmin())a.push(['reportes','Reportes'],['copias','Copias de seguridad'],['usuarios','Usuarios']);
+  if(isAdmin())a.push(['reportes','Reportes'],['papelera','Papelera'],['copias','Copias de seguridad'],['usuarios','Usuarios']);
   return a;
 }
 function renderNav(){
@@ -395,6 +416,32 @@ function viewPacientes(){
 function sec(title,action,label,inner){
   return '<section class="sec"><div class="sec-head"><h3>'+title+'</h3><button class="btn" data-action="'+action+'">'+label+'</button></div>'+inner+'</section>';
 }
+// G3: mini gráfico de línea con la evolución del peso y el último valor.
+var fmtKg=function(n){return String(n).replace('.',',')+' kg';};
+function weightChart(ws){
+  var W=360,H=110,pl=10,pr=10,pt=12,pb=22;
+  var kgs=ws.map(function(x){return x.kg;}),lo=Math.min.apply(null,kgs),hi=Math.max.apply(null,kgs);
+  if(hi===lo){hi+=1;lo=Math.max(lo-1,0);}
+  var t0=parse(ws[0].date).getTime(),t1=parse(ws[ws.length-1].date).getTime();
+  var X=function(w,i){return ws.length===1?W/2:pl+(t1===t0?i/(ws.length-1):(parse(w.date).getTime()-t0)/(t1-t0))*(W-pl-pr);};
+  var Y=function(k){return pt+(1-(k-lo)/(hi-lo))*(H-pt-pb);};
+  var pts=ws.map(function(w,i){return X(w,i).toFixed(1)+','+Y(w.kg).toFixed(1);}).join(' ');
+  var dots=ws.map(function(w,i){return '<circle cx="'+X(w,i).toFixed(1)+'" cy="'+Y(w.kg).toFixed(1)+'" r="3.5" fill="var(--brand)"/>';}).join('');
+  return '<svg class="wchart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Evolución del peso de '+fmtKg(kgs[0])+' a '+fmtKg(kgs[kgs.length-1])+'">'+
+    (ws.length>1?'<polyline points="'+pts+'" fill="none" stroke="var(--brand)" stroke-width="2"/>':'')+dots+
+    '<text x="'+pl+'" y="'+(H-6)+'" font-size="11" fill="var(--muted)">'+fmtDate(ws[0].date)+'</text>'+
+    '<text x="'+(W-pr)+'" y="'+(H-6)+'" font-size="11" text-anchor="end" fill="var(--muted)">'+fmtDate(ws[ws.length-1].date)+'</text>'+
+    '<text x="'+pl+'" y="10" font-size="11" fill="var(--muted)">'+fmtKg(Math.max.apply(null,kgs))+'</text></svg>';
+}
+function weightHTML(p){
+  var ws=p.weights||[];
+  if(!ws.length)return '<p class="empty">Todavía no hay pesos registrados.</p>';
+  var last=ws[ws.length-1];
+  var recent=ws.slice(-5).reverse().map(function(w){
+    return '<div class="wrow"><span>'+fmtDate(w.date)+'</span><b>'+fmtKg(w.kg)+'</b><button class="link bad" data-action="del-weight" data-id="'+w.id+'">Quitar</button></div>';
+  }).join('');
+  return '<div class="wbox"><div class="wlast"><small>Último peso</small><b>'+fmtKg(last.kg)+'</b><small>'+fmtDate(last.date)+'</small></div>'+weightChart(ws)+'<div class="wlist">'+recent+'</div></div>';
+}
 function detailHTML(p){
   var L=latestIds(p);
   var vacHTML=p.vaccines.length?'<div class="rows">'+p.vaccines.map(function(v){
@@ -427,9 +474,10 @@ function detailHTML(p){
     '<div class="info"><h2>'+esc(p.name)+'</h2>'+
     '<p class="meta">'+esc(p.species)+(p.breed?' '+esc(p.breed):'')+' · '+esc(p.sex)+(p.neutered?' (castrad'+(p.sex==='Hembra'?'a':'o')+')':'')+' · '+ageText(p.birth)+(p.weight!==''?' · '+esc(p.weight)+' kg':'')+'</p>'+
     '<p class="meta">Dueño: '+esc(p.owner)+(p.phone?' · '+esc(p.phone):'')+(p.email?' · '+esc(p.email):'')+'</p></div>'+
-    '<div class="pactions"><button class="btn primary" data-action="charge">Cobrar servicio</button><button class="btn" data-action="edit-patient">Editar datos</button>'+
+    '<div class="pactions"><button class="btn primary" data-action="charge">Cobrar servicio</button><button class="btn" data-action="edit-patient">Editar datos</button><button class="btn" data-action="print">Imprimir</button>'+
     (isAdmin()?'<button class="btn danger-o" data-action="del-patient">Eliminar</button>':'')+'</div></header>'+
     (p.notes?'<p class="note"><b>Notas:</b> '+esc(p.notes)+'</p>':'')+
+    sec('Peso','add-weight','Registrar peso',weightHTML(p))+
     sec('Vacunas','add-vac','Agregar vacuna',vacHTML)+
     sec('Diagnósticos y consultas','add-dx','Agregar diagnóstico',dxHTML)+
     sec('Estudios complementarios','add-study','Agregar estudio',stHTML)+
@@ -469,16 +517,18 @@ function stockHTML(){
       (admin?'<button class="link" data-action="stock-adjust" data-id="'+x.id+'">Ajustar</button><button class="link" data-action="stock-history" data-id="'+x.id+'">Historial</button><button class="link" data-action="edit-product" data-id="'+x.id+'">Editar</button><button class="link bad" data-action="del-product" data-id="'+x.id+'">Eliminar</button>':'');
     var units=Math.max(x.stock,0),val=x.cost!=null?units*x.cost:null;
     if(admin){totCost+=val||0;totSale+=units*x.price;}
-    var costCells=admin?'<td class="num">'+(x.cost!=null?money(x.cost):'—')+'</td><td class="num">'+(val!=null?money(val):'—')+'</td>':'';
+    var margin=x.cost!=null&&x.price>0?Math.round((x.price-x.cost)/x.price*1000)/10:null;
+    var mCell=margin==null?'—':'<span class="'+(x.price<x.cost?'negtxt':'')+'"'+(x.price<x.cost?' title="El precio de venta es menor que el costo"':'')+'>'+(x.price<x.cost?'⚠ ':'')+String(margin).replace('.',',')+'%</span>';
+    var costCells=admin?'<td class="num">'+(x.cost!=null?money(x.cost):'—')+'</td><td class="num">'+mCell+'</td><td class="num">'+(val!=null?money(val):'—')+'</td>':'';
     return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small></td><td>'+stockCell+'</td><td class="num">'+x.min+'</td><td>'+chip+'</td><td class="num">'+money(x.price)+'</td>'+costCells+'<td class="act">'+acts+'</td></tr>';
   }).join('');
-  var cols=admin?8:6;
+  var cols=admin?9:6;
   var empty=S.products.length?'No hay productos en esta categoría.':'Todavía no cargaste productos. '+(admin?'Empezá con “Nuevo producto”.':'Pedile al administrador que los cargue.');
   var foot=admin&&L.length?'<tfoot><tr><td colspan="'+cols+'"><b>Stock valorizado:</b> '+money(totCost)+' a costo / '+money(totSale)+' a precio de venta</td></tr></tfoot>':'';
   return '<div class="toolbar">'+segHTML('cat',[['all','Todos']].concat(PROD_CATS.map(function(c){return [c,c];})),ui.cat)+
     (admin?'<button class="btn primary" data-action="new-product">Nuevo producto</button>':'')+'</div>'+
     '<input id="stq" type="search" placeholder="Buscar producto" value="'+esc(ui.stq)+'" aria-label="Buscar producto" style="margin-bottom:1rem">'+
-    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Stock</th><th class="num">Mínimo</th><th>Estado</th><th class="num">Precio de venta</th>'+(admin?'<th class="num">Costo unit.</th><th class="num">Valor en stock</th>':'')+'<th></th></tr></thead><tbody>'+
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Stock</th><th class="num">Mínimo</th><th>Estado</th><th class="num">Precio de venta</th>'+(admin?'<th class="num">Costo unit.</th><th class="num">Margen</th><th class="num">Valor en stock</th>':'')+'<th></th></tr></thead><tbody>'+
     (rows||'<tr><td colspan="'+cols+'" class="empty">'+empty+'</td></tr>')+'</tbody>'+foot+'</table></div>';
 }
 function cajaHTML(){
@@ -494,10 +544,10 @@ function cajaHTML(){
     '<p>Ingresos menos egresos en efectivo, desde el primer registro. Hoy entró '+money(sm.todayCash.in)+' y salió '+money(sm.todayCash.out)+' en efectivo. Si sacás plata de la caja, registrala como egreso en efectivo (categoría “Retiro de caja”).</p></div>'+
     '<div class="panel"><h3>Ingresos de '+mes+' por forma de pago</h3><div class="bk-list">'+pm+'</div></div></div>'+
     '<div class="toolbar"><div class="filters">'+
-      segHTML('cashp',[['today','Hoy'],['month','Este mes'],['prev','Mes anterior'],['all','Todo']],ui.cashp)+
+      segHTML('cashp',[['today','Hoy'],['month','Este mes'],['prev','Mes anterior'],['all','Todo']],ui.cashp)+rangeHTML('cfrom','cto',ui.cfrom,ui.cto)+
       segHTML('cashf',[['all','Ingresos y egresos'],['in','Ingresos'],['out','Egresos']],ui.cashf)+
       segHTML('cashm',[['all','Todas las formas de pago'],['Efectivo','Efectivo'],['Transferencia','Transferencias'],['Tarjeta','Tarjetas']],ui.cashm)+
-    '</div><span><button class="btn" data-action="cash-out">Registrar egreso</button> <button class="btn primary" data-action="cash-in">Registrar ingreso</button></span></div>'+
+    '</div><span><button class="btn" data-action="cash-export">Exportar CSV</button> <button class="btn" data-action="cash-out">Registrar egreso</button> <button class="btn primary" data-action="cash-in">Registrar ingreso</button></span></div>'+
     '<input id="cq" type="search" placeholder="Buscar por concepto, categoría o forma de pago" value="'+esc(ui.cq)+'" aria-label="Buscar movimiento" style="margin-bottom:1rem">'+
     '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Concepto</th><th>Categoría</th><th>Forma de pago</th><th class="num">Monto</th><th></th></tr></thead><tbody>'+
     (rows||'<tr><td colspan="6" class="empty">No hay movimientos en este período.</td></tr>')+'</tbody></table></div>'+
@@ -511,7 +561,12 @@ function preciosHTML(){
     return '<div class="grp"><h3>'+cat+'</h3><div class="tbl-wrap"><table class="tbl"><tbody>'+L.map(function(s){
       // v2: si esta vacuna está vinculada a un producto del stock, se muestra cuál.
       var linked=s.productId?S.products.find(function(x){return x.id===s.productId;}):null;
-      return '<tr><td><b>'+esc(s.name)+'</b>'+(linked?'<br><small>Descuenta: '+esc(linked.name)+'</small>':'')+((s.items||[]).length?'<br><small>Descuenta al cobrar: '+s.items.map(function(it){var pr=prodById(it.productId);return (pr?esc(pr.name):'producto eliminado')+' ×'+it.qty;}).join(', ')+'</small>':'')+'</td><td class="num">'+money(s.price)+'</td><td class="act">'+
+      // G5: si el precio del servicio es menor que el costo de lo que descuenta, se avisa (el costo solo lo ve el administrador).
+      var costSum=0,costKnown=false;
+      if(linked&&linked.cost!=null){costSum+=linked.cost;costKnown=true;}
+      (s.items||[]).forEach(function(it){var pr=prodById(it.productId);if(pr&&pr.cost!=null){costSum+=pr.cost*it.qty;costKnown=true;}});
+      var below=costKnown&&s.price<costSum;
+      return '<tr><td><b>'+esc(s.name)+'</b>'+(below?'<br><small class="negtxt">⚠ El precio ('+money(s.price)+') es menor que el costo de los productos que descuenta ('+money(costSum)+')</small>':'')+(linked?'<br><small>Descuenta: '+esc(linked.name)+'</small>':'')+((s.items||[]).length?'<br><small>Descuenta al cobrar: '+s.items.map(function(it){var pr=prodById(it.productId);return (pr?esc(pr.name):'producto eliminado')+' ×'+it.qty;}).join(', ')+'</small>':'')+'</td><td class="num">'+money(s.price)+'</td><td class="act">'+
         (admin?'<button class="link" data-action="edit-service" data-id="'+s.id+'">Editar</button><button class="link bad" data-action="del-service" data-id="'+s.id+'">Eliminar</button>':'')+'</td></tr>';
     }).join('')+'</tbody></table></div></div>';
   }).join('');
@@ -537,7 +592,7 @@ function chartSVG(M){
 }
 function viewReportes(){
   if(!ui.rmonthly||!ui.rservices||!ui.rproducts)return '<section class="farm"><div class="head"><h1>Reportes</h1></div><p class="empty">Cargando…</p></section>';
-  var days=Number(ui.rep);
+  var days=ui.rdays||Number(ui.rep);
   var mrows=ui.rmonthly.slice().reverse().map(function(x){
     var bal=x.in-x.out;
     return '<tr><td>'+monthLabel(x.ym)+' '+x.ym.slice(0,4)+'</td><td class="num">'+money(x.efe)+'</td><td class="num">'+money(x.tra)+'</td><td class="num">'+money(x.tar)+'</td><td class="num"><b>'+money(x.in)+'</b></td><td class="num">'+money(x.out)+'</td><td class="num '+(bal>=0?'in':'out')+'">'+money(bal)+'</td></tr>';
@@ -558,9 +613,28 @@ function viewReportes(){
   return '<section class="farm"><div class="head"><h1>Reportes</h1></div>'+
     '<div class="repsec"><h2>Ingresos por mes</h2><div class="legend"><span><i style="background:var(--brand)"></i>Ingresos</span><span><i style="background:var(--muted);opacity:.55"></i>Egresos</span></div>'+chartSVG(ui.rmonthly)+
     '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Mes</th><th class="num">Efectivo</th><th class="num">Transferencias</th><th class="num">Tarjetas</th><th class="num">Total ingresos</th><th class="num">Egresos</th><th class="num">Balance</th></tr></thead><tbody>'+mrows+'</tbody></table></div></div>'+
-    '<div class="repsec"><div class="toolbar"><h2 style="margin:0">Servicios y productos</h2>'+segHTML('rep',[['30','Últimos 30 días'],['90','Últimos 3 meses'],['365','Último año']],ui.rep)+'</div>'+
+    '<div class="repsec"><div class="toolbar"><h2 style="margin:0">Servicios y productos</h2>'+segHTML('rep',[['30','Últimos 30 días'],['90','Últimos 3 meses'],['365','Último año']],ui.rfrom&&ui.rto?'':ui.rep)+rangeHTML('rfrom','rto',ui.rfrom,ui.rto)+'<button class="btn" data-action="rep-export">Exportar CSV de movimientos</button></div>'+
     '<div class="grp"><h3>Servicios más vendidos</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Servicio</th><th>Veces cobrado</th><th class="num">Total cobrado</th></tr></thead><tbody>'+(svRows||'<tr><td colspan="3" class="empty">No hay servicios cobrados en este período.</td></tr>')+'</tbody></table></div></div>'+
     '<div class="grp"><h3>Productos que más rotan</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Unidades vendidas o usadas</th><th class="num">Stock actual</th><th>Cuánto dura el stock</th></tr></thead><tbody>'+(prRows||'<tr><td colspan="4" class="empty">Todavía no cargaste productos.</td></tr>')+'</tbody></table></div></div></div></section>';
+}
+
+/* ============================================================
+   G1 · Papelera
+   ============================================================ */
+var TRASH_KIND={patient:'Paciente',vaccine:'Vacuna',diagnosis:'Diagnóstico',study:'Estudio',medication:'Medicación',charge:'Cobro'};
+function viewTrash(){
+  if(!ui.trash)return '<section class="farm"><div class="head"><h1>Papelera</h1></div><p class="empty">Cargando…</p></section>';
+  var t=ui.trash;
+  var rows=t.items.map(function(x){
+    var left=x.expired?'<span class="chip bad">Vencido</span>':'<span class="chip '+(x.daysLeft<=5?'warn':'none')+'">Quedan '+plural(x.daysLeft,'día','días')+'</span>';
+    return '<tr><td>'+TRASH_KIND[x.kind]+'</td><td><b>'+esc(x.label)+'</b>'+(x.date?'<br><small>'+fmtDate(x.date)+'</small>':'')+'</td><td>'+esc(x.patient)+'</td><td>'+fmtTs(x.deletedAt)+'</td><td>'+left+'</td>'+
+      '<td class="act">'+(x.expired?'':'<button class="link" data-action="trash-restore" data-kind="'+x.kind+'" data-id="'+x.id+'">Restaurar</button>')+
+      '<button class="link bad" data-action="trash-purge" data-kind="'+x.kind+'" data-id="'+x.id+'">Eliminar definitivamente</button></td></tr>';
+  }).join('');
+  return '<section class="farm"><div class="head"><h1>Papelera</h1>'+(t.expiredCount?'<button class="btn danger-o" data-action="trash-purge-expired">Eliminar definitivamente los vencidos ('+t.expiredCount+')</button>':'')+'</div>'+
+    '<p class="empty">Lo que se borra de la historia clínica queda acá '+t.days+' días y se puede restaurar. Pasado ese plazo solo se puede eliminar definitivamente. Si lo borrado había devuelto stock, al restaurarlo se vuelve a descontar (si no alcanza el stock, se restaura igual y te avisamos).</p>'+
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Tipo</th><th>Elemento</th><th>Paciente</th><th>Borrado</th><th>Plazo</th><th></th></tr></thead><tbody>'+
+    (rows||'<tr><td colspan="6" class="empty">La papelera está vacía.</td></tr>')+'</tbody></table></div></section>';
 }
 
 /* ============================================================
@@ -684,13 +758,13 @@ function viewCalendario(){
 
 function render(){
   if(!S.user)return;
-  var adminOnly={reportes:1,copias:1,usuarios:1};
+  var adminOnly={reportes:1,copias:1,usuarios:1,papelera:1};
   if(adminOnly[ui.view]&&!isAdmin())ui.view='pacientes';
   if(ui.view==='farmacia'&&!isAdmin()&&ui.tab==='caja')ui.tab='stock';
   renderNav();renderAlerts();renderUserBox();
   var v=ui.view;
   main.innerHTML=v==='pacientes'?viewPacientes():v==='calendario'?viewCalendario():v==='farmacia'?viewFarmacia():v==='proveedores'?viewProveedores():
-    v==='reportes'?viewReportes():v==='copias'?viewBackups():viewUsers();
+    v==='reportes'?viewReportes():v==='papelera'?viewTrash():v==='copias'?viewBackups():viewUsers();
 }
 
 /* ============================================================
@@ -832,6 +906,46 @@ function medForm(p,m){
     syncQty();
   });
   syncQty();
+}
+function weightForm(p){
+  var last=(p.weights||[]).slice(-1)[0];
+  openForm({title:'Registrar peso de '+esc(p.name),
+    body:'<div class="fields">'+fld('Peso (kg)','kg',{type:'number',step:'0.01',min:0.01,max:150,req:true,value:last?last.kg:''})+fld('Fecha','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+'</div>',
+    submit:'Registrar peso',
+    onSubmit:async function(d){await api('/patients/'+p.id+'/weights',{body:{kg:d.kg,date:d.date}});await reload();toast('Peso registrado');}});
+}
+// G2: vista de impresión (se guarda como PDF desde el diálogo de impresión del navegador).
+function printDoc(kind,p){
+  var byDate=function(a,b){return a.date<b.date?-1:a.date>b.date?1:0;};
+  var yes=function(x){return x?esc(x):'—';};
+  var cert=kind==='cert';
+  var table=function(head,rows,empty){
+    return rows.length?'<table><thead><tr>'+head.map(function(h){return '<th>'+h+'</th>';}).join('')+'</tr></thead><tbody>'+rows.join('')+'</tbody></table>':'<p class="pe">'+empty+'</p>';
+  };
+  var html='<header class="ph"><div><h1>'+esc(S.clinic)+'</h1><p>'+(cert?'Certificado de vacunación':'Historia clínica')+'</p></div><p class="pd">Emitido el '+fmtDate(todayIso())+'</p></header>'+
+    '<h2>Paciente</h2><table class="kv"><tbody>'+
+    '<tr><th>Nombre</th><td>'+esc(p.name)+'</td><th>Especie / raza</th><td>'+esc(p.species)+(p.breed?' · '+esc(p.breed):'')+'</td></tr>'+
+    '<tr><th>Sexo</th><td>'+esc(p.sex)+(p.neutered?' (castrad'+(p.sex==='Hembra'?'a':'o')+')':'')+'</td><th>Edad</th><td>'+esc(ageText(p.birth))+'</td></tr>'+
+    '<tr><th>Peso</th><td>'+(p.weight!==''?fmtKg(p.weight):'—')+'</td><th>Dueño</th><td>'+esc(p.owner)+'</td></tr>'+
+    '<tr><th>Teléfono</th><td>'+yes(p.phone)+'</td><th>Email</th><td>'+yes(p.email)+'</td></tr></tbody></table>';
+  var vacs=p.vaccines.slice().sort(byDate).map(function(v){return '<tr><td>'+fmtDate(v.date)+'</td><td>'+esc(v.name)+'</td><td>'+(v.next?fmtDate(v.next):'—')+'</td></tr>';});
+  if(cert){
+    html+='<h2>Vacunas aplicadas</h2>'+table(['Fecha de aplicación','Vacuna','Próxima dosis'],vacs,'No hay vacunas registradas.')+
+      '<p class="pe">Se certifica que las vacunas indicadas fueron aplicadas al paciente en las fechas consignadas.</p>'+
+      '<div class="sign"><div><span></span>Firma del veterinario</div><div><span></span>Sello</div></div>';
+  }else{
+    if(p.notes)html+='<h2>Notas importantes</h2><p>'+esc(p.notes)+'</p>';
+    html+='<h2>Vacunas</h2>'+table(['Fecha','Vacuna','Próxima dosis'],vacs,'Sin vacunas registradas.')+
+      '<h2>Diagnósticos y consultas</h2>'+table(['Fecha','Diagnóstico','Detalle'],p.diagnoses.slice().sort(byDate).map(function(d){return '<tr><td>'+fmtDate(d.date)+'</td><td>'+esc(d.title)+'</td><td>'+esc(d.notes)+'</td></tr>';}),'Sin diagnósticos registrados.')+
+      '<h2>Estudios complementarios</h2>'+table(['Fecha','Estudio','Notas'],(p.studies||[]).slice().sort(byDate).map(function(d){return '<tr><td>'+fmtDate(d.date)+'</td><td>'+esc(d.title)+'</td><td>'+esc(d.notes)+'</td></tr>';}),'Sin estudios registrados.')+
+      '<h2>Medicación</h2>'+table(['Fecha','Medicamento','Dosis','Duración'],p.meds.slice().sort(byDate).map(function(m){return '<tr><td>'+fmtDate(m.date)+'</td><td>'+esc(m.name)+'</td><td>'+esc(m.dose)+'</td><td>'+esc(m.duration)+'</td></tr>';}),'Sin medicación registrada.');
+  }
+  var el=$('#print'),oldTitle=document.title;
+  el.innerHTML=html;
+  document.title=(cert?'Certificado de vacunación':'Historia clínica')+' - '+p.name;
+  var done=function(){document.title=oldTitle;el.innerHTML='';window.removeEventListener('afterprint',done);};
+  window.addEventListener('afterprint',done);
+  window.print();
 }
 function chargeForm(p){
   var svcs=S.services,prods=S.products.filter(function(x){return x.stock>0;});
@@ -1252,8 +1366,21 @@ var actions={
   'edit-patient':function(){if(ui.detail)patientForm(ui.detail);},
   'del-patient':function(){
     var p=ui.detail;if(!p)return;
-    confirmForm('Eliminar a '+esc(p.name),'Se borra el paciente con toda su historia clínica: vacunas, diagnósticos, estudios, medicación, cobros'+(p.appointmentCount?' y '+plural(p.appointmentCount,'turno programado','turnos programados'):'')+'. Los movimientos de caja ya registrados no se borran. Esta acción no se puede deshacer.','Eliminar paciente',async function(){
-      await api('/patients/'+p.id,{method:'DELETE'});ui.sel=null;ui.detail=null;await reload();toast('Paciente eliminado');
+    confirmForm('Eliminar a '+esc(p.name),'Se borra el paciente con toda su historia clínica: vacunas, diagnósticos, estudios, medicación, cobros'+(p.appointmentCount?' y '+plural(p.appointmentCount,'turno programado','turnos programados'):'')+'. Los movimientos de caja ya registrados no se borran. Va a la Papelera: lo podés restaurar durante 30 días.','Eliminar paciente',async function(){
+      await api('/patients/'+p.id,{method:'DELETE'});ui.sel=null;ui.detail=null;await reload();toast('Paciente enviado a la Papelera');
+    });
+  },
+  print:async function(){
+    var p=ui.detail;if(!p)return;
+    var ch=await choiceDialog('Imprimir','<p>Se abre la vista de impresión: ahí podés imprimir o elegir “Guardar como PDF”.</p>',
+      [{label:'Cancelar',value:null,cls:'ghost'},{label:'Certificado de vacunación',value:'cert',cls:''},{label:'Historia clínica completa',value:'full',cls:'primary'}]);
+    if(ch)printDoc(ch,p);
+  },
+  'add-weight':function(){if(ui.detail)weightForm(ui.detail);},
+  'del-weight':function(id){
+    var w=((ui.detail&&ui.detail.weights)||[]).find(function(x){return String(x.id)===String(id);});if(!w)return;
+    confirmForm('Quitar peso','¿Quitar el registro de '+fmtKg(w.kg)+' del '+fmtDate(w.date)+'? Esta acción no se puede deshacer.','Quitar',async function(){
+      await api('/weights/'+id,{method:'DELETE'});await reload();toast('Peso quitado');
     });
   },
   'add-vac':function(){if(ui.detail)vaccineForm(ui.detail);},
@@ -1269,40 +1396,48 @@ var actions={
   'del-vac':function(id){
     var v=findRec('vaccines',id);if(!v)return;
     var pr=prodById(v.productId),back=pr&&v.stockQty>0?' Se devuelve '+plural(v.stockQty,'unidad','unidades')+' de '+esc(pr.name)+' al stock.':'';
-    confirmForm('Eliminar vacuna','¿Eliminar la vacuna “'+esc(v.name)+'” del '+fmtDate(v.date)+'?'+back+' Esta acción no se puede deshacer.','Eliminar',async function(){
+    confirmForm('Eliminar vacuna','¿Eliminar la vacuna “'+esc(v.name)+'” del '+fmtDate(v.date)+'?'+back+' Va a la Papelera: la podés restaurar durante 30 días.','Eliminar',async function(){
       var r=await api('/vaccines/'+id,{method:'DELETE'});await reload();toast('Vacuna quitada'+(r.restored?' · se devolvió '+r.restored+' al stock':''));
     });
   },
   'del-dx':function(id){
     var d=findRec('diagnoses',id);if(!d)return;
-    confirmForm('Eliminar diagnóstico','¿Eliminar el diagnóstico “'+esc(d.title)+'” del '+fmtDate(d.date)+'? Esta acción no se puede deshacer.','Eliminar',async function(){
+    confirmForm('Eliminar diagnóstico','¿Eliminar el diagnóstico “'+esc(d.title)+'” del '+fmtDate(d.date)+'? Va a la Papelera: la podés restaurar durante 30 días.','Eliminar',async function(){
       await api('/diagnoses/'+id,{method:'DELETE'});await reload();toast('Diagnóstico quitado');
     });
   },
   'del-study':function(id){
     var d=findRec('studies',id);if(!d)return;
-    confirmForm('Eliminar estudio','¿Eliminar el estudio “'+esc(d.title)+'” del '+fmtDate(d.date)+'? Esta acción no se puede deshacer.','Eliminar',async function(){
+    confirmForm('Eliminar estudio','¿Eliminar el estudio “'+esc(d.title)+'” del '+fmtDate(d.date)+'? Va a la Papelera: la podés restaurar durante 30 días.','Eliminar',async function(){
       await api('/studies/'+id,{method:'DELETE'});await reload();toast('Estudio quitado');
     });
   },
   'del-med':function(id){
     var m=findRec('meds',id);if(!m)return;
     var pr=prodById(m.productId),back=pr&&m.stockQty>0?' Se devuelven '+plural(m.stockQty,'unidad','unidades')+' de '+esc(pr.name)+' al stock.':'';
-    confirmForm('Eliminar medicación','¿Eliminar la medicación “'+esc(m.name)+'” del '+fmtDate(m.date)+'?'+back+' Esta acción no se puede deshacer.','Eliminar',async function(){
+    confirmForm('Eliminar medicación','¿Eliminar la medicación “'+esc(m.name)+'” del '+fmtDate(m.date)+'?'+back+' Va a la Papelera: la podés restaurar durante 30 días.','Eliminar',async function(){
       var r=await api('/medications/'+id,{method:'DELETE'});await reload();toast('Medicación quitada'+(r.restored?' · se devolvieron '+r.restored+' al stock':''));
     });
   },
   'del-chg':function(id){
-    confirmForm('Quitar cobro','Se quita el cobro de la historia del paciente y también el ingreso que se registró en la caja.','Quitar cobro',async function(){
+    confirmForm('Quitar cobro','Se quita el cobro de la historia del paciente y también el ingreso que se registró en la caja (y se devuelve el stock de los productos). Va a la Papelera: lo podés restaurar durante 30 días.','Quitar cobro',async function(){
       await api('/charges/'+id,{method:'DELETE'});await reload();toast('Cobro quitado');
     });
   },
   tab:function(id,b){ui.tab=b.dataset.v;return refreshView();},
   cat:function(id,b){ui.cat=b.dataset.v;render();},
-  cashp:function(id,b){ui.cashp=b.dataset.v;return refreshView();},
+  cashp:function(id,b){ui.cashp=b.dataset.v;ui.cfrom='';ui.cto='';return refreshView();},
+  'cash-export':function(){
+    if(ui.cashp==='range'&&!(ui.cfrom&&ui.cto))throw new Error('Completá las dos fechas del rango');
+    return downloadFile('/cash/export?'+cashQuery(),'movimientos-'+todayIso()+'.csv');
+  },
   cashf:function(id,b){ui.cashf=b.dataset.v;return refreshView();},
   cashm:function(id,b){ui.cashm=b.dataset.v;return refreshView();},
-  rep:function(id,b){ui.rep=b.dataset.v;return refreshView();},
+  rep:function(id,b){ui.rep=b.dataset.v;ui.rfrom='';ui.rto='';return refreshView();},
+  'rep-export':function(){
+    var from=ui.rfrom&&ui.rto?ui.rfrom:shiftDays(-Number(ui.rep)),to=ui.rfrom&&ui.rto?ui.rto:todayIso();
+    return downloadFile('/cash/export?period=range&from='+from+'&to='+to,'movimientos-'+from+'_a_'+to+'.csv');
+  },
   'new-product':function(){productForm();},
   'edit-product':function(id){productForm(S.products.find(function(x){return String(x.id)===String(id);}));},
   'del-product':function(id){
@@ -1346,6 +1481,21 @@ var actions={
   'del-backup':function(id){
     confirmForm('Eliminar copia','Se borra esta copia guardada en el sistema.','Eliminar',async function(){
       await api('/backups/'+id,{method:'DELETE'});await reload();toast('Copia eliminada');
+    });
+  },
+  'trash-restore':async function(id,b){
+    var r=await api('/trash/'+b.dataset.kind+'/'+id+'/restore',{body:{}});
+    await reload();toast(r.warning||'Restaurado',!!r.warning);
+  },
+  'trash-purge':function(id,b){
+    var x=(ui.trash?ui.trash.items:[]).find(function(y){return y.kind===b.dataset.kind&&String(y.id)===String(id);});if(!x)return;
+    confirmForm('Eliminar definitivamente','¿Eliminar definitivamente '+esc(TRASH_KIND[x.kind].toLowerCase())+' “'+esc(x.label)+'”'+(x.kind==='patient'?' con toda su historia clínica y sus turnos':'')+'? Esta acción no se puede deshacer.','Eliminar definitivamente',async function(){
+      await api('/trash/'+x.kind+'/'+x.id,{method:'DELETE'});await reload();toast('Eliminado definitivamente');
+    });
+  },
+  'trash-purge-expired':function(){
+    confirmForm('Eliminar los vencidos','Se eliminan definitivamente los '+ui.trash.expiredCount+' elementos que llevan más de '+ui.trash.days+' días en la Papelera. Esta acción no se puede deshacer.','Eliminar definitivamente',async function(){
+      var r=await api('/trash/purge-expired',{body:{}});await reload();toast(plural(r.purged,'elemento eliminado','elementos eliminados'));
     });
   },
   'new-user':function(){userForm();},
@@ -1410,6 +1560,16 @@ document.addEventListener('input',function(e){
   if(e.target.id==='sq'){ui.sq=e.target.value;$('#srows').innerHTML=supplierRows();}
 });
 document.addEventListener('change',function(e){
+  var rid=e.target.id;
+  if(rid==='cfrom'||rid==='cto'||rid==='rfrom'||rid==='rto'){
+    var isCash=rid[0]==='c';
+    var k=isCash?['cfrom','cto']:['rfrom','rto'];
+    ui[rid]=e.target.value;
+    if(ui[k[0]]&&ui[k[1]]&&ui[k[1]]<ui[k[0]]){toast('"Hasta" no puede ser anterior a "Desde"');ui[rid]='';e.target.value='';return;}
+    if(ui[k[0]]&&ui[k[1]]){if(isCash)ui.cashp='range';refreshView();}
+    else if(isCash&&ui.cashp==='range'&&!(ui.cfrom&&ui.cto)){ui.cashp='month';refreshView();}
+    return;
+  }
   if(e.target.id==='bfile'&&e.target.files&&e.target.files[0]){
     var f=e.target.files[0],r=new FileReader();
     r.onload=function(){

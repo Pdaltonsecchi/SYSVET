@@ -146,8 +146,8 @@ const mapCash = (r) => ({
 
 async function listPatients() {
   const [p, v] = await Promise.all([
-    db.query('SELECT ' + PATIENT_COLS + ' FROM patients ORDER BY lower(name), id'),
-    db.query('SELECT id, patient_id, name, applied_on, next_on, product_id, stock_qty FROM vaccines ORDER BY applied_on DESC, id DESC'),
+    db.query('SELECT ' + PATIENT_COLS + ' FROM patients WHERE deleted_at IS NULL ORDER BY lower(name), id'),
+    db.query('SELECT id, patient_id, name, applied_on, next_on, product_id, stock_qty FROM vaccines WHERE deleted_at IS NULL ORDER BY applied_on DESC, id DESC'),
   ]);
   const by = {};
   v.rows.forEach((x) => {
@@ -223,8 +223,10 @@ async function cashSummary() {
   };
 }
 
+const SOFT_TABLES = new Set(['patients', 'vaccines', 'diagnoses', 'complementary_studies', 'medications', 'charges']);
 async function mustExist(table, id, message) {
-  const r = await db.query('SELECT id FROM ' + table + ' WHERE id = $1', [id]);
+  // Lo que está en la Papelera (deleted_at) se trata como si no existiera.
+  const r = await db.query('SELECT id FROM ' + table + ' WHERE id = $1' + (SOFT_TABLES.has(table) ? ' AND deleted_at IS NULL' : ''), [id]);
   if (!r.rows[0]) throw new HttpError(404, message);
 }
 
@@ -428,7 +430,7 @@ add('GET', '/api/bootstrap', async (ctx) => {
     listServices(),
     db.query('SELECT id, name, phone, email, description FROM suppliers ORDER BY lower(name), id'),
   ]);
-  const out = { user: ctx.user, patients, products, services, suppliers: sup.rows.map(mapSupplier) };
+  const out = { user: ctx.user, clinic: process.env.CLINIC_NAME || 'VETFLOW', patients, products, services, suppliers: sup.rows.map(mapSupplier) };
   if (ctx.user.role === 'admin') out.summary = await cashSummary();
   return out;
 });
@@ -467,26 +469,29 @@ add('POST', '/api/patients', async (ctx) => {
       'VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id',
     patientParams(p)
   );
+  if (p.weight != null) await db.query('INSERT INTO weights (patient_id, fecha, kg) VALUES ($1, $2, $3)', [r.rows[0].id, U.todayAR(), p.weight]);
   return { id: r.rows[0].id };
 });
 
 add('GET', '/api/patients/:id', async (ctx) => {
   const id = U.idParam(ctx.params.id);
-  const r = await db.query('SELECT ' + PATIENT_COLS + ' FROM patients WHERE id = $1', [id]);
+  const r = await db.query('SELECT ' + PATIENT_COLS + ' FROM patients WHERE id = $1 AND deleted_at IS NULL', [id]);
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el paciente');
-  const [v, d, m, c, s, ap] = await Promise.all([
-    db.query('SELECT id, name, applied_on, next_on, product_id, stock_qty FROM vaccines WHERE patient_id = $1 ORDER BY applied_on DESC, id DESC', [id]),
-    db.query('SELECT id, on_date, title, notes FROM diagnoses WHERE patient_id = $1 ORDER BY on_date DESC, id DESC', [id]),
-    db.query('SELECT id, on_date, name, dose, duration, product_id, stock_qty FROM medications WHERE patient_id = $1 ORDER BY on_date DESC, id DESC', [id]),
-    db.query('SELECT id, on_date, concept, amount, method FROM charges WHERE patient_id = $1 ORDER BY on_date DESC, id DESC', [id]),
-    db.query('SELECT id, on_date, title, notes FROM complementary_studies WHERE patient_id = $1 ORDER BY on_date DESC, id DESC', [id]),
+  const [v, d, m, c, s, ap, wt] = await Promise.all([
+    db.query('SELECT id, name, applied_on, next_on, product_id, stock_qty FROM vaccines WHERE patient_id = $1 AND deleted_at IS NULL ORDER BY applied_on DESC, id DESC', [id]),
+    db.query('SELECT id, on_date, title, notes FROM diagnoses WHERE patient_id = $1 AND deleted_at IS NULL ORDER BY on_date DESC, id DESC', [id]),
+    db.query('SELECT id, on_date, name, dose, duration, product_id, stock_qty FROM medications WHERE patient_id = $1 AND deleted_at IS NULL ORDER BY on_date DESC, id DESC', [id]),
+    db.query('SELECT id, on_date, concept, amount, method FROM charges WHERE patient_id = $1 AND deleted_at IS NULL ORDER BY on_date DESC, id DESC', [id]),
+    db.query('SELECT id, on_date, title, notes FROM complementary_studies WHERE patient_id = $1 AND deleted_at IS NULL ORDER BY on_date DESC, id DESC', [id]),
     db.query('SELECT COUNT(*) AS n FROM appointments WHERE patient_id = $1', [id]),
+    db.query('SELECT id, fecha, kg FROM weights WHERE patient_id = $1 ORDER BY fecha, id', [id]),
   ]);
   return Object.assign(mapPatient(r.rows[0]), {
     vaccines: v.rows.map(mapVaccine),
     diagnoses: d.rows.map((x) => ({ id: x.id, date: x.on_date, title: x.title, notes: x.notes })),
     meds: m.rows.map((x) => ({ id: x.id, date: x.on_date, name: x.name, dose: x.dose, duration: x.duration, productId: x.product_id || null, stockQty: x.stock_qty || 0 })),
     charges: c.rows.map((x) => ({ id: x.id, date: x.on_date, concept: x.concept, amount: Number(x.amount), method: x.method })),
+    weights: wt.rows.map((x) => ({ id: x.id, date: x.fecha, kg: Number(x.kg) })), // G3
     appointmentCount: Number(ap.rows[0].n), // F6: turnos que se borran junto con el paciente
     studies: s.rows.map(mapStudy), // v2: estudios complementarios (ecografía, radiografía, análisis, etc.)
   });
@@ -495,17 +500,49 @@ add('GET', '/api/patients/:id', async (ctx) => {
 add('PUT', '/api/patients/:id', async (ctx) => {
   const id = U.idParam(ctx.params.id);
   const p = patientInput(ctx.body);
-  const r = await db.query(
-    'UPDATE patients SET name = $1, species = $2, breed = $3, sex = $4, neutered = $5, birth = $6, weight = $7, ' +
-      'owner_name = $8, phone = $9, email = $10, notes = $11, phone_norm = $12 WHERE id = $13 RETURNING id',
-    patientParams(p).concat([id])
-  );
+  return db.tx(async (c) => {
+    const old = await c.query('SELECT weight FROM patients WHERE id = $1 AND deleted_at IS NULL FOR UPDATE', [id]);
+    if (!old.rows[0]) throw new HttpError(404, 'No se encontró el paciente');
+    await c.query(
+      'UPDATE patients SET name = $1, species = $2, breed = $3, sex = $4, neutered = $5, birth = $6, weight = $7, ' +
+        'owner_name = $8, phone = $9, email = $10, notes = $11, phone_norm = $12 WHERE id = $13',
+      patientParams(p).concat([id])
+    );
+    // G3: cada vez que cambia el peso se guarda un registro nuevo en el historial.
+    if (p.weight != null && Number(old.rows[0].weight) !== p.weight) {
+      await c.query('INSERT INTO weights (patient_id, fecha, kg) VALUES ($1, $2, $3)', [id, U.todayAR(), p.weight]);
+    }
+  });
+});
+
+// G1: borrar un paciente lo manda a la Papelera (30 días para restaurarlo). Sus turnos y su historia
+// quedan guardados con él y vuelven al restaurarlo.
+add('DELETE', '/api/patients/:id', { admin: true }, async (ctx) => {
+  const r = await db.query('UPDATE patients SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id', [U.idParam(ctx.params.id)]);
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el paciente');
 });
 
-add('DELETE', '/api/patients/:id', { admin: true }, async (ctx) => {
+// G3: historial de peso. "Registrar peso" agrega un registro; el peso actual del paciente es el del último.
+async function syncWeight(c, patientId) {
+  await c.query('UPDATE patients SET weight = (SELECT kg FROM weights WHERE patient_id = $1 ORDER BY fecha DESC, id DESC LIMIT 1) WHERE id = $1', [patientId]);
+}
+add('POST', '/api/patients/:id/weights', async (ctx) => {
   const id = U.idParam(ctx.params.id);
-  await db.query('DELETE FROM patients WHERE id = $1', [id]);
+  const date = U.pastDate(ctx.body.date, 'Fecha del peso');
+  const kg = optWeight(ctx.body.kg);
+  if (kg == null) throw U.bad('Falta completar: Peso');
+  await mustExist('patients', id, 'No se encontró el paciente');
+  return db.tx(async (c) => {
+    await c.query('INSERT INTO weights (patient_id, fecha, kg) VALUES ($1, $2, $3)', [id, date, kg]);
+    await syncWeight(c, id);
+  });
+});
+add('DELETE', '/api/weights/:id', async (ctx) => {
+  return db.tx(async (c) => {
+    const r = await c.query('DELETE FROM weights WHERE id = $1 RETURNING patient_id', [U.idParam(ctx.params.id)]);
+    if (!r.rows[0]) throw new HttpError(404, 'No se encontró el registro de peso');
+    await syncWeight(c, r.rows[0].patient_id);
+  });
 });
 
 // Si la vacuna se elige de la lista de precios (serviceId) y ese servicio tiene un producto de
@@ -524,7 +561,7 @@ add('POST', '/api/patients/:id/vaccines', async (ctx) => {
   const chargeAmount = chargeNow ? U.money(b.charge.amount, 'Monto a cobrar') : 0;
   const chargeMethod = chargeNow ? U.oneOf(b.charge.method, U.METHODS, 'Forma de pago') : null;
   return db.tx(async (c) => {
-    const pat = await c.query('SELECT name FROM patients WHERE id = $1', [id]);
+    const pat = await c.query('SELECT name FROM patients WHERE id = $1 AND deleted_at IS NULL', [id]);
     if (!pat.rows[0]) throw new HttpError(404, 'No se encontró el paciente');
     let productId = null;
     let qty = 0;
@@ -566,7 +603,7 @@ add('PUT', '/api/vaccines/:id', async (ctx) => {
   const productId = b.productId ? U.idParam(b.productId) : null;
   return db.tx(async (c) => {
     const r = await c.query(
-      'SELECT v.product_id, v.stock_qty, v.stock_movement_id, p.name AS patient_name FROM vaccines v JOIN patients p ON p.id = v.patient_id WHERE v.id = $1 FOR UPDATE OF v',
+      'SELECT v.product_id, v.stock_qty, v.stock_movement_id, p.name AS patient_name FROM vaccines v JOIN patients p ON p.id = v.patient_id WHERE v.id = $1 AND v.deleted_at IS NULL AND p.deleted_at IS NULL FOR UPDATE OF v',
       [id]
     );
     if (!r.rows[0]) throw new HttpError(404, 'No se encontró la vacuna');
@@ -585,10 +622,11 @@ add('PUT', '/api/vaccines/:id', async (ctx) => {
 add('DELETE', '/api/vaccines/:id', async (ctx) => {
   const id = U.idParam(ctx.params.id);
   return db.tx(async (c) => {
-    const r = await c.query('SELECT product_id, stock_qty, stock_movement_id FROM vaccines WHERE id = $1 FOR UPDATE', [id]);
+    const r = await c.query('SELECT product_id, stock_qty, stock_movement_id FROM vaccines WHERE id = $1 AND deleted_at IS NULL FOR UPDATE', [id]);
     if (!r.rows[0]) throw new HttpError(404, 'No se encontró la vacuna');
     const v = r.rows[0];
-    await c.query('DELETE FROM vaccines WHERE id = $1', [id]);
+    // G1: va a la Papelera; conserva producto y cantidad para volver a descontar el stock si se restaura.
+    await c.query('UPDATE vaccines SET deleted_at = now() WHERE id = $1', [id]);
     const restored = await returnStock(c, v.product_id, v.stock_qty, v.stock_movement_id, 'Anulación de aplicación', ctx.user.id);
     return { ok: true, restored };
   });
@@ -605,7 +643,7 @@ add('POST', '/api/patients/:id/diagnoses', async (ctx) => {
 });
 add('PUT', '/api/diagnoses/:id', async (ctx) => {
   const b = ctx.body;
-  const r = await db.query('UPDATE diagnoses SET on_date = $1, title = $2, notes = $3 WHERE id = $4 RETURNING id', [
+  const r = await db.query('UPDATE diagnoses SET on_date = $1, title = $2, notes = $3 WHERE id = $4 AND deleted_at IS NULL RETURNING id', [
     U.pastDate(b.date, 'Fecha del diagnóstico'),
     U.reqStr(b.title, 'Diagnóstico', 200),
     U.optStr(b.notes, 3000),
@@ -614,7 +652,8 @@ add('PUT', '/api/diagnoses/:id', async (ctx) => {
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el diagnóstico');
 });
 add('DELETE', '/api/diagnoses/:id', async (ctx) => {
-  await db.query('DELETE FROM diagnoses WHERE id = $1', [U.idParam(ctx.params.id)]);
+  const r = await db.query('UPDATE diagnoses SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id', [U.idParam(ctx.params.id)]);
+  if (!r.rows[0]) throw new HttpError(404, 'No se encontró el diagnóstico');
 });
 
 // v2: estudios complementarios (ecografía, radiografía, análisis, etc.), igual que diagnósticos.
@@ -629,7 +668,7 @@ add('POST', '/api/patients/:id/studies', async (ctx) => {
 });
 add('PUT', '/api/studies/:id', async (ctx) => {
   const b = ctx.body;
-  const r = await db.query('UPDATE complementary_studies SET on_date = $1, title = $2, notes = $3 WHERE id = $4 RETURNING id', [
+  const r = await db.query('UPDATE complementary_studies SET on_date = $1, title = $2, notes = $3 WHERE id = $4 AND deleted_at IS NULL RETURNING id', [
     U.pastDate(b.date, 'Fecha del estudio'),
     U.reqStr(b.title, 'Tipo de estudio', 200),
     U.optStr(b.notes, 3000),
@@ -638,7 +677,8 @@ add('PUT', '/api/studies/:id', async (ctx) => {
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el estudio');
 });
 add('DELETE', '/api/studies/:id', async (ctx) => {
-  await db.query('DELETE FROM complementary_studies WHERE id = $1', [U.idParam(ctx.params.id)]);
+  const r = await db.query('UPDATE complementary_studies SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id', [U.idParam(ctx.params.id)]);
+  if (!r.rows[0]) throw new HttpError(404, 'No se encontró el estudio');
 });
 
 add('POST', '/api/patients/:id/medications', async (ctx) => {
@@ -672,7 +712,7 @@ add('PUT', '/api/medications/:id', async (ctx) => {
   const productId = b.productId ? U.idParam(b.productId) : null;
   const qty = productId ? U.reqInt(b.qty == null || b.qty === '' ? 1 : b.qty, 'Cantidad a descontar', 1, 100000) : 0;
   return db.tx(async (c) => {
-    const r = await c.query('SELECT product_id, stock_qty, stock_movement_id FROM medications WHERE id = $1 FOR UPDATE', [id]);
+    const r = await c.query('SELECT product_id, stock_qty, stock_movement_id FROM medications WHERE id = $1 AND deleted_at IS NULL FOR UPDATE', [id]);
     if (!r.rows[0]) throw new HttpError(404, 'No se encontró la medicación');
     const st = await reapplyStock(c, r.rows[0], productId, qty, {
       reasonBack: 'Anulación de medicación',
@@ -690,10 +730,10 @@ add('PUT', '/api/medications/:id', async (ctx) => {
 add('DELETE', '/api/medications/:id', async (ctx) => {
   const id = U.idParam(ctx.params.id);
   return db.tx(async (c) => {
-    const r = await c.query('SELECT product_id, stock_qty, stock_movement_id FROM medications WHERE id = $1 FOR UPDATE', [id]);
+    const r = await c.query('SELECT product_id, stock_qty, stock_movement_id FROM medications WHERE id = $1 AND deleted_at IS NULL FOR UPDATE', [id]);
     if (!r.rows[0]) throw new HttpError(404, 'No se encontró la medicación');
     const m = r.rows[0];
-    await c.query('DELETE FROM medications WHERE id = $1', [id]);
+    await c.query('UPDATE medications SET deleted_at = now() WHERE id = $1', [id]);
     const restored = await returnStock(c, m.product_id, m.stock_qty, m.stock_movement_id, 'Anulación de medicación', ctx.user.id);
     return { ok: true, restored };
   });
@@ -729,7 +769,7 @@ add('POST', '/api/patients/:id/charges', async (ctx) => {
   const discValue = disc ? U.reqNum(disc.value, 'Descuento', 0, 1e9) : 0;
   if (discType === 'percent' && discValue > 100) throw U.bad('El descuento no puede ser mayor a 100%');
   return db.tx(async (c) => {
-    const pat = await c.query('SELECT name FROM patients WHERE id = $1', [id]);
+    const pat = await c.query('SELECT name FROM patients WHERE id = $1 AND deleted_at IS NULL', [id]);
     if (!pat.rows[0]) throw new HttpError(404, 'No se encontró el paciente');
     let subtotal = 0;
     for (const ln of lines) {
@@ -791,11 +831,12 @@ add('POST', '/api/patients/:id/charges', async (ctx) => {
 add('DELETE', '/api/charges/:id', { admin: true }, async (ctx) => {
   const id = U.idParam(ctx.params.id);
   return db.tx(async (c) => {
-    const r = await c.query('SELECT cash_id FROM charges WHERE id = $1 FOR UPDATE', [id]);
+    const r = await c.query('SELECT cash_id FROM charges WHERE id = $1 AND deleted_at IS NULL FOR UPDATE', [id]);
     if (!r.rows[0]) throw new HttpError(404, 'No se encontró el cobro');
     const mv = await c.query('SELECT id FROM stock_movements WHERE charge_id = $1 ORDER BY id', [id]);
     const stockDelta = await revertStockMovements(c, mv.rows.map((x) => x.id), ctx.user.id);
-    await c.query('DELETE FROM charges WHERE id = $1', [id]);
+    // G1: el cobro va a la Papelera (se recuerda si tenía ingreso en caja, para recrearlo al restaurar).
+    await c.query('UPDATE charges SET deleted_at = now(), cash_was = $2 WHERE id = $1', [id, !!r.rows[0].cash_id]);
     if (r.rows[0].cash_id) await deleteCash(c, r.rows[0].cash_id, ctx.user.id);
     return { ok: true, stockDelta };
   });
@@ -922,7 +963,7 @@ add('POST', '/api/products/:id/sell', async (ctx) => {
   return db.tx(async (c) => {
     let patientName = null;
     if (patientId) {
-      const pat = await c.query('SELECT name FROM patients WHERE id = $1', [patientId]);
+      const pat = await c.query('SELECT name FROM patients WHERE id = $1 AND deleted_at IS NULL', [patientId]);
       if (!pat.rows[0]) throw new HttpError(404, 'No se encontró el paciente');
       patientName = pat.rows[0].name;
     }
@@ -1016,8 +1057,8 @@ add('DELETE', '/api/services/:id', { admin: true }, async (ctx) => {
 /* ============================================================
    Caja (solo administradores)
    ============================================================ */
-add('GET', '/api/cash', { admin: true }, async (ctx) => {
-  const q = ctx.query;
+// Filtros de la lista de Caja (y de su exportación). G4: además de los períodos fijos, un rango "desde – hasta".
+function cashFilter(q) {
   const today = U.todayAR();
   const where = [];
   const params = [];
@@ -1035,6 +1076,12 @@ add('GET', '/api/cash', { admin: true }, async (ctx) => {
     const prevFrom = U.monthStart(today, 1);
     where.push('c.on_date >= ' + p(prevFrom));
     where.push('c.on_date <= ' + p(U.monthEnd(prevFrom)));
+  } else if (period === 'range') {
+    const from = U.reqDate(q.get('from') || '', 'Desde');
+    const to = U.reqDate(q.get('to') || '', 'Hasta');
+    if (to < from) throw U.bad('El rango de fechas no es válido: "Hasta" es anterior a "Desde"');
+    where.push('c.on_date >= ' + p(from));
+    where.push('c.on_date <= ' + p(to));
   }
   const type = q.get('type');
   if (type === 'in' || type === 'out') where.push('c.kind = ' + p(type));
@@ -1042,16 +1089,54 @@ add('GET', '/api/cash', { admin: true }, async (ctx) => {
   if (group === 'Efectivo') where.push('c.method = ' + p('Efectivo'));
   else if (group === 'Transferencia') where.push('c.method = ' + p('Transferencia'));
   else if (group === 'Tarjeta') where.push("c.method IN ('Tarjeta de débito', 'Tarjeta de crédito')");
+  return { where: where.length ? ' WHERE ' + where.join(' AND ') : '', params };
+}
+add('GET', '/api/cash', { admin: true }, async (ctx) => {
+  const f = cashFilter(ctx.query);
   const sql =
     'SELECT c.id, c.on_date, c.kind, c.concept, c.category, c.method, c.amount, ' +
     // Unidades que se mueven si se elimina: el movimiento vinculado directamente y los de los cobros que usan este ingreso.
     'COALESCE((SELECT SUM(-m.qty) FROM stock_movements m WHERE NOT m.voided AND m.product_id IS NOT NULL AND ' +
     '(m.id = c.stock_movement_id OR m.charge_id IN (SELECT ch.id FROM charges ch WHERE ch.cash_id = c.id))), 0) AS stock_delta ' +
     'FROM cash_movements c' +
-    (where.length ? ' WHERE ' + where.join(' AND ') : '') +
+    f.where +
     ' ORDER BY c.on_date DESC, c.id DESC LIMIT 500';
-  const r = await db.query(sql, params);
+  const r = await db.query(sql, f.params);
   return { items: r.rows.map(mapCash), limited: r.rows.length === 500 };
+});
+
+// G4: exportación a CSV (separador ";", UTF-8 con BOM y decimales con coma: se abre bien en Excel en español).
+const csvCell = (v) => {
+  let t = v == null ? '' : String(v);
+  if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; // evita que Excel interprete el texto como una fórmula
+  return /[;"\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+};
+add('GET', '/api/cash/export', { admin: true }, async (ctx) => {
+  const f = cashFilter(ctx.query);
+  const r = await db.query(
+    'SELECT c.on_date, c.kind, c.concept, c.category, c.method, c.amount, ' +
+      "COALESCE(sup.name, (SELECT p.name FROM charges ch JOIN patients p ON p.id = ch.patient_id WHERE ch.cash_id = c.id LIMIT 1), '') AS who " +
+      'FROM cash_movements c LEFT JOIN suppliers sup ON sup.id = c.supplier_id' +
+      f.where +
+      ' ORDER BY c.on_date, c.id LIMIT 50000',
+    f.params
+  );
+  const fmtD = (d) => String(d).slice(8, 10) + '/' + String(d).slice(5, 7) + '/' + String(d).slice(0, 4);
+  const lines = [['Fecha', 'Tipo', 'Concepto', 'Categoría', 'Forma de pago', 'Monto', 'Proveedor / Paciente'].join(';')];
+  r.rows.forEach((x) => {
+    lines.push(
+      [fmtD(x.on_date), x.kind === 'in' ? 'Ingreso' : 'Egreso', x.concept, x.category, x.method, String(Number(x.amount)).replace('.', ','), x.who].map(csvCell).join(';')
+    );
+  });
+  const body = '\uFEFF' + lines.join('\r\n') + '\r\n';
+  ctx.res.writeHead(200, {
+    'Content-Type': 'text/csv; charset=utf-8',
+    'Content-Disposition': 'attachment; filename="movimientos-' + U.todayAR() + '.csv"',
+    'Cache-Control': 'no-store',
+    'Content-Length': Buffer.byteLength(body),
+  });
+  ctx.res.end(body);
+  return U.HANDLED;
 });
 
 add('GET', '/api/cash/summary', { admin: true }, async () => cashSummary());
@@ -1095,6 +1180,19 @@ function reportDays(q) {
   const d = Number(q.get('days'));
   return [30, 90, 365].includes(d) ? d : 90;
 }
+// Período de los reportes de servicios y productos: un rango "desde – hasta" (G4) o los últimos N días.
+function reportRange(q) {
+  const today = U.todayAR();
+  if (q.get('from') || q.get('to')) {
+    const from = U.reqDate(q.get('from') || '', 'Desde');
+    const to = U.reqDate(q.get('to') || '', 'Hasta');
+    if (to < from) throw U.bad('El rango de fechas no es válido: "Hasta" es anterior a "Desde"');
+    const days = Math.round((new Date(to + 'T00:00:00Z') - new Date(from + 'T00:00:00Z')) / 86400000) + 1;
+    return { from, to, days };
+  }
+  const days = reportDays(q);
+  return { from: U.addDays(today, -days), to: today, days };
+}
 
 add('GET', '/api/reports/monthly', { admin: true }, async () => {
   const today = U.todayAR();
@@ -1131,26 +1229,24 @@ add('GET', '/api/reports/monthly', { admin: true }, async () => {
 });
 
 add('GET', '/api/reports/services', { admin: true }, async (ctx) => {
-  const days = reportDays(ctx.query);
-  const cutoff = U.addDays(U.todayAR(), -days);
+  const { from, to, days } = reportRange(ctx.query);
   const r = await db.query(
-    "SELECT concept, COUNT(*) AS n, SUM(amount) AS total FROM charges WHERE line_type = 'service' AND on_date >= $1 GROUP BY concept ORDER BY n DESC, total DESC",
-    [cutoff]
+    "SELECT concept, COUNT(*) AS n, SUM(amount) AS total FROM charges WHERE line_type = 'service' AND deleted_at IS NULL AND on_date >= $1 AND on_date <= $2 GROUP BY concept ORDER BY n DESC, total DESC",
+    [from, to]
   );
   return { days, items: r.rows.map((x) => ({ name: x.concept, n: Number(x.n), total: Number(x.total) })) };
 });
 
 add('GET', '/api/reports/products', { admin: true }, async (ctx) => {
-  const days = reportDays(ctx.query);
-  const cutoff = U.addDays(U.todayAR(), -days);
+  const { from, to, days } = reportRange(ctx.query);
   const r = await db.query(
     'SELECT p.id, p.name, p.category, p.stock, COALESCE(SUM(-m.qty), 0) AS units ' +
       'FROM products p LEFT JOIN stock_movements m ON m.product_id = p.id AND m.qty < 0 ' +
       // v2: se agregan las bajas por "Vacuna aplicada a ..." (antes solo contaba ventas y medicación).
       // Los movimientos anulados (venta eliminada, vacuna o medicación quitada) no cuentan.
-      "AND (m.reason IN ('Venta', 'Medicación') OR m.reason LIKE 'Vacuna aplicada a%' OR m.reason LIKE 'Servicio –%') AND NOT m.voided AND m.on_date >= $1 " +
+      "AND (m.reason IN ('Venta', 'Medicación') OR m.reason LIKE 'Vacuna aplicada a%' OR m.reason LIKE 'Servicio –%') AND NOT m.voided AND m.on_date >= $1 AND m.on_date <= $2 " +
       'GROUP BY p.id ORDER BY units DESC, lower(p.name)',
-    [cutoff]
+    [from, to]
   );
   return { days, items: r.rows.map((x) => ({ id: x.id, name: x.name, category: x.category, stock: x.stock, units: Number(x.units) })) };
 });
@@ -1251,6 +1347,148 @@ add('DELETE', '/api/suppliers/:id', { admin: true }, async (ctx) => {
 });
 
 /* ============================================================
+   G1 · Papelera (solo administradores)
+   Lo que se borra de la historia clínica queda 30 días en la Papelera: se puede restaurar. Pasado ese
+   plazo solo se puede eliminar definitivamente (a mano, uno por uno o todos los vencidos).
+   ============================================================ */
+const TRASH_DAYS = 30;
+const TRASH_TABLES = {
+  patient: 'patients',
+  vaccine: 'vaccines',
+  diagnosis: 'diagnoses',
+  study: 'complementary_studies',
+  medication: 'medications',
+  charge: 'charges',
+};
+const TRASH_LIST_SQL =
+  "SELECT 'patient' AS kind, id, name AS label, '' AS patient, birth AS ref_date, deleted_at FROM patients WHERE deleted_at IS NOT NULL " +
+  "UNION ALL SELECT 'vaccine', v.id, v.name, p.name, v.applied_on, v.deleted_at FROM vaccines v JOIN patients p ON p.id = v.patient_id WHERE v.deleted_at IS NOT NULL AND p.deleted_at IS NULL " +
+  "UNION ALL SELECT 'diagnosis', d.id, d.title, p.name, d.on_date, d.deleted_at FROM diagnoses d JOIN patients p ON p.id = d.patient_id WHERE d.deleted_at IS NOT NULL AND p.deleted_at IS NULL " +
+  "UNION ALL SELECT 'study', d.id, d.title, p.name, d.on_date, d.deleted_at FROM complementary_studies d JOIN patients p ON p.id = d.patient_id WHERE d.deleted_at IS NOT NULL AND p.deleted_at IS NULL " +
+  "UNION ALL SELECT 'medication', d.id, d.name, p.name, d.on_date, d.deleted_at FROM medications d JOIN patients p ON p.id = d.patient_id WHERE d.deleted_at IS NOT NULL AND p.deleted_at IS NULL " +
+  "UNION ALL SELECT 'charge', d.id, d.concept, p.name, d.on_date, d.deleted_at FROM charges d JOIN patients p ON p.id = d.patient_id WHERE d.deleted_at IS NOT NULL AND p.deleted_at IS NULL " +
+  'ORDER BY deleted_at DESC LIMIT 500';
+
+add('GET', '/api/trash', { admin: true }, async () => {
+  const r = await db.query(TRASH_LIST_SQL);
+  const now = Date.now();
+  const items = r.rows.map((x) => {
+    const days = Math.floor((now - new Date(x.deleted_at).getTime()) / 86400000);
+    return {
+      kind: x.kind,
+      id: x.id,
+      label: x.label,
+      patient: x.patient,
+      date: x.kind === 'patient' ? '' : x.ref_date || '',
+      deletedAt: x.deleted_at,
+      daysLeft: Math.max(TRASH_DAYS - days, 0),
+      expired: days >= TRASH_DAYS,
+    };
+  });
+  return { items, expiredCount: items.filter((x) => x.expired).length, days: TRASH_DAYS };
+});
+
+function trashTable(kind) {
+  const t = TRASH_TABLES[kind];
+  if (!t) throw new HttpError(404, 'No se encontró lo que querés restaurar');
+  return t;
+}
+
+/** Restaura un elemento. Devuelve { warning } si no se pudo volver a descontar el stock. */
+add('POST', '/api/trash/:kind/:id/restore', { admin: true, limit: 1024 }, async (ctx) => {
+  const table = trashTable(ctx.params.kind);
+  const id = U.idParam(ctx.params.id);
+  return db.tx(async (c) => {
+    const r = await c.query('SELECT *, (deleted_at < now() - interval \'' + TRASH_DAYS + " days') AS expired FROM " + table + ' WHERE id = $1 AND deleted_at IS NOT NULL FOR UPDATE', [id]);
+    const row = r.rows[0];
+    if (!row) throw new HttpError(404, 'No se encontró lo que querés restaurar');
+    if (row.expired) throw new HttpError(409, 'Pasaron más de ' + TRASH_DAYS + ' días: ya solo se puede eliminar definitivamente.');
+    if (row.patient_id) {
+      const pat = await c.query('SELECT name FROM patients WHERE id = $1 AND deleted_at IS NULL', [row.patient_id]);
+      if (!pat.rows[0]) throw new HttpError(409, 'Primero restaurá al paciente.');
+      row.patient_name = pat.rows[0].name;
+    }
+    let warning = null;
+    const stockTry = async (fn) => {
+      // Si el stock no alcanza (o el producto ya no existe), se restaura igual pero sin descontar, y se avisa.
+      await c.query('SAVEPOINT trash_stock');
+      try {
+        const out = await fn();
+        await c.query('RELEASE SAVEPOINT trash_stock');
+        return out;
+      } catch (e) {
+        if (!(e instanceof HttpError)) throw e;
+        await c.query('ROLLBACK TO SAVEPOINT trash_stock');
+        warning = 'Se restauró, pero no se volvió a descontar el stock: ' + e.message + '.';
+        return null;
+      }
+    };
+    if (ctx.params.kind === 'vaccine' || ctx.params.kind === 'medication') {
+      let mov = null;
+      if (row.product_id && row.stock_qty > 0) {
+        const reason = ctx.params.kind === 'vaccine' ? 'Vacuna aplicada a ' + row.patient_name : 'Medicación';
+        mov = await stockTry(() => deductStock(c, row.product_id, row.stock_qty, reason, row.applied_on || row.on_date, ctx.user.id));
+      }
+      await c.query('UPDATE ' + table + ' SET deleted_at = NULL, product_id = $2, stock_qty = $3, stock_movement_id = $4 WHERE id = $1', [
+        id,
+        mov ? row.product_id : null,
+        mov ? row.stock_qty : 0,
+        mov ? mov.movementId : null,
+      ]);
+    } else if (ctx.params.kind === 'charge') {
+      // Se vuelven a descontar los productos de las líneas y se recrea el ingreso en caja, si lo tenía.
+      const olds = (await c.query('SELECT id, product_id, -qty AS q, reason, unit_price FROM stock_movements WHERE charge_id = $1 AND voided AND qty < 0 ORDER BY id', [id])).rows;
+      let news = [];
+      if (olds.length) {
+        const out = await stockTry(async () => {
+          const made = [];
+          for (const o of olds) {
+            if (!o.product_id) continue;
+            made.push(await deductStock(c, o.product_id, o.q, o.reason, row.on_date, ctx.user.id, { chargeId: id, unitPrice: Number(o.unit_price) }));
+          }
+          return made;
+        });
+        if (out) {
+          news = out;
+          await c.query('UPDATE stock_movements SET charge_id = NULL WHERE id = ANY($1::int[])', [olds.map((o) => o.id)]); // los originales anulados se desvinculan
+        }
+      }
+      let cashId = null;
+      if (row.cash_was) {
+        const cash = await c.query(
+          'INSERT INTO cash_movements (on_date, kind, concept, category, method, amount, created_by, stock_movement_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
+          [row.on_date, 'in', row.concept + ' – ' + row.patient_name, row.line_type === 'product' ? 'Venta de productos' : 'Servicios', row.method, row.amount, ctx.user.id, row.line_type === 'product' && news.length === 1 ? news[0].movementId : null]
+        );
+        cashId = cash.rows[0].id;
+      }
+      await c.query('UPDATE charges SET deleted_at = NULL, cash_was = FALSE, cash_id = $2 WHERE id = $1', [id, cashId]);
+    } else {
+      await c.query('UPDATE ' + table + ' SET deleted_at = NULL WHERE id = $1', [id]);
+    }
+    return { ok: true, warning };
+  });
+});
+
+// Eliminación definitiva de un elemento de la Papelera (no se puede deshacer).
+add('DELETE', '/api/trash/:kind/:id', { admin: true }, async (ctx) => {
+  const table = trashTable(ctx.params.kind);
+  const r = await db.query('DELETE FROM ' + table + ' WHERE id = $1 AND deleted_at IS NOT NULL RETURNING id', [U.idParam(ctx.params.id)]);
+  if (!r.rows[0]) throw new HttpError(404, 'No se encontró lo que querés eliminar');
+});
+// Elimina definitivamente todo lo que lleva más de 30 días en la Papelera.
+add('POST', '/api/trash/purge-expired', { admin: true, limit: 1024 }, async () => {
+  let n = 0;
+  await db.tx(async (c) => {
+    // Los pacientes van al final: al borrarlos se llevan en cascada lo que les quede.
+    for (const t of ['charges', 'vaccines', 'diagnoses', 'complementary_studies', 'medications', 'patients']) {
+      const r = await c.query('DELETE FROM ' + t + " WHERE deleted_at < now() - interval '" + TRASH_DAYS + " days'");
+      n += r.rowCount;
+    }
+  });
+  return { ok: true, purged: n };
+});
+
+/* ============================================================
    v2 · Calendario de turnos
    Abierto a cualquier usuario logueado (admin o ayudante): la agenda del día a día
    la maneja el mismo personal que atiende el mostrador, igual que las historias clínicas.
@@ -1274,7 +1512,7 @@ add('GET', '/api/appointments', async (ctx) => {
   const r = await db.query(
     'SELECT a.id, a.patient_id, p.name AS patient_name, p.owner_name, p.species, p.breed, p.phone, a.title, a.description, a.appointment_date, a.appointment_time, a.appointment_type, a.duration_min ' +
       'FROM appointments a JOIN patients p ON p.id = a.patient_id ' +
-      'WHERE a.appointment_date BETWEEN $1 AND $2 ORDER BY a.appointment_date, a.appointment_time, a.id',
+      'WHERE p.deleted_at IS NULL AND a.appointment_date BETWEEN $1 AND $2 ORDER BY a.appointment_date, a.appointment_time, a.id',
     [from, to]
   );
   return { items: r.rows.map(mapAppointment) };

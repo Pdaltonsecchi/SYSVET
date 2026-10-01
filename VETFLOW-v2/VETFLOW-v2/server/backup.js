@@ -7,20 +7,21 @@ const U = require('./util');
 // Tablas incluidas en las copias, en orden de dependencia (las de abajo dependen de las de arriba).
 // No se incluyen los usuarios ni sus contraseñas.
 const TABLES = [
-  ['patients', ['id', 'name', 'species', 'breed', 'sex', 'neutered', 'birth', 'weight', 'owner_name', 'phone', 'email', 'notes']],
+  ['patients', ['id', 'name', 'species', 'breed', 'sex', 'neutered', 'birth', 'weight', 'owner_name', 'phone', 'email', 'notes', 'deleted_at']],
+  ['weights', ['id', 'patient_id', 'fecha', 'kg']],
   ['suppliers', ['id', 'name', 'phone', 'email', 'description']], // antes que productos y compras, que lo referencian
   // "products" y "stock_movements" van antes que vacunas, medicación y caja, que apuntan a ellos.
   ['products', ['id', 'name', 'category', 'stock', 'min_stock', 'price', 'species', 'supplier_id']],
   ['stock_movements', ['id', 'product_id', 'product_name', 'on_date', 'qty', 'reason', 'unit_price', 'voided', 'note', 'charge_id', 'supplier_id']],
-  ['vaccines', ['id', 'patient_id', 'name', 'applied_on', 'next_on', 'product_id', 'stock_qty', 'stock_movement_id']],
-  ['diagnoses', ['id', 'patient_id', 'on_date', 'title', 'notes']],
-  ['medications', ['id', 'patient_id', 'on_date', 'name', 'dose', 'duration', 'product_id', 'stock_qty', 'stock_movement_id']],
+  ['vaccines', ['id', 'patient_id', 'name', 'applied_on', 'next_on', 'product_id', 'stock_qty', 'stock_movement_id', 'deleted_at']],
+  ['diagnoses', ['id', 'patient_id', 'on_date', 'title', 'notes', 'deleted_at']],
+  ['medications', ['id', 'patient_id', 'on_date', 'name', 'dose', 'duration', 'product_id', 'stock_qty', 'stock_movement_id', 'deleted_at']],
   ['services', ['id', 'name', 'category', 'price', 'product_id', 'species']],
   ['service_items', ['id', 'service_id', 'product_id', 'qty']],
-  ['complementary_studies', ['id', 'patient_id', 'on_date', 'title', 'notes']],
+  ['complementary_studies', ['id', 'patient_id', 'on_date', 'title', 'notes', 'deleted_at']],
   ['appointments', ['id', 'patient_id', 'title', 'description', 'appointment_date', 'appointment_time', 'appointment_type', 'duration_min']],
   ['cash_movements', ['id', 'on_date', 'kind', 'concept', 'category', 'method', 'amount', 'stock_movement_id', 'supplier_id']],
-  ['charges', ['id', 'patient_id', 'on_date', 'concept', 'amount', 'method', 'cash_id', 'line_type']],
+  ['charges', ['id', 'patient_id', 'on_date', 'concept', 'amount', 'method', 'cash_id', 'line_type', 'deleted_at', 'cash_was']],
 ];
 
 const KEEP_AUTO = 14;
@@ -29,10 +30,10 @@ const KEEP_MANUAL = 20;
 // v2: tablas y columnas que no existían en la v1. Un backup exportado antes de la v2 no las
 // tiene: se tratan como "sin datos" (tabla vacía) o con este valor por defecto, en vez de
 // rechazar la restauración de una copia vieja.
-const NEW_TABLES = new Set(['suppliers', 'complementary_studies', 'appointments', 'service_items']);
+const NEW_TABLES = new Set(['suppliers', 'complementary_studies', 'appointments', 'service_items', 'weights']);
 const COL_DEFAULTS = {
   stock_movements: { unit_price: 0, voided: false, note: '' },
-  charges: { line_type: 'service' },
+  charges: { line_type: 'service', cash_was: false },
   appointments: { duration_min: 30 },
   vaccines: { stock_qty: 0 },
   medications: { stock_qty: 0 },
@@ -205,6 +206,11 @@ async function restore(data, opts) {
       // El teléfono normalizado no viaja en las copias: se recalcula.
       await c.query("UPDATE patients SET phone_norm = regexp_replace(phone, '\\D', '', 'g')");
       await c.query("UPDATE suppliers SET phone_norm = regexp_replace(phone, '\\D', '', 'g')");
+      // Copias anteriores al historial de peso: el peso actual pasa a ser el primer registro.
+      await c.query(
+        'INSERT INTO weights (patient_id, fecha, kg) SELECT p.id, CURRENT_DATE, p.weight FROM patients p ' +
+          'WHERE p.weight IS NOT NULL AND p.weight > 0 AND p.weight <= 150 AND NOT EXISTS (SELECT 1 FROM weights w WHERE w.patient_id = p.id)'
+      );
     });
   } catch (e) {
     console.error('Falló la restauración:', e.message);
