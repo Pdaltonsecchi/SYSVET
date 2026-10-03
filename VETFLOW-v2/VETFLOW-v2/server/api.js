@@ -279,6 +279,20 @@ async function returnStock(c, productId, qty, movementId, reason, userId) {
 }
 
 /**
+ * Una droga vinculada a una vacuna de la Lista de precios se descuenta al aplicar la vacuna: no se puede
+ * vender suelta ni usar como medicación. `q` es la base o la transacción.
+ */
+async function assertNotVaccineDrug(q, productId) {
+  const r = await q.query(
+    "SELECT p.name AS product, s.name AS vaccine FROM services s JOIN products p ON p.id = s.product_id WHERE s.product_id = $1 AND s.category = 'Vacunas' LIMIT 1",
+    [productId]
+  );
+  if (r.rows[0]) {
+    throw new HttpError(409, '“' + r.rows[0].product + '” es la droga de la vacuna “' + r.rows[0].vaccine + '”: se descuenta al aplicar la vacuna y no se puede vender suelta ni usar como medicación.');
+  }
+}
+
+/**
  * Al editar una vacuna o medicación vinculada al stock: si cambió el producto o la cantidad,
  * devuelve lo descontado antes y descuenta lo nuevo (todo dentro de la misma transacción).
  * `old` es la fila actual; devuelve { productId, qty, movementId } para guardar en el registro.
@@ -434,7 +448,7 @@ add('GET', '/api/bootstrap', async (ctx) => {
     listServices(),
     db.query('SELECT id, name, phone, email, description FROM suppliers ORDER BY lower(name), id'),
   ]);
-  const out = { user: ctx.user, clinic: process.env.CLINIC_NAME || 'VETFLOW', attachments: storage.configured(), patients, products, services, suppliers: sup.rows.map(mapSupplier) };
+  const out = { user: ctx.user, clinic: process.env.CLINIC_NAME || 'SYSVET', attachments: storage.configured(), patients, products, services, suppliers: sup.rows.map(mapSupplier) };
   if (ctx.user.role === 'admin') out.summary = await cashSummary();
   return out;
 });
@@ -555,17 +569,16 @@ add('DELETE', '/api/weights/:id', async (ctx) => {
   });
 });
 
-// Si la vacuna se elige de la lista de precios (serviceId) y ese servicio tiene un producto de
-// stock vinculado, se descuenta 1 unidad. Si no hay stock se rechaza (nunca queda en negativo),
-// salvo que el usuario elija explícitamente "Aplicar sin descontar stock" (skipStock).
+// Si la vacuna se elige de la lista de precios (serviceId), se descuenta 1 unidad de su droga. Es un bloqueo
+// duro: si no hay stock, o la vacuna no tiene droga asignada, se rechaza y no se registra nada. Sin serviceId
+// solo se admite el registro manual de una vacuna aplicada fuera de la clínica (no toca el stock).
 add('POST', '/api/patients/:id/vaccines', async (ctx) => {
   const id = U.idParam(ctx.params.id);
   const b = ctx.body;
-  const name = U.reqStr(b.name, 'Vacuna', 100);
+  let name = U.reqStr(b.name, 'Vacuna', 100);
   const date = U.pastDate(b.date, 'Fecha de aplicación');
   const next = U.optDate(b.next, 'Próxima dosis');
   const serviceId = b.serviceId ? U.idParam(b.serviceId) : null;
-  const skipStock = !!b.skipStock;
   // B5: "Cobrar ahora" crea el cobro y el ingreso en caja junto con la vacuna (solo si se eligió un servicio).
   const chargeNow = serviceId && b.charge && typeof b.charge === 'object';
   const chargeAmount = chargeNow ? U.money(b.charge.amount, 'Monto a cobrar') : 0;
@@ -579,12 +592,14 @@ add('POST', '/api/patients/:id/vaccines', async (ctx) => {
     if (serviceId) {
       const svc = await c.query('SELECT name, product_id FROM services WHERE id = $1', [serviceId]);
       if (!svc.rows[0]) throw new HttpError(404, 'No se encontró el servicio de la lista de precios');
-      if (svc.rows[0].product_id && !skipStock) {
-        const d = await deductStock(c, svc.rows[0].product_id, 1, 'Vacuna aplicada a ' + pat.rows[0].name, date, ctx.user.id);
-        productId = svc.rows[0].product_id;
-        qty = 1;
-        movementId = d.movementId;
+      if (!svc.rows[0].product_id) {
+        throw new HttpError(409, 'La vacuna “' + svc.rows[0].name + '” no tiene una droga asignada en la Lista de precios. Asignale una droga antes de aplicarla.');
       }
+      name = svc.rows[0].name; // siempre el nombre de la vacuna de la Lista de precios, no el de la droga
+      const d = await deductStock(c, svc.rows[0].product_id, 1, 'Vacuna aplicada a ' + pat.rows[0].name, date, ctx.user.id);
+      productId = svc.rows[0].product_id;
+      qty = 1;
+      movementId = d.movementId;
     }
     await c.query(
       'INSERT INTO vaccines (patient_id, name, applied_on, next_on, product_id, stock_qty, stock_movement_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
@@ -780,20 +795,21 @@ add('POST', '/api/patients/:id/medications', async (ctx) => {
   const id = U.idParam(ctx.params.id);
   const b = ctx.body;
   const date = U.pastDate(b.date, 'Fecha de la medicación');
-  const name = U.reqStr(b.name, 'Medicamento', 200);
   const dose = U.optStr(b.dose, 200);
   const duration = U.optStr(b.duration, 200);
-  const productId = b.productId ? U.idParam(b.productId) : null;
-  const qty = productId ? U.reqInt(b.qty == null || b.qty === '' ? 1 : b.qty, 'Cantidad a descontar', 1, 100000) : 0;
+  // La medicación siempre sale del stock: el producto es obligatorio y su nombre es el del producto.
+  if (!b.productId) throw U.bad('Elegí el producto del stock que se usa como medicación');
+  const productId = U.idParam(b.productId);
+  const qty = U.reqInt(b.qty == null || b.qty === '' ? 1 : b.qty, 'Cantidad a descontar', 1, 100000);
   await mustExist('patients', id, 'No se encontró el paciente');
   return db.tx(async (c) => {
-    let movementId = null;
-    if (productId) movementId = (await deductStock(c, productId, qty, 'Medicación', date, ctx.user.id)).movementId;
+    await assertNotVaccineDrug(c, productId);
+    const d = await deductStock(c, productId, qty, 'Medicación', date, ctx.user.id);
     await c.query(
       'INSERT INTO medications (patient_id, on_date, name, dose, duration, product_id, stock_qty, stock_movement_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-      [id, date, name, dose, duration, productId, qty, movementId]
+      [id, date, d.name, dose, duration, productId, qty, d.movementId]
     );
-    return { ok: true, deducted: qty > 0, qty };
+    return { ok: true, deducted: true, qty };
   });
 });
 // B2: editar una medicación (si cambia el producto o la cantidad, se reajusta el stock).
@@ -801,14 +817,18 @@ add('PUT', '/api/medications/:id', async (ctx) => {
   const id = U.idParam(ctx.params.id);
   const b = ctx.body;
   const date = U.pastDate(b.date, 'Fecha de la medicación');
-  const name = U.reqStr(b.name, 'Medicamento', 200);
   const dose = U.optStr(b.dose, 200);
   const duration = U.optStr(b.duration, 200);
   const productId = b.productId ? U.idParam(b.productId) : null;
   const qty = productId ? U.reqInt(b.qty == null || b.qty === '' ? 1 : b.qty, 'Cantidad a descontar', 1, 100000) : 0;
   return db.tx(async (c) => {
-    const r = await c.query('SELECT product_id, stock_qty, stock_movement_id FROM medications WHERE id = $1 AND deleted_at IS NULL FOR UPDATE', [id]);
+    const r = await c.query('SELECT name, product_id, stock_qty, stock_movement_id FROM medications WHERE id = $1 AND deleted_at IS NULL FOR UPDATE', [id]);
     if (!r.rows[0]) throw new HttpError(404, 'No se encontró la medicación');
+    // Solo un registro anterior que ya no tenía producto puede seguir sin él; el resto exige un producto del stock.
+    if (!productId && r.rows[0].product_id) throw U.bad('Elegí el producto del stock que se usa como medicación');
+    if (productId && productId !== r.rows[0].product_id) await assertNotVaccineDrug(c, productId);
+    let name = r.rows[0].name;
+    if (productId) name = (await c.query('SELECT name FROM products WHERE id = $1', [productId])).rows[0].name;
     const st = await reapplyStock(c, r.rows[0], productId, qty, {
       reasonBack: 'Anulación de medicación',
       reasonOut: 'Medicación',
@@ -878,6 +898,7 @@ add('POST', '/api/patients/:id/charges', async (ctx) => {
       } else {
         const pr = (await c.query('SELECT name, price FROM products WHERE id = $1', [ln.id])).rows[0];
         if (!pr) throw new HttpError(404, 'No se encontró el producto');
+        await assertNotVaccineDrug(c, ln.id);
         ln.name = pr.name;
         if (ln.price == null) ln.price = Number(pr.price);
       }
@@ -1002,7 +1023,10 @@ add('POST', '/api/products/:id/purchase', { admin: true }, async (ctx) => {
   const b = ctx.body;
   const qty = U.reqInt(b.qty, 'Cantidad', 1, 100000);
   // v2: se carga precio unitario y el costo total (que va a caja) se calcula solo.
-  const unitPrice = U.moneyPos(b.unitPrice, 'Precio unitario');
+  // El precio unitario es obligatorio solo si la compra se registra como egreso en caja.
+  const noPrice = b.unitPrice == null || b.unitPrice === '';
+  if (noPrice && b.cash) throw U.bad('Ingresá el precio unitario para registrar el egreso en caja (o destildá “Registrar como egreso en caja”).');
+  const unitPrice = noPrice ? 0 : U.moneyPos(b.unitPrice, 'Precio unitario');
   const cost = U.round2(unitPrice * qty);
   const date = U.pastDate(b.date, 'Fecha de compra');
   const toCash = !!b.cash && cost > 0;
@@ -1062,6 +1086,7 @@ add('POST', '/api/products/:id/sell', async (ctx) => {
       if (!pat.rows[0]) throw new HttpError(404, 'No se encontró el paciente');
       patientName = pat.rows[0].name;
     }
+    await assertNotVaccineDrug(c, id);
     const d = await deductStock(c, id, qty, 'Venta', today, ctx.user.id);
     const total = U.round2(d.price * qty);
     const label = (qty > 1 ? qty + ' × ' : '') + d.name;
@@ -1114,8 +1139,10 @@ function serviceInput(b) {
       return { productId, qty: U.reqInt(it.qty == null || it.qty === '' ? 1 : it.qty, 'Cantidad del producto', 1, 100000) };
     });
   }
+  // Una vacuna siempre tiene una droga del stock asignada: es lo que se descuenta al aplicarla.
+  if (category === 'Vacunas' && !b.productId) throw U.bad('Elegí la droga del stock que se descuenta al aplicar esta vacuna');
   return {
-    row: [U.reqStr(b.name, 'Servicio', 200), category, U.money(b.price, 'Precio'), category === 'Vacunas' && b.productId ? U.idParam(b.productId) : null, U.optSpecies(b.species, category)],
+    row: [U.reqStr(b.name, 'Servicio', 200), category, U.money(b.price, 'Precio'), category === 'Vacunas' ? U.idParam(b.productId) : null, U.optSpecies(b.species, category)],
     items,
   };
 }

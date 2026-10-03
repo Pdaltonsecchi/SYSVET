@@ -1,4 +1,4 @@
-# VETFLOW — guía para ponerlo en marcha
+# SYSVET (ex VETFLOW) — guía para ponerlo en marcha
 
 Este proyecto tiene todo lo necesario: la página web, el servidor con su API, la conexión a la base de datos, usuarios con contraseña y conexión segura (HTTPS). **No trae ningún dato de ejemplo**: arranca vacío para que cargues tus pacientes, productos y precios.
 
