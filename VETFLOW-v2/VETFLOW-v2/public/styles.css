@@ -1,4 +1,4 @@
-/* VETFLOW v2: paleta gris-azulada / índigo (antes era verde-azulado tipo "teal"). */
+/* SYSVET (ex VETFLOW) v2: paleta gris-azulada / índigo (antes era verde-azulado tipo "teal"). */
 :root{
   --bg:#F4F5FA; --panel:#FFFFFF; --ink:#1B1E2B; --muted:#656B85; --line:#DEE1EF;
   --brand:#4C4FE0; --brand-ink:#FFFFFF; --brand-soft:#E7E7FB; --side:#23214A;
@@ -338,3 +338,29 @@ dialog:has(.preview){width:min(900px,calc(100% - 1rem))}
 .meter i{display:block;height:100%;background:var(--brand)}
 .meter.hot i{background:var(--bad)}
 @media (max-width:820px){dialog{width:calc(100% - 1rem)}.flist li{grid-template-columns:minmax(0,1fr) auto}.flist li small{display:none}}
+
+/* Stock: menú de acciones ⋮ y columnas secundarias */
+.rowmenu{display:inline-block;position:relative}
+.rowmenu summary{list-style:none;cursor:pointer;padding:.2rem .55rem;border-radius:6px;font-weight:700;font-size:1.1rem;line-height:1;display:inline-block;color:var(--muted)}
+.rowmenu summary::-webkit-details-marker{display:none}
+.rowmenu summary:hover,.rowmenu[open] summary{background:var(--brand-soft);color:var(--ink)}
+.rowmenu .menu{position:fixed;z-index:40;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.25);padding:.3rem;display:flex;flex-direction:column;min-width:10.5rem}
+.rowmenu .menu .link{text-align:left;padding:.45rem .7rem;white-space:nowrap}
+.rowmenu .menu .link:hover{background:var(--brand-soft);text-decoration:none}
+.link:disabled{color:var(--muted);cursor:not-allowed;text-decoration:none;opacity:.7}
+@media (max-width:1100px){.col2{display:none}}
+
+/* Caja: acciones separadas y filtros en un panel colapsable */
+.cashactions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin:1rem 0 .8rem}
+.cashactions .grow{flex:1}
+.filterpanel{border:1px solid var(--line);border-radius:10px;background:var(--panel);margin-bottom:1rem}
+.filterpanel summary{cursor:pointer;padding:.6rem .9rem;font-weight:600;list-style:none;display:flex;align-items:center;gap:.5rem}
+.filterpanel summary::-webkit-details-marker{display:none}
+.filterpanel summary::before{content:"▸";color:var(--muted);transition:transform .15s}
+.filterpanel[open] summary::before{transform:rotate(90deg)}
+.badge{display:inline-grid;place-items:center;min-width:1.4rem;height:1.4rem;padding:0 .35rem;border-radius:99px;background:var(--brand);color:var(--brand-ink);font-size:.8rem}
+.fbody{padding:.2rem .9rem .9rem;display:flex;flex-direction:column;gap:.7rem;border-top:1px solid var(--line)}
+.frow{display:flex;flex-wrap:wrap;gap:.5rem .8rem;align-items:center;padding-top:.6rem}
+.flabel{min-width:6.5rem;font-size:.85rem;color:var(--muted)}
+.frow input[type=search]{max-width:26rem}
+.durhint{display:block;margin-top:.15rem}
