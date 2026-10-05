@@ -20,19 +20,7 @@ Todos los mensajes (entrantes y salientes) se guardan en `chat_logs`.
 
 ## Puesta en marcha
 
-1. **Datos del consultorio.** El bot no inventa nada: lo que no esté cargado, no lo informa; y **sin horarios no ofrece turnos**. Como administrador (sesión iniciada), `PUT /api/whatsapp/settings` con:
-   ```json
-   {
-     "address": "Calle Principal 123, Buenos Aires",
-     "phone": "+54 11 1234-5678",
-     "vet": "Dra. Pérez",
-     "hours": { "0": [], "1": [["09:00","19:00"]], "2": [["09:00","19:00"]], "3": [["09:00","19:00"]],
-                "4": [["09:00","19:00"]], "5": [["09:00","19:00"]], "6": [["10:00","14:00"]] },
-     "payments": ["Efectivo", "Transferencia", "Tarjeta de débito", "Tarjeta de crédito"],
-     "services": []
-   }
-   ```
-   (`hours`: 0 = domingo … 6 = sábado; lista vacía = cerrado; se admiten varias franjas por día. `services` vacío = usa la lista de precios del sistema.) `GET /api/whatsapp/status` dice qué falta configurar.
+1. **Datos del consultorio.** Ya vienen cargados de fábrica (nombre, dirección, teléfono, horarios y enlace de Google Maps, que el bot también usa para "cómo llegar" y reseñas): se guardan en la tabla `clinic_settings` la primera vez que arranca el servidor y no se pisan después. El bot no inventa nada: lo que no esté cargado, no lo informa; y sin horarios no ofrece turnos. Para cambiarlos más adelante, como administrador, `PUT /api/whatsapp/settings` (campos: `name`, `address`, `phone`, `vet`, `mapsUrl`, `hours`, `payments`, `services`). `hours`: 0 = domingo … 6 = sábado; lista vacía = cerrado; admite varias franjas por día, ej. `"1": [["10:00","13:00"],["17:00","19:00"]]`. `GET /api/whatsapp/status` dice qué falta configurar. El nombre del veterinario todavía no está cargado (el bot lo omite hasta que se agregue).
 2. **Meta.** Creá la app de WhatsApp Business en developers.facebook.com y obtené el *Phone number ID* y un *token permanente* (usuario del sistema).
 3. **Variables de entorno** (en Render):
 
@@ -88,3 +76,23 @@ TEST_DATABASE_URL=postgres://... DATABASE_SSL=false npm test
 - No hay pantalla para editar los datos del consultorio: se cargan por la API (arriba).
 - El bot entiende texto por reglas y palabras clave (rápido, sin costo ni dependencias), no un modelo de lenguaje. Si dice "no te entendí" muestra el menú.
 - Imágenes, audios y ubicaciones se responden pidiendo texto.
+
+## Guía paso a paso (lo que tiene que hacer la veterinaria)
+
+1. **Conseguir el número de WhatsApp del bot.** Tiene que ser un número **que no esté usado en la app de WhatsApp o WhatsApp Business del celular** (si lo está, hay que borrar esa cuenta antes de registrarlo en la API). Lo más simple: un chip nuevo solo para esto. También se puede usar el fijo de la clínica, porque Meta permite verificar por llamada de voz, pero ese número dejaría de poder usarse en WhatsApp común.
+2. **Crear la cuenta de Meta Business** en business.facebook.com con el nombre de la clínica. Conviene hacer la **verificación del negocio** (pide datos y documentación fiscal): sin ella los límites de envío son bajos.
+3. **Crear la app** en developers.facebook.com → *Crear app* → tipo *Empresa* → agregar el producto **WhatsApp**.
+4. **Registrar el número** en *WhatsApp → Configuración de la API* → *Agregar número de teléfono*: nombre visible (ej. "Cats & Dogs Dr Dalton"), y verificarlo con el código que llega por SMS o llamada.
+5. **Cargar un método de pago** en la cuenta de WhatsApp Business (Meta cobra los mensajes que inicia el negocio, o sea los recordatorios; las respuestas dentro de las 24 h siguientes a un mensaje del cliente tienen otra tarifa. Revisar las tarifas vigentes en Meta).
+6. **Obtener las credenciales:**
+   - *Phone number ID*: en *Configuración de la API* → `WHATSAPP_PHONE_ID`.
+   - *App Secret*: *Configuración de la app → Básica* → `WHATSAPP_APP_SECRET`.
+   - *Token permanente*: Business Settings → *Usuarios del sistema* → crear uno (admin) → asignarle la app y la cuenta de WhatsApp → *Generar token* con los permisos `whatsapp_business_messaging` y `whatsapp_business_management` → `WHATSAPP_ACCESS_TOKEN`. (El token temporal de 24 h sirve solo para probar.)
+   - Inventar un texto cualquiera para `WHATSAPP_VERIFY_TOKEN`.
+7. **Cargar las variables en Render** (más `WHATSAPP_LOG_KEY` con un texto largo al azar) y esperar a que se reinicie el servicio. Las tablas nuevas y los datos del consultorio se crean solos.
+8. **Conectar el webhook** en Meta → *WhatsApp → Configuración* → *Webhook*: URL `https://TU-DOMINIO/webhook/whatsapp`, token de verificación = `WHATSAPP_VERIFY_TOKEN`, y suscribirse al campo **messages**.
+9. **Crear y aprobar las 4 plantillas** de los recordatorios (sección anterior) en *WhatsApp Manager → Plantillas de mensajes*, categoría *Utilidad*. La aprobación tarda desde minutos hasta un par de días. Cuando estén, poner sus nombres en las variables `WHATSAPP_TPL_*`.
+10. **Que el servicio no se duerma.** El plan gratuito de Render se suspende tras unos minutos sin tráfico: el bot tardaría en contestar y **los recordatorios no saldrían** mientras esté dormido. Para uso real, usar un plan pago de Render (o un servicio externo que visite `/healthz` cada 5 minutos).
+11. **Cargar bien los teléfonos de los clientes** (con código de área, 10 dígitos), porque así el bot los reconoce y les manda los recordatorios.
+12. **Probar** con tu celular antes de avisar a los clientes: sacar un turno, reprogramar, cancelar, preguntar la dirección. Mientras la app de Meta está en modo desarrollo, solo reciben mensajes los números agregados como testers; para atender a cualquier cliente hay que pasar la app a modo *Live*.
+13. **Completar el perfil de WhatsApp Business** (foto, descripción, dirección, horarios) y recién ahí **difundir el número** (cartel en el local, redes, Google Maps).

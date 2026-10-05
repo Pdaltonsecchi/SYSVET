@@ -134,7 +134,8 @@ const M = {
       c.address ? '📍 Nos encontramos en ' + c.address + '.' : '',
       c.vet ? '👩‍⚕️ Veterinario/a: ' + c.vet : '',
       hoursLines(c.hours).length ? '🕘 Horarios:\n' + hoursLines(c.hours).map((l) => '   ' + l).join('\n') : '',
-      phoneLine(c)
+      phoneLine(c),
+      c.mapsUrl ? '🗺️ Cómo llegar y reseñas: ' + c.mapsUrl : ''
     );
     const pay = '💳 Medios de pago:\n' + c.payments.map((p) => '   • ' + p).join('\n');
     const srv = services.length ? '🩺 Servicios:\n' + services.map((p) => '   • ' + p).join('\n') : '';

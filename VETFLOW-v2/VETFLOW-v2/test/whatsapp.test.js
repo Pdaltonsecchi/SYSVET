@@ -48,7 +48,7 @@ test('chatbot de punta a punta', { skip: !URL && 'falta TEST_DATABASE_URL' }, as
   await db.query('TRUNCATE chat_logs, chat_sessions, whatsapp_reminders, appointments, vaccines, patients, clients, clinic_settings, services RESTART IDENTITY CASCADE');
   const open = [['09:00', '19:00']];
   await clinic.saveClinic({
-    address: 'Calle Principal 123, Buenos Aires', phone: '+54 11 4000-0000', vet: 'Dra. Pérez',
+    address: 'Calle Principal 123, Buenos Aires', mapsUrl: 'https://maps.example/x', phone: '+54 11 4000-0000', vet: 'Dra. Pérez',
     hours: { 0: [], 1: open, 2: open, 3: open, 4: open, 5: open, 6: [['10:00', '14:00']] },
   });
   await db.query("INSERT INTO services (name, category, price) VALUES ('Consulta general','Consultas',1000),('Vacuna Séxtuple','Vacunas',500)");
@@ -82,6 +82,7 @@ test('chatbot de punta a punta', { skip: !URL && 'falta TEST_DATABASE_URL' }, as
     assert.match(r, /Sábado: 10:00-14:00/);
     assert.match(r, /Domingo: Cerrado/);
     assert.match(r, /4000-0000/);
+    assert.match(r, /maps.example/);
     assert.match(await say(JUAN, 'aceptan tarjeta?'), /Tarjeta de crédito/);
     assert.match(await say(JUAN, 'que servicios tienen'), /Vacuna Séxtuple/);
   });

@@ -449,3 +449,6 @@ CREATE INDEX IF NOT EXISTS wa_reminders_due_idx ON whatsapp_reminders(scheduled_
 -- Turnos: cuándo confirmó el cliente por WhatsApp (NULL = sin confirmar) y quién lo cargó.
 ALTER TABLE appointments ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ;
 ALTER TABLE appointments ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'staff';
+
+-- Datos iniciales del consultorio para el chatbot. Solo se cargan si todavía no hay datos guardados (no pisan cambios posteriores).
+INSERT INTO clinic_settings (key, value) VALUES ('clinic', $json${"name": "Clínica Veterinaria Cats & Dogs Dr Dalton", "address": "Av. Lope de Vega 2216, B1675AOD Villa Raffo, Provincia de Buenos Aires", "phone": "011 4712-3333", "vet": "", "mapsUrl": "https://www.google.com/maps/place/Cl%C3%ADnica+Veterinaria+Cats%26+Dogs+Dr+Dalton/@-34.6105922,-58.5300796,90m/data=!3m1!1e3!4m6!3m5!1s0x95bcb7dd3a1d551f:0x20d3dd435a494e2a!8m2!3d-34.6107166!4d-58.5297668!16s%2Fg%2F11wg883by1?authuser=0&entry=ttu&g_ep=EgoyMDI2MDkzMC4wIKXMDSoASAFQAw%3D%3D", "hours": {"0": [], "1": [["10:00", "13:00"], ["17:00", "19:00"]], "2": [["10:00", "13:00"], ["17:00", "19:00"]], "3": [["10:00", "13:00"], ["17:00", "19:00"]], "4": [["10:00", "13:00"], ["17:00", "19:00"]], "5": [["10:00", "13:00"], ["17:00", "19:00"]], "6": [["10:00", "13:00"]]}, "payments": [], "services": []}$json$::jsonb) ON CONFLICT (key) DO NOTHING;

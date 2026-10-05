@@ -15,6 +15,7 @@ async function getClinic() {
     address: s.address || process.env.CLINIC_ADDRESS || '',
     phone: s.phone || process.env.CLINIC_PHONE || '',
     vet: s.vet || process.env.CLINIC_VET || '',
+    mapsUrl: s.mapsUrl || '', // enlace de Google Maps (cómo llegar y reseñas)
     hours: s.hours || null, // { "0": [["10:00","14:00"]], "1": [["09:00","19:00"]], ... } (0 = domingo); día ausente o [] = cerrado
     payments: Array.isArray(s.payments) && s.payments.length ? s.payments : U.METHODS,
     services: Array.isArray(s.services) && s.services.length ? s.services : null, // null = lista de precios del sistema
@@ -45,6 +46,7 @@ async function saveClinic(b) {
     address: U.optStr(b.address, 200),
     phone: U.optStr(b.phone, 50),
     vet: U.optStr(b.vet, 100),
+    mapsUrl: U.optStr(b.mapsUrl, 1000),
     hours: cleanHours(b.hours),
     payments: Array.isArray(b.payments) ? b.payments.map((x) => U.reqStr(x, 'Medio de pago', 60)).slice(0, 12) : [],
     services: Array.isArray(b.services) ? b.services.map((x) => U.reqStr(x, 'Servicio', 80)).slice(0, 40) : [],
