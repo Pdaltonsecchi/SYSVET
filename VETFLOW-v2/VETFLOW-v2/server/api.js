@@ -1802,4 +1802,12 @@ add('DELETE', '/api/appointments/:id', async (ctx) => {
   await db.query('DELETE FROM appointments WHERE id = $1', [U.idParam(ctx.params.id)]);
 });
 
+/* ============================================================
+   Chatbot de WhatsApp: configuración (solo administrador)
+   Los datos del consultorio que el bot informa y el estado de la conexión con WhatsApp.
+   ============================================================ */
+add('GET', '/api/whatsapp/status', { admin: true }, async () => require('./whatsapp').status());
+add('GET', '/api/whatsapp/settings', { admin: true }, async () => require('./whatsapp/clinic').getClinic());
+add('PUT', '/api/whatsapp/settings', { admin: true }, async (ctx) => require('./whatsapp/clinic').saveClinic(ctx.body));
+
 module.exports = { dispatch };

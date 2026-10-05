@@ -390,3 +390,62 @@ SELECT ensure_clients();
 -- si se carga, no puede repetirse entre productos.
 ALTER TABLE products ADD COLUMN IF NOT EXISTS barcode TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS products_barcode_idx ON products(barcode) WHERE barcode IS NOT NULL;
+
+-- ============================================================
+-- Nueva etapa: chatbot de WhatsApp
+-- ============================================================
+-- Datos del consultorio que el bot informa (dirección, teléfono, veterinario, horarios, etc.). Clave/valor en JSON.
+CREATE TABLE IF NOT EXISTS clinic_settings (
+  key TEXT PRIMARY KEY,
+  value JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Estado de cada conversación (una por número de WhatsApp). client_id es NULL mientras el número no sea de un cliente.
+CREATE TABLE IF NOT EXISTS chat_sessions (
+  id SERIAL PRIMARY KEY,
+  phone TEXT NOT NULL UNIQUE,
+  client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  state TEXT NOT NULL DEFAULT 'idle',
+  context JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_interaction TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Registro de todos los mensajes. wa_message_id evita procesar dos veces un mensaje que Meta reenvía.
+-- "body" va cifrado (AES-256-GCM) si el servidor tiene WHATSAPP_LOG_KEY.
+CREATE TABLE IF NOT EXISTS chat_logs (
+  id SERIAL PRIMARY KEY,
+  session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
+  client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  phone TEXT NOT NULL,
+  direction TEXT NOT NULL CHECK (direction IN ('incoming', 'outgoing')),
+  msg_type TEXT NOT NULL DEFAULT 'text',
+  body TEXT NOT NULL DEFAULT '',
+  wa_message_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS chat_logs_wamid_idx ON chat_logs(wa_message_id) WHERE wa_message_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS chat_logs_phone_idx ON chat_logs(phone, created_at);
+
+-- Recordatorios automáticos. dedupe_key impide enviar dos veces el mismo aviso (ej. 'vb:15' = vacuna 15, 7 días antes).
+CREATE TABLE IF NOT EXISTS whatsapp_reminders (
+  id SERIAL PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('vaccine_before', 'vaccine_after', 'appt_24h', 'appt_2h')),
+  client_id INTEGER REFERENCES clients(id) ON DELETE CASCADE,
+  patient_id INTEGER REFERENCES patients(id) ON DELETE CASCADE,
+  appointment_id INTEGER REFERENCES appointments(id) ON DELETE CASCADE,
+  vaccine_id INTEGER REFERENCES vaccines(id) ON DELETE CASCADE,
+  dedupe_key TEXT NOT NULL UNIQUE,
+  scheduled_for TIMESTAMPTZ NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed', 'cancelled')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT NOT NULL DEFAULT '',
+  sent_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS wa_reminders_due_idx ON whatsapp_reminders(scheduled_for) WHERE status = 'pending';
+
+-- Turnos: cuándo confirmó el cliente por WhatsApp (NULL = sin confirmar) y quién lo cargó.
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ;
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'staff';

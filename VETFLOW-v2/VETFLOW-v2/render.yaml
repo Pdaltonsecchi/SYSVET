@@ -28,3 +28,14 @@ services:
         value: estudios
       - key: CLINIC_NAME
         sync: false
+      # Chatbot de WhatsApp (ver WHATSAPP.md). Opcionales: sin ellas el bot queda apagado.
+      - key: WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_ID
+        sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
+      - key: WHATSAPP_APP_SECRET
+        sync: false
+      - key: WHATSAPP_LOG_KEY
+        sync: false

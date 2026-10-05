@@ -1,0 +1,90 @@
+# Chatbot de WhatsApp
+
+El bot vive **dentro del mismo servidor** del sistema (`server/whatsapp/`): no hay un servicio aparte. Lee y escribe directamente en las mismas tablas (`clients`, `patients`, `vaccines`, `diagnoses`, `medications`, `weights`, `appointments`), así que lo que se agenda por WhatsApp aparece al instante en el calendario, y viceversa. Funciona solo por WhatsApp (Cloud API de Meta).
+
+> Decisión de diseño: el pedido original proponía Express + MySQL y una API REST aparte (`/api/turnos/...`). El sistema real usa Node sin Express y Postgres, y el bot necesita exactamente los mismos datos, así que se integró como módulo en vez de duplicar tablas y endpoints. No hay dependencias nuevas (usa `fetch` de Node 18+).
+
+## Qué hace
+
+| Función | Cómo |
+|---|---|
+| Sacar turno (consulta o vacuna) | Ofrece los próximos horarios libres (según horario de atención, duración del turno y agenda). Cliente nuevo: pide mascota, especie, sexo, nombre y dirección (opcional) y **recién al confirmar** crea cliente + mascota + turno. Devuelve el número de turno (`#id`). |
+| Reprogramar / cancelar | Solo sobre turnos de mascotas del cliente dueño de ese número. Reprogramar conserva el número de turno. Cancelar pide motivo (opcional) y borra el turno. |
+| Confirmación | Aviso 24 h antes pidiendo confirmación; si no confirmó, segundo aviso 2 h antes. Un turno sacado con menos de 24 h de anticipación no recibe el de 24 h. |
+| Vacunas | Aviso 7 días antes (o menos, si la fecha se cargó tarde) y otro después de vencida (hasta 30 días). No avisa si la vacuna ya se renovó o si ya hay turno de vacuna agendado. Solo entre las 9 y las 20 h. |
+| Información del consultorio | Dirección, teléfono, veterinario, horarios, medios de pago y servicios. |
+| Consultas médicas | Detecta síntomas, no diagnostica: deriva al teléfono del veterinario y ofrece turno de consulta. Si detecta una urgencia, lo dice primero. |
+| Historial de la mascota | Última vacuna y próximo vencimiento, consultas, medicación y peso. Solo para el dueño (se identifica por el teléfono). |
+
+Todos los mensajes (entrantes y salientes) se guardan en `chat_logs`.
+
+## Puesta en marcha
+
+1. **Datos del consultorio.** El bot no inventa nada: lo que no esté cargado, no lo informa; y **sin horarios no ofrece turnos**. Como administrador (sesión iniciada), `PUT /api/whatsapp/settings` con:
+   ```json
+   {
+     "address": "Calle Principal 123, Buenos Aires",
+     "phone": "+54 11 1234-5678",
+     "vet": "Dra. Pérez",
+     "hours": { "0": [], "1": [["09:00","19:00"]], "2": [["09:00","19:00"]], "3": [["09:00","19:00"]],
+                "4": [["09:00","19:00"]], "5": [["09:00","19:00"]], "6": [["10:00","14:00"]] },
+     "payments": ["Efectivo", "Transferencia", "Tarjeta de débito", "Tarjeta de crédito"],
+     "services": []
+   }
+   ```
+   (`hours`: 0 = domingo … 6 = sábado; lista vacía = cerrado; se admiten varias franjas por día. `services` vacío = usa la lista de precios del sistema.) `GET /api/whatsapp/status` dice qué falta configurar.
+2. **Meta.** Creá la app de WhatsApp Business en developers.facebook.com y obtené el *Phone number ID* y un *token permanente* (usuario del sistema).
+3. **Variables de entorno** (en Render):
+
+   | Variable | Para qué |
+   |---|---|
+   | `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_ID` | Enviar mensajes |
+   | `WHATSAPP_VERIFY_TOKEN` | Texto que vos elegís; se usa al configurar el webhook |
+   | `WHATSAPP_APP_SECRET` | Firma de Meta. **Obligatoria en producción**: sin ella se rechazan todos los avisos |
+   | `WHATSAPP_LOG_KEY` | (Recomendada) cifra con AES-256-GCM el texto guardado en `chat_logs` |
+   | `WHATSAPP_RATE_LIMIT` | Mensajes por minuto por número (20 por defecto) |
+   | `WHATSAPP_REMINDERS=false` | Apaga los recordatorios automáticos |
+   | `WHATSAPP_TPL_*`, `WHATSAPP_TEMPLATE_LANG` | Plantillas (ver abajo) |
+
+4. **Webhook en Meta:** URL `https://TU-DOMINIO/webhook/whatsapp`, token de verificación = `WHATSAPP_VERIFY_TOKEN`, y suscribite al campo **messages**.
+5. Escribile al número desde un celular para probar.
+
+## Importante: plantillas para los recordatorios
+
+WhatsApp solo permite mensajes de texto libres dentro de las **24 h posteriores al último mensaje del cliente**. Los recordatorios los inicia el consultorio, así que **en producción necesitan plantillas aprobadas por Meta** (categoría *Utility*). Si no configurás plantilla, el bot intenta enviar texto simple, que Meta rechaza fuera de esa ventana (el aviso se reintenta 3 veces y queda en `failed`).
+
+Creá una plantilla por tipo (idioma `es_AR`, o el de `WHATSAPP_TEMPLATE_LANG`) y poné su nombre en la variable:
+
+| Variable | Parámetros del cuerpo |
+|---|---|
+| `WHATSAPP_TPL_VACCINE_BEFORE` | `{{1}}` cliente, `{{2}}` mascota, `{{3}}` fecha de vencimiento |
+| `WHATSAPP_TPL_VACCINE_AFTER` | `{{1}}` cliente, `{{2}}` mascota, `{{3}}` fecha de vencimiento |
+| `WHATSAPP_TPL_APPT_24H` | `{{1}}` cliente, `{{2}}` mascota, `{{3}}` fecha, `{{4}}` hora |
+| `WHATSAPP_TPL_APPT_2H` | `{{1}}` cliente, `{{2}}` mascota, `{{3}}` fecha, `{{4}}` hora |
+
+Cuando el cliente responde, se abre la ventana de 24 h y el bot continúa la conversación con texto normal.
+
+## Cómo reconoce al cliente
+
+Por el teléfono: se compara el número de WhatsApp con `clients.phone` aceptando las variantes argentinas (`+54 9 11…`, `011 15…`, con guiones, etc.). Para que el bot reconozca a un cliente y le mande recordatorios, su teléfono tiene que estar cargado con **código de área** (10 dígitos). Un número de otro país o sin área no se puede asociar.
+
+## Seguridad
+
+- Cada aviso de Meta se valida con `X-Hub-Signature-256` (HMAC-SHA256, comparación en tiempo constante).
+- Límite de mensajes por número; mensajes duplicados de Meta se descartan (`chat_logs.wa_message_id` único).
+- Un cliente solo ve y modifica turnos y datos de **sus** mascotas.
+- Los dos turnos simultáneos al mismo horario se resuelven con un candado en la base: gana uno, al otro se le ofrecen otros horarios.
+- Credenciales solo por variables de entorno. HTTPS lo fuerza el servidor en producción.
+
+## Pruebas
+
+```
+TEST_DATABASE_URL=postgres://... DATABASE_SSL=false npm test
+```
+**Usá una base de pruebas: el test vacía las tablas.** Sin `TEST_DATABASE_URL` corren solo las pruebas de interpretación de texto.
+
+## Pendiente / fuera de alcance
+
+- No hay pantalla para editar los datos del consultorio: se cargan por la API (arriba).
+- El bot entiende texto por reglas y palabras clave (rápido, sin costo ni dependencias), no un modelo de lenguaje. Si dice "no te entendí" muestra el menú.
+- Imágenes, audios y ubicaciones se responden pidiendo texto.

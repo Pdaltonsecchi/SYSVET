@@ -36,6 +36,7 @@ const db = require('./db');
 const auth = require('./auth');
 const api = require('./api');
 const backup = require('./backup');
+const whatsapp = require('./whatsapp');
 const U = require('./util');
 
 // Las miniaturas y la vista previa de los adjuntos se cargan desde Supabase Storage (URLs firmadas):
@@ -120,6 +121,15 @@ const server = http.createServer(async (req, res) => {
 
   securityHeaders(res);
 
+  // Avisos de WhatsApp (Meta): se valida con firma, no con sesión de usuario.
+  if (url.pathname === '/webhook/whatsapp') {
+    return whatsapp.handleWebhook(req, res, url).catch((e) => {
+      console.error('Webhook de WhatsApp:', e.message);
+      if (!res.headersSent) res.writeHead(500);
+      res.end();
+    });
+  }
+
   if (!url.pathname.startsWith('/api/')) return serveStatic(req, res, url);
 
   try {
@@ -137,6 +147,7 @@ async function main() {
   await db.migrate();
   await auth.ensureAdmin();
   require('./storage').ensureBucket();
+  whatsapp.start();
   backup.ensureDaily().catch((e) => console.error('Copia diaria:', e.message));
   setInterval(() => backup.ensureDaily().catch((e) => console.error('Copia diaria:', e.message)), 60 * 60 * 1000).unref();
   server.listen(PORT, '0.0.0.0', () => {
