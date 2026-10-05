@@ -373,3 +373,14 @@ dialog:has(.preview){width:min(900px,calc(100% - 1rem))}
 
 .hc{font-variant-numeric:tabular-nums;font-weight:600;color:var(--sage-text)}
 .hcbadge{display:inline-block;vertical-align:middle;margin-left:.5rem;padding:.1rem .6rem;border-radius:99px;background:var(--brand-soft);color:var(--sage-text);font:600 .8rem var(--f-body);letter-spacing:.02em}
+
+/* Clientes */
+.mut{color:var(--muted)}
+.ownerlink{padding:0;font-size:inherit;text-decoration:underline}
+.newcli{margin-top:.8rem;padding:.8rem;border:1px dashed var(--brand);border-radius:10px;background:var(--brand-soft)}
+.petlist{display:flex;flex-direction:column;gap:.4rem}
+.petrow{display:flex;align-items:center;gap:.7rem;text-align:left;width:100%;padding:.55rem .7rem;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.petrow:hover{border-color:var(--brand);background:var(--brand-soft)}
+.petrow .chev{margin-left:auto;color:var(--muted);font-size:1.3rem}
+.meta a{color:var(--brand-text)}
+.tbl.slim{min-width:480px}
