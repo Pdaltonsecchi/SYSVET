@@ -592,7 +592,8 @@ function stockHTML(){
     var sellBtn=vac?'<button class="link" disabled title="Droga de la vacuna “'+esc(vac.name)+'”: se descuenta al aplicarla, no se vende suelta">Vender</button>':'<button class="link" data-action="sell" data-id="'+x.id+'">Vender</button>';
     var acts=sellBtn+(admin?'<details class="rowmenu"><summary aria-label="Más acciones de '+esc(x.name)+'" title="Más acciones">⋮</summary><div class="menu">'+
       '<button class="link" data-action="stock-adjust" data-id="'+x.id+'">Ajustar stock</button><button class="link" data-action="stock-history" data-id="'+x.id+'">Historial</button><button class="link" data-action="edit-product" data-id="'+x.id+'">Editar</button><button class="link bad" data-action="del-product" data-id="'+x.id+'">Eliminar</button></div></details>':'');
-    var vacNote=vac?'<br><small>Droga de la vacuna “'+esc(vac.name)+'”</small>':'';
+    // Etiqueta siempre visible (sin pasar el mouse): esta droga se descuenta al aplicar la vacuna y no se vende suelta.
+    var vacNote=vac?'<br><span class="chip info drugtag" title="Se descuenta al aplicar la vacuna “'+esc(vac.name)+'”; no se vende suelta">🔒 Droga de vacuna</span>':'';
     var units=Math.max(x.stock,0),val=x.cost!=null?units*x.cost:null;
     if(admin){totCost+=val||0;totSale+=units*x.price;}
     var margin=x.cost!=null&&x.price>0?Math.round((x.price-x.cost)/x.price*1000)/10:null;
@@ -1724,6 +1725,7 @@ function restoreConfirm(label,copyCounts,curCounts,doRestore){
     onSubmit:function(){return doRestore(empty);}});
 }
 async function restoreFileForm(data,label){
+  toast('Revisando la copia…');
   var cur=(await api('/backups/current')).counts;
   var cc={};Object.keys(data).forEach(function(k){if(Array.isArray(data[k]))cc[k]=data[k].length;});
   restoreConfirm(label,cc,cur,async function(empty){
@@ -1903,12 +1905,19 @@ var actions={
   'backup-download':function(){return downloadExport();},
   'backup-now':async function(){await api('/backups',{body:{}});await reload();toast('Copia creada');},
   'pick-file':function(){var f=$('#bfile');if(f)f.click();},
-  restore:async function(id){
+  restore:async function(id,btn){
     var b=(ui.backups||[]).find(function(x){return String(x.id)===String(id);});if(!b)return;
-    var cur=(await api('/backups/current')).counts;
-    restoreConfirm('“'+b.label+'” del '+fmtTs(b.createdAt),b.counts||{},cur,async function(empty){
-      await api('/backups/'+id+'/restore',{body:{confirmEmpty:empty}});ui.sel=null;ui.detail=null;await reload();toast('Copia restaurada');
-    });
+    // Antes de mostrar la confirmación hay que pedir al servidor cuántos datos hay hoy (puede tardar unos segundos):
+    // el botón queda deshabilitado con "Cargando…" hasta que el diálogo esté en pantalla, así no hay ventana sin respuesta.
+    var label=btn.textContent;btn.disabled=true;btn.classList.add('busy');btn.textContent='Cargando…';
+    try{
+      var cur=(await api('/backups/current')).counts;
+      restoreConfirm('“'+b.label+'” del '+fmtTs(b.createdAt),b.counts||{},cur,async function(empty){
+        await api('/backups/'+id+'/restore',{body:{confirmEmpty:empty}});ui.sel=null;ui.detail=null;await reload();toast('Copia restaurada');
+      });
+    }finally{
+      btn.disabled=false;btn.classList.remove('busy');btn.textContent=label;
+    }
   },
   'del-backup':function(id){
     confirmForm('Eliminar copia','Se borra esta copia guardada en el sistema.','Eliminar',async function(){
@@ -2055,5 +2064,31 @@ $('#boot-retry').addEventListener('click',function(){
   $('#boot-sub').textContent='La primera vez del día puede tardar hasta un minuto.';
   boot();
 });
+/* ============================================================
+   Sesión compartida entre pestañas
+   La sesión es una cookie: si en otra pestaña se inicia sesión con otro usuario, ésta seguiría mostrando la interfaz del
+   anterior. Al volver a la pestaña se vuelve a preguntar quién es el usuario y, si cambió, se avisa de forma clara.
+   ============================================================ */
+var sessionCheckedAt=0;
+function showStaleSession(u){
+  document.body.dataset.stale='1';
+  if(dlg.open)dlg.close();
+  var bar=document.createElement('div');bar.id='sessbar';bar.setAttribute('role','alert');
+  bar.innerHTML='<span><b>Tu sesión cambió en otra pestaña</b>'+(u&&u.name?' (ahora figura '+esc(u.name)+(u.role==='admin'?', Administrador':', Ayudante')+')':'')+'. Recargá la página para continuar.</span>'+
+    '<button type="button" class="btn primary">Recargar</button>';
+  bar.querySelector('button').addEventListener('click',function(){location.reload();});
+  document.body.appendChild(bar);
+}
+async function checkSession(){
+  if(!S.user||document.body.dataset.stale||document.body.dataset.state!=='app')return;
+  var now=Date.now();if(now-sessionCheckedAt<2000)return;sessionCheckedAt=now;
+  try{
+    var r=await api('/me'); // si la sesión venció o se cerró en otra pestaña, api() ya muestra el ingreso
+    var u=r&&r.user;
+    if(u&&S.user&&(u.id!==S.user.id||u.role!==S.user.role))showStaleSession(u);
+  }catch(e){/* sin conexión: no se molesta al usuario */}
+}
+document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')checkSession();});
+window.addEventListener('focus',checkSession);
 boot();
 })();
