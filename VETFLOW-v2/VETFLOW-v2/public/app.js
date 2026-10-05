@@ -582,7 +582,7 @@ function viewFarmacia(){
 function stockHTML(){
   var admin=isAdmin();
   var sq=norm(ui.stq).trim();
-  var L=S.products.filter(function(x){return (ui.cat==='all'||x.category===ui.cat)&&(!sq||norm(x.name+' '+x.category).indexOf(sq)>=0);});
+  var L=S.products.filter(function(x){return (ui.cat==='all'||x.category===ui.cat)&&(!sq||norm(x.name+' '+x.category+' '+(x.barcode||'')).indexOf(sq)>=0);});
   var totCost=0,totSale=0;
   var rows=L.map(function(x){
     var chip=x.stock<=0?'<span class="chip bad">Sin stock</span>':lowStock(x)?'<span class="chip warn">Poco stock</span>':'';
@@ -598,14 +598,16 @@ function stockHTML(){
     var margin=x.cost!=null&&x.price>0?Math.round((x.price-x.cost)/x.price*1000)/10:null;
     var mCell=margin==null?'—':'<span class="'+(x.price<x.cost?'negtxt':'')+'"'+(x.price<x.cost?' title="El precio de venta es menor que el costo"':'')+'>'+(x.price<x.cost?'⚠ ':'')+String(margin).replace('.',',')+'%</span>';
     var costCells=admin?'<td class="num col2">'+(x.cost!=null?money(x.cost):'—')+'</td><td class="num col2">'+mCell+'</td><td class="num col2">'+(val!=null?money(val):'—')+'</td>':'';
-    return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small>'+vacNote+'</td><td>'+stockCell+'</td><td class="num">'+x.min+'</td><td>'+chip+'</td><td class="num">'+money(x.price)+'</td>'+costCells+'<td class="act">'+acts+'</td></tr>';
+    return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small>'+(x.barcode?'<br><small class="bc" title="Código de barras">▮ '+esc(x.barcode)+'</small>':'')+vacNote+'</td><td>'+stockCell+'</td><td class="num">'+x.min+'</td><td>'+chip+'</td><td class="num">'+money(x.price)+'</td>'+costCells+'<td class="act">'+acts+'</td></tr>';
   }).join('');
   var cols=admin?9:6;
   var empty=S.products.length?'No hay productos en esta categoría.':'Todavía no cargaste productos. '+(admin?'Empezá con “Nuevo producto”.':'Pedile al administrador que los cargue.');
   var foot=admin&&L.length?'<tfoot><tr><td colspan="'+cols+'"><b>Stock valorizado:</b> '+money(totCost)+' a costo / '+money(totSale)+' a precio de venta</td></tr></tfoot>':'';
   return '<div class="toolbar">'+segHTML('cat',[['all','Todos']].concat(PROD_CATS.map(function(c){return [c,c];})),ui.cat)+
+    '<span class="scanbtns"><button class="btn" data-action="scan-sell" title="Leer el código de barras de un producto para venderlo">📷 Vender con escáner</button>'+
+      (admin?'<button class="btn" data-action="scan-stock" title="Leer el código de barras para ingresar stock o cargar un producto nuevo">📷 Ingresar con escáner</button>':'')+'</span>'+
     (admin?'<button class="btn primary" data-action="new-product">Nuevo producto</button>':'')+'</div>'+
-    '<input id="stq" type="search" placeholder="Buscar producto" value="'+esc(ui.stq)+'" aria-label="Buscar producto" style="margin-bottom:1rem">'+
+    '<input id="stq" type="search" placeholder="Buscar producto (o leer un código con un lector USB y Enter)" value="'+esc(ui.stq)+'" aria-label="Buscar producto" style="margin-bottom:1rem">'+
     '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Stock</th><th class="num">Mínimo</th><th>Estado</th><th class="num">Precio de venta</th>'+(admin?'<th class="num col2">Costo unit.</th><th class="num col2">Margen</th><th class="num col2">Valor en stock</th>':'')+'<th></th></tr></thead><tbody>'+
     (rows||'<tr><td colspan="'+cols+'" class="empty">'+empty+'</td></tr>')+'</tbody>'+foot+'</table></div>';
 }
@@ -1240,10 +1242,111 @@ function bindSpecies(f){
   var sync=function(){sp.hidden=cat.value!=='Vacunas';};
   cat.addEventListener('change',sync);sync();
 }
-function productForm(x){
-  var isNew=!x;x=x||{category:'Medicamentos',min:5,price:0};
+/* ============================================================
+   Lector de códigos de barras con la cámara (opcional)
+   Usa el detector nativo del navegador cuando existe (Chrome en Android) y, si no, la librería ZXing guardada en
+   /vendor (iPhone/Safari y otros). Siempre se puede escribir el código a mano, y un lector USB funciona como teclado.
+   ============================================================ */
+var zxingLoading=null;
+function loadZXing(){
+  if(window.ZXing)return Promise.resolve();
+  if(!zxingLoading)zxingLoading=new Promise(function(ok,fail){
+    var sc=document.createElement('script');sc.src='/vendor/zxing-library.min.js';
+    sc.onload=ok;sc.onerror=function(){zxingLoading=null;fail(new Error('No se pudo cargar el lector de códigos.'));};
+    document.head.appendChild(sc);
+  });
+  return zxingLoading;
+}
+// Devuelve una promesa con el código leído (o escrito a mano), o null si se cancela.
+function openScanner(title){
+  return new Promise(function(resolve){
+    var d=document.createElement('dialog');d.className='scan';
+    d.innerHTML='<form class="dform"><h2>'+esc(title||'Escanear código de barras')+'</h2>'+
+      '<div class="scanbox"><video playsinline muted autoplay></video><div class="scanline" aria-hidden="true"></div></div>'+
+      '<p class="scanmsg" role="status">Abriendo la cámara…</p>'+
+      '<div class="scanmanual"><label class="fld"><span>¿No lo lee? Escribí el código</span><input type="text" inputmode="numeric" autocomplete="off" id="scanman" placeholder="Ej.: 7791234567890"></label><button type="button" class="btn primary" id="scanuse">Usar</button></div>'+
+      '<div class="actions"><button type="button" class="btn ghost" id="scancancel">Cancelar</button></div></form>';
+    document.body.appendChild(d);
+    var video=d.querySelector('video'),msg=d.querySelector('.scanmsg'),stream=null,timer=null,done=false,reader=null;
+    var finish=function(code){
+      if(done)return;done=true;clearTimeout(timer);
+      if(stream)stream.getTracks().forEach(function(t){t.stop();});
+      try{if(navigator.vibrate&&code)navigator.vibrate(60);}catch(e){}
+      if(d.open)d.close();
+    };
+    d.addEventListener('close',function(){finish(null);d.remove();resolve(d._code||null);});
+    var take=function(code){d._code=String(code).trim();finish(d._code);};
+    d.querySelector('#scancancel').addEventListener('click',function(){finish(null);});
+    var man=d.querySelector('#scanman');
+    var useMan=function(){var v=man.value.trim();if(v)take(v);else msg.textContent='Escribí el código y tocá “Usar”.';};
+    d.querySelector('#scanuse').addEventListener('click',useMan);
+    man.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();useMan();}});
+    d.showModal();
+    if(!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia)){
+      msg.textContent='Este navegador no permite usar la cámara (hace falta abrir el sistema con https). Podés escribir el código.';return;
+    }
+    navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:false}).then(function(st){
+      if(done){st.getTracks().forEach(function(t){t.stop();});return;}
+      stream=st;video.srcObject=st;return video.play().catch(function(){});
+    }).then(function(){
+      if(done||!stream)return;
+      msg.textContent='Apuntá la cámara al código de barras y mantenelo quieto.';
+      var cv=document.createElement('canvas'),cx=cv.getContext('2d',{willReadFrequently:true});
+      var native=null,tick;
+      var setup=window.BarcodeDetector?BarcodeDetector.getSupportedFormats().then(function(f){
+        var want=['ean_13','ean_8','upc_a','upc_e','code_128','code_39','itf'].filter(function(x){return f.indexOf(x)>=0;});
+        if(want.length)native=new BarcodeDetector({formats:want});
+      }).catch(function(){}):Promise.resolve();
+      return setup.then(function(){return native?null:loadZXing();}).then(function(){
+        if(!native){
+          var Z=window.ZXing,hints=new Map();
+          hints.set(Z.DecodeHintType.POSSIBLE_FORMATS,[Z.BarcodeFormat.EAN_13,Z.BarcodeFormat.EAN_8,Z.BarcodeFormat.UPC_A,Z.BarcodeFormat.UPC_E,Z.BarcodeFormat.CODE_128,Z.BarcodeFormat.CODE_39,Z.BarcodeFormat.ITF]);
+          hints.set(Z.DecodeHintType.TRY_HARDER,true);
+          reader=new Z.MultiFormatReader();reader.setHints(hints);
+        }
+        tick=function(){
+          if(done)return;
+          var w=video.videoWidth,h=video.videoHeight;
+          if(!w||!h){timer=setTimeout(tick,150);return;}
+          var p=native?native.detect(video).then(function(r){return r&&r[0]?r[0].rawValue:null;}).catch(function(){return null;}):new Promise(function(ok){
+            var k=Math.min(1,900/w);cv.width=Math.round(w*k);cv.height=Math.round(h*k);cx.drawImage(video,0,0,cv.width,cv.height);
+            try{
+              var Z=window.ZXing,bmp=new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(cv)));
+              ok(reader.decode(bmp).getText());
+            }catch(e){ok(null);}
+          });
+          p.then(function(code){if(code)take(code);else timer=setTimeout(tick,native?120:180);});
+        };
+        tick();
+      });
+    }).catch(function(err){
+      var denied=err&&(err.name==='NotAllowedError'||err.name==='SecurityError');
+      msg.textContent=denied?'No se pudo usar la cámara: permitila en el navegador (candado de la barra de direcciones). Podés escribir el código.':'No se pudo abrir la cámara'+(err&&err.message?' ('+err.message+')':'')+'. Podés escribir el código.';
+    });
+  });
+}
+// Producto que tiene ese código de barras (o undefined).
+var prodByBarcode=function(code){var c=String(code||'').trim();return c?S.products.find(function(x){return x.barcode===c;}):undefined;};
+// Vender con el escáner: reconoce el producto y abre la venta (cantidad, forma de pago y paciente opcional).
+async function scanToSell(code){
+  var x=prodByBarcode(code);
+  if(!x){toast('No hay ningún producto con el código '+code+'. Asignale el código desde “Editar” en Stock.',true);return;}
+  var vac=vaccineOfDrug(x.id);
+  if(vac){toast('“'+x.name+'” es la droga de la vacuna “'+vac.name+'”: se descuenta al aplicarla y no se vende suelta.',true);return;}
+  sellForm(x);
+}
+// Ingresar stock con el escáner: si el producto existe, abre "Agregar stock"; si no, ofrece cargarlo con el código ya puesto.
+async function scanToStock(code){
+  var x=prodByBarcode(code);
+  if(x){buyForm(x);return;}
+  var ch=await choiceDialog('Producto nuevo','<p>No hay ningún producto con el código <b>'+esc(code)+'</b>. ¿Querés cargarlo como producto nuevo? El código queda guardado para reconocerlo después.</p>',
+    [{label:'Cancelar',value:null,cls:'ghost'},{label:'Cargar producto nuevo',value:'new',cls:'primary'}]);
+  if(ch==='new')productForm(null,{barcode:code});
+}
+function productForm(x,preset){
+  var isNew=!x;x=x||Object.assign({category:'Medicamentos',min:5,price:0},preset||{});
   var pf=openForm({title:isNew?'Nuevo producto':'Editar producto',
-    body:'<div class="fields">'+fld('Nombre','name',{value:x.name,req:true,full:true})+fld('Categoría','category',{opts:PROD_CATS,value:x.category})+fld('Precio de venta','price',{type:'number',min:0,step:'0.01',value:x.price,req:true})+
+    body:'<div class="fields">'+fld('Nombre','name',{value:x.name,req:true,full:true})+fld('Código de barras (opcional)','barcode',{value:x.barcode,full:true,ph:'Escribilo o escanealo con la cámara',pattern:'[0-9A-Za-z._\\-]{4,64}',title:'Entre 4 y 64 caracteres: letras, números, punto y guion'})+fld('Categoría','category',{opts:PROD_CATS,value:x.category})+fld('Precio de venta','price',{type:'number',min:0,step:'0.01',value:x.price,req:true})+
     fld('Especie (solo vacunas, opcional)','species',{opts:SPECIES_OPTS,value:x.species,full:true})+
     fld('Proveedor habitual (opcional)','supplierId',{opts:supplierOpts(),value:x.supplierId,full:true})+
     fld('Stock mínimo (para avisar)','min',{type:'number',min:0,step:'1',value:x.min,req:true})+
@@ -1258,11 +1361,22 @@ function productForm(x){
         if(!(await confirmDuplicate(S.products.some(function(x){return sameName(x.name,d.name);}))))return false;
         var cost=Number(d.stock)*Number(d.unitPrice);
         if(cost>0&&!(await confirmNegativeCash(cost,d.method)))return false;
-        await api('/products',{body:{name:d.name,category:d.category,price:d.price,min:d.min,stock:d.stock,unitPrice:d.unitPrice,method:d.method,species:d.species,supplierId:d.supplierId||null}});await reload();toast('Producto agregado');}
-      else{await api('/products/'+x.id,{method:'PUT',body:{name:d.name,category:d.category,price:d.price,min:d.min,species:d.species,supplierId:d.supplierId||null}});await reload();toast('Producto guardado');}
+        await api('/products',{body:{name:d.name,category:d.category,price:d.price,min:d.min,stock:d.stock,unitPrice:d.unitPrice,method:d.method,species:d.species,supplierId:d.supplierId||null,barcode:d.barcode}});await reload();toast('Producto agregado');}
+      else{await api('/products/'+x.id,{method:'PUT',body:{name:d.name,category:d.category,price:d.price,min:d.min,species:d.species,supplierId:d.supplierId||null,barcode:d.barcode}});await reload();toast('Producto guardado');}
     }});
   bindSpecies(pf);
   if(isNew)bindTotalPreview(pf,'stock','unitPrice');
+  // Botón de cámara junto al campo del código de barras.
+  var bcIn=pf.querySelector('[name="barcode"]'),row=document.createElement('div');row.className='withbtn';
+  bcIn.parentNode.insertBefore(row,bcIn);row.appendChild(bcIn);
+  var sb=document.createElement('button');sb.type='button';sb.className='btn';sb.textContent='📷 Escanear';row.appendChild(sb);
+  sb.addEventListener('click',async function(){
+    var code=await openScanner('Escanear el código del producto');
+    if(!code)return;
+    var other=prodByBarcode(code);
+    if(other&&(isNew||other.id!==x.id)){pf.querySelector('.err').textContent='Ese código ya pertenece al producto “'+other.name+'”.';return;}
+    pf.querySelector('.err').textContent='';bcIn.value=code;
+  });
 }
 function buyForm(x){
   var f=openForm({title:'Agregar stock de '+esc(x.name),
@@ -1749,6 +1863,8 @@ var actions={
     return downloadFile('/cash/export?period=range&from='+from+'&to='+to,'movimientos-'+from+'_a_'+to+'.csv');
   },
   'new-product':function(){productForm();},
+  'scan-sell':async function(){var c=await openScanner('Vender: escanear el producto');if(c)await scanToSell(c);},
+  'scan-stock':async function(){var c=await openScanner('Ingresar stock: escanear el producto');if(c)await scanToStock(c);},
   'edit-product':function(id){productForm(S.products.find(function(x){return String(x.id)===String(id);}));},
   'del-product':function(id){
     var x=S.products.find(function(y){return String(y.id)===String(id);});if(!x)return;
@@ -1880,6 +1996,13 @@ document.addEventListener('click',function(e){
   document.querySelectorAll('details.rowmenu[open]').forEach(function(o){if(!o.contains(e.target)||e.target.closest('.menu button'))o.open=false;});
 });
 window.addEventListener('scroll',function(){document.querySelectorAll('details.rowmenu[open]').forEach(function(o){o.open=false;});},true);
+// Lector USB/bluetooth (se comporta como un teclado): al leer un código en el buscador de Stock y terminar con Enter, abre la venta.
+document.addEventListener('keydown',function(e){
+  if(e.key!=='Enter'||!e.target||e.target.id!=='stq')return;
+  var code=e.target.value.trim();if(!code)return;
+  e.preventDefault();
+  if(prodByBarcode(code))scanToSell(code);
+});
 document.addEventListener('input',function(e){
   if(e.target.id==='q'){
     ui.q=e.target.value;

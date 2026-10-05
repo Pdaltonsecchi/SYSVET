@@ -382,3 +382,11 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 SELECT ensure_clients();
+
+-- ============================================================
+-- Nueva etapa: código de barras opcional en los productos
+-- ============================================================
+-- Sirve para reconocer el producto con la cámara (o un lector USB) al vender o ingresar stock. Es opcional;
+-- si se carga, no puede repetirse entre productos.
+ALTER TABLE products ADD COLUMN IF NOT EXISTS barcode TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS products_barcode_idx ON products(barcode) WHERE barcode IS NOT NULL;

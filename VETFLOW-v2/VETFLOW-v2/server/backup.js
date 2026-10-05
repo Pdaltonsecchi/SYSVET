@@ -12,7 +12,7 @@ const TABLES = [
   ['weights', ['id', 'patient_id', 'fecha', 'kg']],
   ['suppliers', ['id', 'name', 'phone', 'email', 'description']], // antes que productos y compras, que lo referencian
   // "products" y "stock_movements" van antes que vacunas, medicación y caja, que apuntan a ellos.
-  ['products', ['id', 'name', 'category', 'stock', 'min_stock', 'price', 'species', 'supplier_id']],
+  ['products', ['id', 'name', 'category', 'stock', 'min_stock', 'price', 'species', 'supplier_id', 'barcode']],
   ['stock_movements', ['id', 'product_id', 'product_name', 'on_date', 'qty', 'reason', 'unit_price', 'voided', 'note', 'charge_id', 'supplier_id']],
   ['vaccines', ['id', 'patient_id', 'name', 'applied_on', 'next_on', 'product_id', 'stock_qty', 'stock_movement_id', 'deleted_at']],
   ['diagnoses', ['id', 'patient_id', 'on_date', 'title', 'notes', 'deleted_at']],

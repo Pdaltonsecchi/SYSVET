@@ -118,7 +118,7 @@ const mapPatient = (r) => ({
   notes: r.notes,
 });
 const mapVaccine = (r) => ({ id: r.id, name: r.name, date: r.applied_on, next: r.next_on || '', productId: r.product_id || null, stockQty: r.stock_qty || 0 });
-const mapProduct = (r) => ({ id: r.id, name: r.name, category: r.category, stock: r.stock, min: r.min_stock, price: Number(r.price), species: r.species || '', cost: r.cost == null ? null : Number(r.cost), supplierId: r.supplier_id || null });
+const mapProduct = (r) => ({ id: r.id, name: r.name, category: r.category, stock: r.stock, min: r.min_stock, price: Number(r.price), species: r.species || '', cost: r.cost == null ? null : Number(r.cost), supplierId: r.supplier_id || null, barcode: r.barcode || '' });
 // v2: productId (nullable) es el producto del stock que se descuenta al aplicar esta vacuna.
 const mapService = (r) => ({ id: r.id, name: r.name, category: r.category, price: Number(r.price), productId: r.product_id || null, species: r.species || '', items: [] });
 const mapSupplier = (r) => ({ id: r.id, name: r.name, phone: r.phone, email: r.email, description: r.description });
@@ -173,7 +173,7 @@ async function listProducts(admin) {
   const cost = admin
     ? "(SELECT m.unit_price FROM stock_movements m WHERE m.product_id = p.id AND m.qty > 0 AND m.unit_price > 0 AND NOT m.voided AND m.reason IN ('Compra', 'Stock inicial') ORDER BY m.on_date DESC, m.id DESC LIMIT 1)"
     : 'NULL';
-  const r = await db.query('SELECT p.id, p.name, p.category, p.stock, p.min_stock, p.price, p.species, p.supplier_id, ' + cost + ' AS cost FROM products p ORDER BY lower(p.name), p.id');
+  const r = await db.query('SELECT p.id, p.name, p.category, p.stock, p.min_stock, p.price, p.species, p.supplier_id, p.barcode, ' + cost + ' AS cost FROM products p ORDER BY lower(p.name), p.id');
   return r.rows.map(mapProduct);
 }
 async function listServices() {
@@ -243,6 +243,14 @@ async function mustExist(table, id, message) {
   if (!r.rows[0]) throw new HttpError(404, message);
 }
 
+/** Código de barras opcional de un producto: no puede repetirse. `exceptId` = el propio producto al editar. */
+async function checkBarcode(q, raw, exceptId) {
+  const code = U.optBarcode(raw);
+  if (!code) return null;
+  const r = await q.query('SELECT name FROM products WHERE barcode = $1 AND id <> $2', [code, exceptId || 0]);
+  if (r.rows[0]) throw new HttpError(409, 'Ese código de barras ya pertenece al producto “' + r.rows[0].name + '”.');
+  return code;
+}
 /** Proveedor opcional: si se indica, tiene que existir. */
 async function optSupplier(q, v) {
   if (v == null || v === '') return null;
@@ -1006,6 +1014,7 @@ add('POST', '/api/products', { admin: true }, async (ctx) => {
   const price = U.money(b.price, 'Precio de venta');
   const species = U.optSpecies(b.species, category);
   const supplierId = await optSupplier(db, b.supplierId);
+  const barcode = await checkBarcode(db, b.barcode, 0);
   const min = U.reqInt(b.min == null || b.min === '' ? 0 : b.min, 'Stock mínimo', 0, 100000);
   const stock = U.reqInt(b.stock == null || b.stock === '' ? 0 : b.stock, 'Stock inicial', 0, 100000);
   // v2: se carga precio unitario y el costo total se calcula solo (cantidad × unitario).
@@ -1014,8 +1023,8 @@ add('POST', '/api/products', { admin: true }, async (ctx) => {
   const method = stock > 0 && cost > 0 ? U.oneOf(b.method, U.METHODS, 'Forma de pago') : null;
   const today = U.todayAR();
   return db.tx(async (c) => {
-    const r = await c.query('INSERT INTO products (name, category, stock, min_stock, price, species, supplier_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id', [
-      name, category, stock, min, price, species, supplierId,
+    const r = await c.query('INSERT INTO products (name, category, stock, min_stock, price, species, supplier_id, barcode) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id', [
+      name, category, stock, min, price, species, supplierId, barcode,
     ]);
     const id = r.rows[0].id;
     if (stock > 0) {
@@ -1039,7 +1048,8 @@ add('PUT', '/api/products/:id', { admin: true }, async (ctx) => {
   const b = ctx.body;
   const category = U.oneOf(b.category, U.PROD_CATS, 'Categoría');
   const supplierId = await optSupplier(db, b.supplierId);
-  const r = await db.query('UPDATE products SET name = $1, category = $2, price = $3, min_stock = $4, species = $5, supplier_id = $7 WHERE id = $6 RETURNING id', [
+  const barcode = await checkBarcode(db, b.barcode, id);
+  const r = await db.query('UPDATE products SET name = $1, category = $2, price = $3, min_stock = $4, species = $5, supplier_id = $7, barcode = $8 WHERE id = $6 RETURNING id', [
     U.reqStr(b.name, 'Nombre', 200),
     category,
     U.money(b.price, 'Precio de venta'),
@@ -1047,6 +1057,7 @@ add('PUT', '/api/products/:id', { admin: true }, async (ctx) => {
     U.optSpecies(b.species, category),
     id,
     supplierId,
+    barcode,
   ]);
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el producto');
 });

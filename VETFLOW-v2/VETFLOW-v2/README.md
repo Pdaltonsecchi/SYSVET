@@ -143,3 +143,11 @@ Los estudios complementarios admiten archivos (ecografías, radiografías, anál
 5. Guardá: Render reinicia solo. En **Copias de seguridad** vas a ver cuánto espacio usan los adjuntos (el plan gratuito de Supabase da 1 GB).
 
 Permisos: el ayudante puede ver y subir adjuntos; solo el administrador puede borrarlos. Las copias de seguridad (JSON) guardan los datos de los adjuntos pero **no los archivos**, que quedan en Supabase Storage.
+
+---
+
+## Clientes, historias clínicas numeradas y lector de códigos de barras
+
+- **Clientes:** en la pantalla *Clientes* están los dueños (nombre, apellido, teléfono, email y dirección), sus mascotas (al tocar una se abre su historia clínica) y el historial de pagos de todas sus mascotas. Los datos de contacto se cargan una sola vez, en el cliente; la historia clínica muestra solo el nombre y apellido. Para pasar una mascota a otro cliente: *Editar datos* de la mascota → *Cliente*.
+- **Historia clínica N°:** cada mascota recibe un número correlativo (HC N° 0001…) que se ve en la lista, la ficha y las impresiones, y se puede buscar.
+- **Código de barras (opcional):** en *Stock* → *Nuevo producto* / *Editar* se puede cargar o escanear el código del producto. Con *📷 Vender con escáner* se lee el código y se abre la venta del producto; con *📷 Ingresar con escáner* se abre *Agregar stock* (o *Nuevo producto* con el código ya cargado si todavía no existe). Funciona con la cámara de Android y de iPhone (hace falta abrir el sistema con https, como en Render) y con lectores USB/bluetooth (se lee el código en el buscador de Stock y Enter). El lector de códigos usa la librería ZXing (MIT), guardada en `public/vendor/`.
