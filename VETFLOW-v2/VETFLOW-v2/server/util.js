@@ -76,6 +76,15 @@ function optPhone(v) {
   if (norm.length < 6) throw bad('El teléfono tiene que tener al menos 6 dígitos');
   return { phone: s, norm };
 }
+/** Código de barras opcional: 4 a 64 caracteres (letras, números, punto, guion). '' = sin código. */
+function optBarcode(v) {
+  if (v == null) return null;
+  if (typeof v !== 'string') throw bad('El código de barras no es válido');
+  const t = v.trim();
+  if (!t) return null;
+  if (!/^[0-9A-Za-z._-]{4,64}$/.test(t)) throw bad('El código de barras solo puede tener letras, números, punto y guion (entre 4 y 64 caracteres)');
+  return t;
+}
 function reqDate(v, label) {
   if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw bad('Fecha inválida: ' + label);
   const d = new Date(v + 'T00:00:00Z');
@@ -217,6 +226,6 @@ module.exports = {
   HttpError, bad, HANDLED,
   METHODS, SPECIES_OPTS, PROD_CATS, SERV_CATS, CASH_IN_CATS, CASH_OUT_CATS, ADJUST_REASONS, APPT_TYPES, APPT_DURATIONS, APPT_LABELS,
   TZ, todayAR, addDays, monthStart, monthEnd, round2,
-  reqStr, optStr, optPhone, reqDate, optDate, pastDate, optPastDate, reqTime, reqNum, reqInt, money, moneyPos, oneOf, optSpecies, idParam, checkEmail,
+  reqStr, optStr, optPhone, optBarcode, reqDate, optDate, pastDate, optPastDate, reqTime, reqNum, reqInt, money, moneyPos, oneOf, optSpecies, idParam, checkEmail,
   sendJson, readBody, readRaw, parseCookies, clientIp,
 };

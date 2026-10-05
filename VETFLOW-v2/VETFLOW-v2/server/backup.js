@@ -7,11 +7,12 @@ const U = require('./util');
 // Tablas incluidas en las copias, en orden de dependencia (las de abajo dependen de las de arriba).
 // No se incluyen los usuarios ni sus contraseñas.
 const TABLES = [
-  ['patients', ['id', 'name', 'species', 'breed', 'sex', 'neutered', 'birth', 'weight', 'owner_name', 'phone', 'email', 'notes', 'deleted_at']],
+  ['clients', ['id', 'first_name', 'last_name', 'email', 'phone', 'address', 'created_at']],
+  ['patients', ['id', 'name', 'species', 'breed', 'sex', 'neutered', 'birth', 'weight', 'owner_name', 'phone', 'email', 'notes', 'deleted_at', 'hc_number', 'client_id']],
   ['weights', ['id', 'patient_id', 'fecha', 'kg']],
   ['suppliers', ['id', 'name', 'phone', 'email', 'description']], // antes que productos y compras, que lo referencian
   // "products" y "stock_movements" van antes que vacunas, medicación y caja, que apuntan a ellos.
-  ['products', ['id', 'name', 'category', 'stock', 'min_stock', 'price', 'species', 'supplier_id']],
+  ['products', ['id', 'name', 'category', 'stock', 'min_stock', 'price', 'species', 'supplier_id', 'barcode']],
   ['stock_movements', ['id', 'product_id', 'product_name', 'on_date', 'qty', 'reason', 'unit_price', 'voided', 'note', 'charge_id', 'supplier_id']],
   ['vaccines', ['id', 'patient_id', 'name', 'applied_on', 'next_on', 'product_id', 'stock_qty', 'stock_movement_id', 'deleted_at']],
   ['diagnoses', ['id', 'patient_id', 'on_date', 'title', 'notes', 'deleted_at']],
@@ -32,12 +33,13 @@ const KEEP_MANUAL = 20;
 // v2: tablas y columnas que no existían en la v1. Un backup exportado antes de la v2 no las
 // tiene: se tratan como "sin datos" (tabla vacía) o con este valor por defecto, en vez de
 // rechazar la restauración de una copia vieja.
-const NEW_TABLES = new Set(['suppliers', 'complementary_studies', 'appointments', 'service_items', 'weights', 'study_attachments']);
+const NEW_TABLES = new Set(['suppliers', 'complementary_studies', 'appointments', 'service_items', 'weights', 'study_attachments', 'clients']);
 const COL_DEFAULTS = {
   stock_movements: { unit_price: 0, voided: false, note: '' },
   charges: { line_type: 'service', cash_was: false },
   appointments: { duration_min: 30 },
   study_attachments: { created_at: new Date().toISOString() },
+  clients: { created_at: new Date().toISOString() },
   vaccines: { stock_qty: 0 },
   medications: { stock_qty: 0 },
 };
@@ -206,9 +208,14 @@ async function restore(data, opts) {
         }
         await db.resetSequence(c, table);
       }
+      // Copias anteriores a la numeración de historias clínicas: se asignan los números que falten.
+      await c.query('SELECT assign_patient_hc()');
       // El teléfono normalizado no viaja en las copias: se recalcula.
       await c.query("UPDATE patients SET phone_norm = regexp_replace(phone, '\\D', '', 'g')");
       await c.query("UPDATE suppliers SET phone_norm = regexp_replace(phone, '\\D', '', 'g')");
+      // Copias anteriores a los clientes: se crean a partir de los datos de las mascotas.
+      await c.query("UPDATE clients SET phone_norm = regexp_replace(phone, '\\D', '', 'g')");
+      await c.query('SELECT ensure_clients()');
       // Copias anteriores al historial de peso: el peso actual pasa a ser el primer registro.
       await c.query(
         'INSERT INTO weights (patient_id, fecha, kg) SELECT p.id, CURRENT_DATE, p.weight FROM patients p ' +

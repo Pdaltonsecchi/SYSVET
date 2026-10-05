@@ -93,10 +93,17 @@ async function dispatch(req, res, url) {
 /* ============================================================
    Datos comunes
    ============================================================ */
-const PATIENT_COLS = 'id, name, species, breed, sex, neutered, birth, weight, owner_name, phone, email, notes';
+// El dueño es un cliente (tabla clients): su contacto vive ahí una sola vez. Las columnas viejas de la mascota
+// (owner_name, phone, email) solo se usan como respaldo para registros que todavía no tengan cliente.
+const PATIENT_SELECT =
+  'p.id, p.hc_number, p.name, p.species, p.breed, p.sex, p.neutered, p.birth, p.weight, p.owner_name, p.phone, p.email, p.notes, p.client_id, ' +
+  'c.first_name AS c_first, c.last_name AS c_last, c.phone AS c_phone, c.email AS c_email';
+const PATIENT_FROM = ' FROM patients p LEFT JOIN clients c ON c.id = p.client_id';
+const fullName = (first, last) => (String(first || '') + ' ' + String(last || '')).trim();
 
 const mapPatient = (r) => ({
   id: r.id,
+  hc: r.hc_number,
   name: r.name,
   species: r.species,
   breed: r.breed,
@@ -104,13 +111,14 @@ const mapPatient = (r) => ({
   neutered: !!r.neutered,
   birth: r.birth || '',
   weight: r.weight == null ? '' : Number(r.weight),
-  owner: r.owner_name,
-  phone: r.phone,
-  email: r.email,
+  clientId: r.client_id || null,
+  owner: r.c_first != null ? fullName(r.c_first, r.c_last) : r.owner_name,
+  phone: r.c_first != null ? r.c_phone : r.phone,
+  email: r.c_first != null ? r.c_email : r.email,
   notes: r.notes,
 });
 const mapVaccine = (r) => ({ id: r.id, name: r.name, date: r.applied_on, next: r.next_on || '', productId: r.product_id || null, stockQty: r.stock_qty || 0 });
-const mapProduct = (r) => ({ id: r.id, name: r.name, category: r.category, stock: r.stock, min: r.min_stock, price: Number(r.price), species: r.species || '', cost: r.cost == null ? null : Number(r.cost), supplierId: r.supplier_id || null });
+const mapProduct = (r) => ({ id: r.id, name: r.name, category: r.category, stock: r.stock, min: r.min_stock, price: Number(r.price), species: r.species || '', cost: r.cost == null ? null : Number(r.cost), supplierId: r.supplier_id || null, barcode: r.barcode || '' });
 // v2: productId (nullable) es el producto del stock que se descuenta al aplicar esta vacuna.
 const mapService = (r) => ({ id: r.id, name: r.name, category: r.category, price: Number(r.price), productId: r.product_id || null, species: r.species || '', items: [] });
 const mapSupplier = (r) => ({ id: r.id, name: r.name, phone: r.phone, email: r.email, description: r.description });
@@ -126,10 +134,11 @@ const mapAppointment = (r) => ({
   type: r.appointment_type,
   duration: r.duration_min || 30,
   endTime: addMinutes(String(r.appointment_time).slice(0, 5), r.duration_min || 30),
-  patientOwner: r.owner_name || '',
+  patientOwner: r.c_first != null ? fullName(r.c_first, r.c_last) : r.owner_name || '',
+  patientOwnerLast: r.c_first != null ? r.c_last || '' : '',
   patientSpecies: r.species || '',
   patientBreed: r.breed || '',
-  patientPhone: r.phone || '',
+  patientPhone: (r.c_first != null ? r.c_phone : r.phone) || '',
 });
 // Hora de fin ("HH:MM") sumando minutos a la de inicio (da la vuelta a las 24 h si hace falta).
 function addMinutes(hhmm, min) {
@@ -150,7 +159,7 @@ const mapCash = (r) => ({
 
 async function listPatients() {
   const [p, v] = await Promise.all([
-    db.query('SELECT ' + PATIENT_COLS + ' FROM patients WHERE deleted_at IS NULL ORDER BY lower(name), id'),
+    db.query('SELECT ' + PATIENT_SELECT + PATIENT_FROM + ' WHERE p.deleted_at IS NULL ORDER BY lower(p.name), p.id'),
     db.query('SELECT id, patient_id, name, applied_on, next_on, product_id, stock_qty FROM vaccines WHERE deleted_at IS NULL ORDER BY applied_on DESC, id DESC'),
   ]);
   const by = {};
@@ -164,7 +173,7 @@ async function listProducts(admin) {
   const cost = admin
     ? "(SELECT m.unit_price FROM stock_movements m WHERE m.product_id = p.id AND m.qty > 0 AND m.unit_price > 0 AND NOT m.voided AND m.reason IN ('Compra', 'Stock inicial') ORDER BY m.on_date DESC, m.id DESC LIMIT 1)"
     : 'NULL';
-  const r = await db.query('SELECT p.id, p.name, p.category, p.stock, p.min_stock, p.price, p.species, p.supplier_id, ' + cost + ' AS cost FROM products p ORDER BY lower(p.name), p.id');
+  const r = await db.query('SELECT p.id, p.name, p.category, p.stock, p.min_stock, p.price, p.species, p.supplier_id, p.barcode, ' + cost + ' AS cost FROM products p ORDER BY lower(p.name), p.id');
   return r.rows.map(mapProduct);
 }
 async function listServices() {
@@ -234,6 +243,14 @@ async function mustExist(table, id, message) {
   if (!r.rows[0]) throw new HttpError(404, message);
 }
 
+/** Código de barras opcional de un producto: no puede repetirse. `exceptId` = el propio producto al editar. */
+async function checkBarcode(q, raw, exceptId) {
+  const code = U.optBarcode(raw);
+  if (!code) return null;
+  const r = await q.query('SELECT name FROM products WHERE barcode = $1 AND id <> $2', [code, exceptId || 0]);
+  if (r.rows[0]) throw new HttpError(409, 'Ese código de barras ya pertenece al producto “' + r.rows[0].name + '”.');
+  return code;
+}
 /** Proveedor opcional: si se indica, tiene que existir. */
 async function optSupplier(q, v) {
   if (v == null || v === '') return null;
@@ -442,13 +459,14 @@ add('PATCH', '/api/users/:id', { admin: true }, async (ctx) => {
    Arranque de la pantalla
    ============================================================ */
 add('GET', '/api/bootstrap', async (ctx) => {
-  const [patients, products, services, sup] = await Promise.all([
+  const [patients, products, services, sup, clients] = await Promise.all([
     listPatients(),
     listProducts(ctx.user.role === 'admin'),
     listServices(),
     db.query('SELECT id, name, phone, email, description FROM suppliers ORDER BY lower(name), id'),
+    listClients(db),
   ]);
-  const out = { user: ctx.user, clinic: process.env.CLINIC_NAME || 'SYSVET', attachments: storage.configured(), patients, products, services, suppliers: sup.rows.map(mapSupplier) };
+  const out = { user: ctx.user, clinic: process.env.CLINIC_NAME || 'SYSVET', attachments: storage.configured(), patients, products, services, suppliers: sup.rows.map(mapSupplier), clients };
   if (ctx.user.role === 'admin') out.summary = await cashSummary();
   return out;
 });
@@ -472,28 +490,55 @@ function patientInput(b) {
     neutered: !!b.neutered,
     birth: U.optPastDate(b.birth, 'Fecha de nacimiento'),
     weight: optWeight(b.weight),
-    owner: U.reqStr(b.owner, 'Dueño', 150),
-    phone: U.optPhone(b.phone),
-    email: U.checkEmail(U.optStr(b.email, 150)),
     notes: U.optStr(b.notes, 1000),
   };
 }
-const patientParams = (p) => [p.name, p.species, p.breed, p.sex, p.neutered, p.birth, p.weight, p.owner, p.phone.phone, p.email, p.notes, p.phone.norm];
+// Datos de contacto del cliente (dueño). Nombre y apellido obligatorios; teléfono, email y dirección opcionales.
+function clientInput(b) {
+  const ph = U.optPhone(b.phone);
+  return {
+    first: U.reqStr(b.firstName, 'Nombre del cliente', 100),
+    last: U.reqStr(b.lastName, 'Apellido del cliente', 100),
+    phone: ph.phone,
+    norm: ph.norm,
+    email: U.checkEmail(U.optStr(b.email, 150)),
+    address: U.optStr(b.address, 200),
+  };
+}
+/** Cliente de una mascota: uno existente (clientId) o uno nuevo (client), creado en la misma transacción. */
+async function resolveClient(c, b) {
+  if (b.clientId) {
+    const r = await c.query('SELECT id, first_name, last_name FROM clients WHERE id = $1', [U.idParam(b.clientId)]);
+    if (!r.rows[0]) throw new HttpError(404, 'No se encontró el cliente');
+    return { id: r.rows[0].id, name: fullName(r.rows[0].first_name, r.rows[0].last_name) };
+  }
+  if (b.client && typeof b.client === 'object') {
+    const ci = clientInput(b.client);
+    const r = await c.query('INSERT INTO clients (first_name, last_name, email, phone, phone_norm, address) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id', [
+      ci.first, ci.last, ci.email, ci.phone, ci.norm, ci.address,
+    ]);
+    return { id: r.rows[0].id, name: fullName(ci.first, ci.last) };
+  }
+  throw U.bad('Elegí el cliente (dueño) de la mascota o cargá uno nuevo');
+}
 
 add('POST', '/api/patients', async (ctx) => {
   const p = patientInput(ctx.body);
-  const r = await db.query(
-    'INSERT INTO patients (name, species, breed, sex, neutered, birth, weight, owner_name, phone, email, notes, phone_norm) ' +
-      'VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id',
-    patientParams(p)
-  );
-  if (p.weight != null) await db.query('INSERT INTO weights (patient_id, fecha, kg) VALUES ($1, $2, $3)', [r.rows[0].id, U.todayAR(), p.weight]);
-  return { id: r.rows[0].id };
+  return db.tx(async (c) => {
+    const cl = await resolveClient(c, ctx.body);
+    const r = await c.query(
+      "INSERT INTO patients (name, species, breed, sex, neutered, birth, weight, owner_name, phone, email, notes, phone_norm, client_id) " +
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '', '', $9, '', $10) RETURNING id",
+      [p.name, p.species, p.breed, p.sex, p.neutered, p.birth, p.weight, cl.name, p.notes, cl.id]
+    );
+    if (p.weight != null) await c.query('INSERT INTO weights (patient_id, fecha, kg) VALUES ($1, $2, $3)', [r.rows[0].id, U.todayAR(), p.weight]);
+    return { id: r.rows[0].id };
+  });
 });
 
 add('GET', '/api/patients/:id', async (ctx) => {
   const id = U.idParam(ctx.params.id);
-  const r = await db.query('SELECT ' + PATIENT_COLS + ' FROM patients WHERE id = $1 AND deleted_at IS NULL', [id]);
+  const r = await db.query('SELECT ' + PATIENT_SELECT + PATIENT_FROM + ' WHERE p.id = $1 AND p.deleted_at IS NULL', [id]);
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el paciente');
   const [v, d, m, c, s, ap, wt] = await Promise.all([
     db.query('SELECT id, name, applied_on, next_on, product_id, stock_qty FROM vaccines WHERE patient_id = $1 AND deleted_at IS NULL ORDER BY applied_on DESC, id DESC', [id]),
@@ -527,10 +572,11 @@ add('PUT', '/api/patients/:id', async (ctx) => {
   return db.tx(async (c) => {
     const old = await c.query('SELECT weight FROM patients WHERE id = $1 AND deleted_at IS NULL FOR UPDATE', [id]);
     if (!old.rows[0]) throw new HttpError(404, 'No se encontró el paciente');
+    const cl = await resolveClient(c, ctx.body);
     await c.query(
       'UPDATE patients SET name = $1, species = $2, breed = $3, sex = $4, neutered = $5, birth = $6, weight = $7, ' +
-        'owner_name = $8, phone = $9, email = $10, notes = $11, phone_norm = $12 WHERE id = $13',
-      patientParams(p).concat([id])
+        'owner_name = $8, notes = $9, client_id = $10 WHERE id = $11',
+      [p.name, p.species, p.breed, p.sex, p.neutered, p.birth, p.weight, cl.name, p.notes, cl.id, id]
     );
     // G3: cada vez que cambia el peso se guarda un registro nuevo en el historial.
     if (p.weight != null && Number(old.rows[0].weight) !== p.weight) {
@@ -968,6 +1014,7 @@ add('POST', '/api/products', { admin: true }, async (ctx) => {
   const price = U.money(b.price, 'Precio de venta');
   const species = U.optSpecies(b.species, category);
   const supplierId = await optSupplier(db, b.supplierId);
+  const barcode = await checkBarcode(db, b.barcode, 0);
   const min = U.reqInt(b.min == null || b.min === '' ? 0 : b.min, 'Stock mínimo', 0, 100000);
   const stock = U.reqInt(b.stock == null || b.stock === '' ? 0 : b.stock, 'Stock inicial', 0, 100000);
   // v2: se carga precio unitario y el costo total se calcula solo (cantidad × unitario).
@@ -976,8 +1023,8 @@ add('POST', '/api/products', { admin: true }, async (ctx) => {
   const method = stock > 0 && cost > 0 ? U.oneOf(b.method, U.METHODS, 'Forma de pago') : null;
   const today = U.todayAR();
   return db.tx(async (c) => {
-    const r = await c.query('INSERT INTO products (name, category, stock, min_stock, price, species, supplier_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id', [
-      name, category, stock, min, price, species, supplierId,
+    const r = await c.query('INSERT INTO products (name, category, stock, min_stock, price, species, supplier_id, barcode) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id', [
+      name, category, stock, min, price, species, supplierId, barcode,
     ]);
     const id = r.rows[0].id;
     if (stock > 0) {
@@ -1001,7 +1048,8 @@ add('PUT', '/api/products/:id', { admin: true }, async (ctx) => {
   const b = ctx.body;
   const category = U.oneOf(b.category, U.PROD_CATS, 'Categoría');
   const supplierId = await optSupplier(db, b.supplierId);
-  const r = await db.query('UPDATE products SET name = $1, category = $2, price = $3, min_stock = $4, species = $5, supplier_id = $7 WHERE id = $6 RETURNING id', [
+  const barcode = await checkBarcode(db, b.barcode, id);
+  const r = await db.query('UPDATE products SET name = $1, category = $2, price = $3, min_stock = $4, species = $5, supplier_id = $7, barcode = $8 WHERE id = $6 RETURNING id', [
     U.reqStr(b.name, 'Nombre', 200),
     category,
     U.money(b.price, 'Precio de venta'),
@@ -1009,6 +1057,7 @@ add('PUT', '/api/products/:id', { admin: true }, async (ctx) => {
     U.optSpecies(b.species, category),
     id,
     supplierId,
+    barcode,
   ]);
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el producto');
 });
@@ -1469,6 +1518,77 @@ add('DELETE', '/api/suppliers/:id', { admin: true }, async (ctx) => {
 });
 
 /* ============================================================
+   Clientes (dueños) con varias mascotas
+   Abierto a cualquier usuario logueado, igual que Pacientes: es el contacto que usa todo el equipo.
+   ============================================================ */
+const mapClient = (r, pets) => ({
+  id: r.id,
+  firstName: r.first_name,
+  lastName: r.last_name,
+  name: fullName(r.first_name, r.last_name),
+  email: r.email,
+  phone: r.phone,
+  address: r.address,
+  pets: pets || [],
+});
+async function listClients(db_) {
+  const [cl, pt] = await Promise.all([
+    db_.query('SELECT id, first_name, last_name, email, phone, address FROM clients ORDER BY lower(last_name), lower(first_name), id'),
+    db_.query('SELECT id, hc_number, name, species, client_id FROM patients WHERE deleted_at IS NULL AND client_id IS NOT NULL ORDER BY lower(name), id'),
+  ]);
+  const by = {};
+  pt.rows.forEach((x) => (by[x.client_id] = by[x.client_id] || []).push({ id: x.id, hc: x.hc_number, name: x.name, species: x.species }));
+  return cl.rows.map((r) => mapClient(r, by[r.id]));
+}
+add('GET', '/api/clients', async () => ({ items: await listClients(db) }));
+
+// Ficha del cliente: contacto, mascotas y el historial de pagos de todas sus mascotas.
+add('GET', '/api/clients/:id', async (ctx) => {
+  const id = U.idParam(ctx.params.id);
+  const r = await db.query('SELECT id, first_name, last_name, email, phone, address FROM clients WHERE id = $1', [id]);
+  if (!r.rows[0]) throw new HttpError(404, 'No se encontró el cliente');
+  const [pets, pays] = await Promise.all([
+    db.query('SELECT id, hc_number, name, species, breed FROM patients WHERE client_id = $1 AND deleted_at IS NULL ORDER BY lower(name), id', [id]),
+    db.query(
+      'SELECT ch.id, ch.on_date, ch.concept, ch.amount, ch.method, p.id AS patient_id, p.name AS patient_name FROM charges ch JOIN patients p ON p.id = ch.patient_id ' +
+        'WHERE p.client_id = $1 AND p.deleted_at IS NULL AND ch.deleted_at IS NULL ORDER BY ch.on_date DESC, ch.id DESC LIMIT 500',
+      [id]
+    ),
+  ]);
+  const payments = pays.rows.map((x) => ({ id: x.id, date: x.on_date, concept: x.concept, amount: Number(x.amount), method: x.method, patientId: x.patient_id, patient: x.patient_name }));
+  return Object.assign(
+    mapClient(r.rows[0], pets.rows.map((x) => ({ id: x.id, hc: x.hc_number, name: x.name, species: x.species, breed: x.breed }))),
+    { payments, totalPaid: U.round2(payments.reduce((n, x) => n + x.amount, 0)) }
+  );
+});
+add('POST', '/api/clients', async (ctx) => {
+  const ci = clientInput(ctx.body);
+  const r = await db.query('INSERT INTO clients (first_name, last_name, email, phone, phone_norm, address) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id', [
+    ci.first, ci.last, ci.email, ci.phone, ci.norm, ci.address,
+  ]);
+  return { id: r.rows[0].id };
+});
+add('PUT', '/api/clients/:id', async (ctx) => {
+  const id = U.idParam(ctx.params.id);
+  const ci = clientInput(ctx.body);
+  return db.tx(async (c) => {
+    const r = await c.query('UPDATE clients SET first_name = $1, last_name = $2, email = $3, phone = $4, phone_norm = $5, address = $6 WHERE id = $7 RETURNING id', [
+      ci.first, ci.last, ci.email, ci.phone, ci.norm, ci.address, id,
+    ]);
+    if (!r.rows[0]) throw new HttpError(404, 'No se encontró el cliente');
+    await c.query('UPDATE patients SET owner_name = $1 WHERE client_id = $2', [fullName(ci.first, ci.last), id]); // el nombre del dueño en las historias clínicas sigue al del cliente
+  });
+});
+// Un cliente con mascotas (incluso las que están en la Papelera) no se puede eliminar: primero hay que pasar sus mascotas a otro cliente.
+add('DELETE', '/api/clients/:id', { admin: true }, async (ctx) => {
+  const id = U.idParam(ctx.params.id);
+  const n = (await db.query('SELECT COUNT(*) AS n FROM patients WHERE client_id = $1', [id])).rows[0].n;
+  if (Number(n) > 0) throw new HttpError(409, 'No se puede eliminar: el cliente tiene ' + (n === 1 ? '1 mascota asignada' : n + ' mascotas asignadas') + ' (incluidas las de la Papelera). Pasalas a otro cliente primero.');
+  const r = await db.query('DELETE FROM clients WHERE id = $1 RETURNING id', [id]);
+  if (!r.rows[0]) throw new HttpError(404, 'No se encontró el cliente');
+});
+
+/* ============================================================
    G1 · Papelera (solo administradores)
    Lo que se borra de la historia clínica queda 30 días en la Papelera: se puede restaurar. Pasado ese
    plazo solo se puede eliminar definitivamente (a mano, uno por uno o todos los vencidos).
@@ -1650,8 +1770,8 @@ add('GET', '/api/appointments', async (ctx) => {
   const to = U.reqDate(ctx.query.get('to') || '', 'Hasta');
   if (to < from) throw U.bad('El rango de fechas no es válido');
   const r = await db.query(
-    'SELECT a.id, a.patient_id, p.name AS patient_name, p.owner_name, p.species, p.breed, p.phone, a.title, a.description, a.appointment_date, a.appointment_time, a.appointment_type, a.duration_min ' +
-      'FROM appointments a JOIN patients p ON p.id = a.patient_id ' +
+    'SELECT a.id, a.patient_id, p.name AS patient_name, p.owner_name, p.species, p.breed, p.phone, cl.first_name AS c_first, cl.last_name AS c_last, cl.phone AS c_phone, a.title, a.description, a.appointment_date, a.appointment_time, a.appointment_type, a.duration_min ' +
+      'FROM appointments a JOIN patients p ON p.id = a.patient_id LEFT JOIN clients cl ON cl.id = p.client_id ' +
       'WHERE p.deleted_at IS NULL AND a.appointment_date BETWEEN $1 AND $2 ORDER BY a.appointment_date, a.appointment_time, a.id',
     [from, to]
   );

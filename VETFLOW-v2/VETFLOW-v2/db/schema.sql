@@ -313,3 +313,80 @@ CREATE TABLE IF NOT EXISTS study_attachments (
   created_by INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS study_attachments_study_idx ON study_attachments(study_id);
+
+-- ============================================================
+-- Nueva etapa: historias clínicas numeradas
+-- ============================================================
+-- Cada paciente (mascota) tiene un número de historia clínica correlativo, asignado solo al crearlo. Los
+-- pacientes que ya existían se numeran por fecha de alta. Los números no se reutilizan aunque se borre un paciente.
+CREATE SEQUENCE IF NOT EXISTS patients_hc_seq;
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS hc_number INTEGER;
+CREATE OR REPLACE FUNCTION assign_patient_hc() RETURNS void AS $$
+DECLARE r RECORD;
+BEGIN
+  PERFORM setval('patients_hc_seq', COALESCE((SELECT MAX(hc_number) FROM patients), 0) + 1, false);
+  FOR r IN SELECT id FROM patients WHERE hc_number IS NULL ORDER BY created_at, id LOOP
+    UPDATE patients SET hc_number = nextval('patients_hc_seq') WHERE id = r.id;
+  END LOOP;
+  PERFORM setval('patients_hc_seq', COALESCE((SELECT MAX(hc_number) FROM patients), 0) + 1, false);
+END
+$$ LANGUAGE plpgsql;
+SELECT assign_patient_hc();
+ALTER TABLE patients ALTER COLUMN hc_number SET DEFAULT nextval('patients_hc_seq');
+CREATE UNIQUE INDEX IF NOT EXISTS patients_hc_idx ON patients(hc_number);
+
+-- ============================================================
+-- Nueva etapa: clientes (dueños) con varias mascotas
+-- ============================================================
+-- Los datos de contacto viven en el cliente (una sola vez); la mascota solo apunta a su cliente. Las columnas
+-- viejas patients.owner_name / phone / email quedan por compatibilidad (owner_name se mantiene igual al nombre del
+-- cliente; teléfono y email ya no se usan), y no se borra ningún dato.
+CREATE TABLE IF NOT EXISTS clients (
+  id SERIAL PRIMARY KEY,
+  first_name TEXT NOT NULL,
+  last_name TEXT NOT NULL DEFAULT '',
+  email TEXT NOT NULL DEFAULT '',
+  phone TEXT NOT NULL DEFAULT '',
+  phone_norm TEXT NOT NULL DEFAULT '',
+  address TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS client_id INTEGER REFERENCES clients(id) ON DELETE RESTRICT;
+CREATE INDEX IF NOT EXISTS patients_client_idx ON patients(client_id);
+
+-- Crea los clientes que faltan a partir de los datos de las mascotas (una sola vez por dueño): mismo nombre y mismo
+-- teléfono = mismo cliente. El apellido es la última palabra del nombre. Se puede corregir después desde la app.
+CREATE OR REPLACE FUNCTION ensure_clients() RETURNS void AS $$
+DECLARE g RECORD; cid INTEGER; nm TEXT; fn TEXT; ln TEXT;
+BEGIN
+  FOR g IN
+    SELECT lower(btrim(owner_name)) AS k, phone_norm AS ph,
+           (array_agg(owner_name ORDER BY id))[1] AS oname,
+           (array_agg(phone ORDER BY id))[1] AS phone,
+           (array_agg(email ORDER BY (email = ''), id))[1] AS email
+    FROM patients WHERE client_id IS NULL
+    GROUP BY lower(btrim(owner_name)), phone_norm
+  LOOP
+    nm := btrim(regexp_replace(g.oname, '\s+', ' ', 'g'));
+    IF nm = '' THEN nm := 'Sin nombre'; END IF;
+    IF position(' ' IN nm) > 0 THEN
+      fn := substring(nm FROM '^(.*) [^ ]+$');
+      ln := substring(nm FROM '([^ ]+)$');
+    ELSE
+      fn := nm;
+      ln := '';
+    END IF;
+    INSERT INTO clients (first_name, last_name, email, phone, phone_norm) VALUES (fn, ln, g.email, g.phone, g.ph) RETURNING id INTO cid;
+    UPDATE patients SET client_id = cid WHERE client_id IS NULL AND lower(btrim(owner_name)) = g.k AND phone_norm = g.ph;
+  END LOOP;
+END
+$$ LANGUAGE plpgsql;
+SELECT ensure_clients();
+
+-- ============================================================
+-- Nueva etapa: código de barras opcional en los productos
+-- ============================================================
+-- Sirve para reconocer el producto con la cámara (o un lector USB) al vender o ingresar stock. Es opcional;
+-- si se carga, no puede repetirse entre productos.
+ALTER TABLE products ADD COLUMN IF NOT EXISTS barcode TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS products_barcode_idx ON products(barcode) WHERE barcode IS NOT NULL;

@@ -22,6 +22,9 @@ var norm=function(s){return String(s==null?'':s).normalize('NFD').replace(/\p{Di
 var surname=function(o){var w=String(o||'').trim().split(/\s+/);return w[w.length-1]||'';};
 var toMin=function(t){return Number(t.slice(0,2))*60+Number(t.slice(3,5));};
 var fmtBytes=function(n){n=Number(n)||0;if(n>=1073741824)return (n/1073741824).toFixed(n>=10737418240?0:1).replace('.',',')+' GB';if(n>=1048576)return (n/1048576).toFixed(n>=10485760?0:1).replace('.',',')+' MB';return Math.max(1,Math.round(n/1024))+' KB';};
+// Número de historia clínica: "HC N° 0012".
+var hcNum=function(p){return p.hc?String(p.hc).padStart(4,'0'):'';};
+var hcLabel=function(p){return p.hc?'HC N° '+hcNum(p):'';};
 var plural=function(n,a,b){return n+' '+(n===1?a:b);};
 var fmtTs=function(v){var d=new Date(v);if(isNaN(d.getTime()))return '';return d.toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});};
 // v2: lunes de la semana que contiene "iso" (semana de lunes a domingo).
@@ -50,11 +53,11 @@ var APPT_VIEWS=[['week','Semana'],['2weeks','2 semanas'],['3weeks','3 semanas'],
 /* ============================================================
    Estado
    ============================================================ */
-var S={attachments:false,clinic:'SYSVET',user:null,patients:[],products:[],services:[],suppliers:[],summary:null};
+var S={attachments:false,clinic:'SYSVET',user:null,clients:[],patients:[],products:[],services:[],suppliers:[],summary:null};
 var ui={view:'pacientes',sel:null,detail:null,filter:'all',q:'',tab:'stock',cat:'all',
   stq:'',cq:'',cfopen:false,cashp:'month',cashf:'all',cashm:'all',cash:null,
   rep:'90',rmonthly:null,rservices:null,rproducts:null,backups:null,users:null,
-  suppliers:null,sq:'',trash:null,cfrom:'',cto:'',rfrom:'',rto:'', // v2: proveedores y su búsqueda
+  suppliers:null,sq:'',trash:null,csel:null,cdetail:null,cliq:'',cfrom:'',cto:'',rfrom:'',rto:'', // v2: proveedores y su búsqueda
   cal:{view:'week',anchor:todayIso()},appts:null}; // v2: calendario de turnos
 var main=$('#main'),dlg=$('#dlg');
 var isAdmin=function(){return !!S.user&&S.user.role==='admin';};
@@ -91,7 +94,7 @@ function showLogin(msg){
   $('#lerror').textContent=msg||'';
 }
 function applyBootstrap(d){
-  S.clinic=d.clinic||'SYSVET';S.attachments=!!d.attachments;S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.suppliers=d.suppliers||[];S.summary=d.summary||null;
+  S.clinic=d.clinic||'SYSVET';S.attachments=!!d.attachments;S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.suppliers=d.suppliers||[];S.clients=d.clients||[];S.summary=d.summary||null;
 }
 async function start(){
   var d=await api('/bootstrap');
@@ -116,6 +119,11 @@ async function loadView(){
   if(ui.view==='pacientes'&&ui.sel){
     try{ui.detail=await api('/patients/'+ui.sel);}
     catch(e){if(e.status===404){ui.sel=null;ui.detail=null;}else throw e;}
+  }else if(ui.view==='clientes'){
+    if(ui.csel){
+      try{ui.cdetail=await api('/clients/'+ui.csel);}
+      catch(e){if(e.status===404){ui.csel=null;ui.cdetail=null;}else throw e;}
+    }
   }else if(ui.view==='calendario'){
     await loadAppointments();
   }else if(ui.view==='farmacia'&&ui.tab==='caja'&&isAdmin()){
@@ -297,7 +305,7 @@ function segHTML(action,items,active){
 function navItems(){
   // v2: Calendario y Proveedores son visibles para admin y ayudante (agendar turnos y
   // consultar a quién comprarle es tarea del día a día, no solo del administrador).
-  var a=[['pacientes','Pacientes'],['calendario','Calendario'],['farmacia','Farmacia y caja'],['proveedores','Proveedores']];
+  var a=[['pacientes','Pacientes'],['clientes','Clientes'],['calendario','Calendario'],['farmacia','Farmacia y caja'],['proveedores','Proveedores']];
   if(isAdmin())a.push(['reportes','Reportes'],['papelera','Papelera'],['copias','Copias de seguridad'],['usuarios','Usuarios']);
   return a;
 }
@@ -353,12 +361,12 @@ function renderAlerts(){
   var warn=S.patients.filter(function(p){return patientAlert(p)==='warn';}).length;
   var low=S.products.filter(lowStock).length;
   var h='';
-  if(bad)h+='<button class="al" data-action="goto-vac"><span class="dot bad"></span><span>'+plural(bad,'paciente con vacuna vencida','pacientes con vacuna vencida')+'</span></button>';
-  if(warn)h+='<button class="al" data-action="goto-vac"><span class="dot warn"></span><span>'+plural(warn,'paciente con vacuna por vencer','pacientes con vacuna por vencer')+'</span></button>';
-  if(low)h+='<button class="al" data-action="goto-stock"><span class="dot warn"></span><span>'+plural(low,'producto con poco stock','productos con poco stock')+'</span></button>';
+  if(bad)h+='<button class="al" data-action="goto-vac"><span class="dot vencida"></span><span>'+plural(bad,'paciente con vacuna vencida','pacientes con vacuna vencida')+'</span></button>';
+  if(warn)h+='<button class="al" data-action="goto-vac"><span class="dot porvencer"></span><span>'+plural(warn,'paciente con vacuna por vencer','pacientes con vacuna por vencer')+'</span></button>';
+  if(low)h+='<button class="al" data-action="goto-stock"><span class="dot stock"></span><span>'+plural(low,'producto con poco stock','productos con poco stock')+'</span></button>';
   if(isAdmin()){
     var d=lastExportDays();
-    if(d===null||d>7)h+='<button class="al" data-action="goto-backups"><span class="dot warn"></span><span>'+(d===null?'Todavía no descargaste una copia de seguridad':'Hace '+plural(d,'día','días')+' que no descargás una copia de seguridad')+'</span></button>';
+    if(d===null||d>7)h+='<button class="al" data-action="goto-backups"><span class="dot copia"></span><span>'+(d===null?'Todavía no descargaste una copia de seguridad':'Hace '+plural(d,'día','días')+' que no descargás una copia de seguridad')+'</span></button>';
   }
   if(!h)h='<div class="al"><span class="dot ok"></span><span>Todo al día</span></div>';
   $('#alerts').innerHTML='<h3>Para revisar</h3>'+h;
@@ -388,7 +396,7 @@ function filteredPatients(){
   return S.patients.filter(function(p){
     if((ui.filter==='Perro'||ui.filter==='Gato')&&p.species!==ui.filter)return false;
     if(ui.filter==='alert'&&!patientAlert(p))return false;
-    if(q){var hay=norm(p.name+' '+p.owner+' '+p.breed+' '+p.phone);if(hay.indexOf(q)<0&&!(qd.length>=3&&p.phone.replace(/\D/g,'').indexOf(qd)>=0))return false;}
+    if(q){var hay=norm(hcNum(p)+' '+(p.hc||'')+' '+p.name+' '+p.owner+' '+p.breed+' '+p.phone);if(hay.indexOf(q)<0&&!(qd.length>=3&&p.phone.replace(/\D/g,'').indexOf(qd)>=0))return false;}
     return true;
   });
 }
@@ -400,7 +408,7 @@ function listHTML(){
     var chip=al==='bad'?'<span class="chip bad">Vacuna vencida</span>':al==='warn'?'<span class="chip warn">Vacuna por vencer</span>':'';
     return '<li><button class="pitem" data-action="select" data-id="'+p.id+'" aria-current="'+(p.id===ui.sel)+'">'+
       '<span class="avatar" aria-hidden="true">'+emo(p)+'</span>'+
-      '<span class="pi-main"><b>'+esc(p.name)+'</b><small>'+esc(p.breed||p.species)+' · '+esc(p.owner)+'</small></span>'+chip+'</button></li>';
+      '<span class="pi-main"><b>'+esc(p.name)+'</b><small>'+(p.hc?'<span class="hc">'+hcNum(p)+'</span> · ':'')+esc(p.breed||p.species)+' · '+esc(p.owner)+'</small></span>'+chip+'</button></li>';
   }).join('');
 }
 var emptyPane=function(){return '<p class="empty">'+(S.patients.length?'Elegí un paciente de la lista para ver su historia clínica, o agregá uno nuevo.':'Cuando cargues el primer paciente vas a ver acá su historia clínica.')+'</p>';};
@@ -537,9 +545,9 @@ function detailHTML(p){
 
   return '<button class="btn back" data-action="back">Volver a la lista</button>'+
     '<header class="phead"><div class="avatar big" aria-hidden="true">'+emo(p)+'</div>'+
-    '<div class="info"><h2>'+esc(p.name)+'</h2>'+
+    '<div class="info"><h2>'+esc(p.name)+(p.hc?' <span class="hcbadge" title="Número de historia clínica">'+hcLabel(p)+'</span>':'')+'</h2>'+
     '<p class="meta">'+esc(p.species)+(p.breed?' '+esc(p.breed):'')+' · '+esc(p.sex)+(p.neutered?' (castrad'+(p.sex==='Hembra'?'a':'o')+')':'')+' · '+ageText(p.birth)+(p.weight!==''?' · '+esc(p.weight)+' kg':'')+'</p>'+
-    '<p class="meta">Dueño: '+esc(p.owner)+(p.phone?' · '+esc(p.phone):'')+(p.email?' · '+esc(p.email):'')+'</p></div>'+
+    '<p class="meta">Dueño: '+(p.clientId?'<button class="link ownerlink" data-action="open-client" data-id="'+p.clientId+'" title="Ver datos de contacto y mascotas del cliente">'+esc(p.owner)+'</button>':esc(p.owner))+'</p></div>'+
     '<div class="pactions"><button class="btn primary" data-action="charge">Cobrar servicio</button><button class="btn" data-action="edit-patient">Editar datos</button><button class="btn" data-action="print">Imprimir</button>'+
     (isAdmin()?'<button class="btn danger-o" data-action="del-patient">Eliminar</button>':'')+'</div></header>'+
     (p.notes?'<p class="note"><b>Notas:</b> '+esc(p.notes)+'</p>':'')+
@@ -574,7 +582,7 @@ function viewFarmacia(){
 function stockHTML(){
   var admin=isAdmin();
   var sq=norm(ui.stq).trim();
-  var L=S.products.filter(function(x){return (ui.cat==='all'||x.category===ui.cat)&&(!sq||norm(x.name+' '+x.category).indexOf(sq)>=0);});
+  var L=S.products.filter(function(x){return (ui.cat==='all'||x.category===ui.cat)&&(!sq||norm(x.name+' '+x.category+' '+(x.barcode||'')).indexOf(sq)>=0);});
   var totCost=0,totSale=0;
   var rows=L.map(function(x){
     var chip=x.stock<=0?'<span class="chip bad">Sin stock</span>':lowStock(x)?'<span class="chip warn">Poco stock</span>':'';
@@ -590,14 +598,16 @@ function stockHTML(){
     var margin=x.cost!=null&&x.price>0?Math.round((x.price-x.cost)/x.price*1000)/10:null;
     var mCell=margin==null?'—':'<span class="'+(x.price<x.cost?'negtxt':'')+'"'+(x.price<x.cost?' title="El precio de venta es menor que el costo"':'')+'>'+(x.price<x.cost?'⚠ ':'')+String(margin).replace('.',',')+'%</span>';
     var costCells=admin?'<td class="num col2">'+(x.cost!=null?money(x.cost):'—')+'</td><td class="num col2">'+mCell+'</td><td class="num col2">'+(val!=null?money(val):'—')+'</td>':'';
-    return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small>'+vacNote+'</td><td>'+stockCell+'</td><td class="num">'+x.min+'</td><td>'+chip+'</td><td class="num">'+money(x.price)+'</td>'+costCells+'<td class="act">'+acts+'</td></tr>';
+    return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small>'+(x.barcode?'<br><small class="bc" title="Código de barras">▮ '+esc(x.barcode)+'</small>':'')+vacNote+'</td><td>'+stockCell+'</td><td class="num">'+x.min+'</td><td>'+chip+'</td><td class="num">'+money(x.price)+'</td>'+costCells+'<td class="act">'+acts+'</td></tr>';
   }).join('');
   var cols=admin?9:6;
   var empty=S.products.length?'No hay productos en esta categoría.':'Todavía no cargaste productos. '+(admin?'Empezá con “Nuevo producto”.':'Pedile al administrador que los cargue.');
   var foot=admin&&L.length?'<tfoot><tr><td colspan="'+cols+'"><b>Stock valorizado:</b> '+money(totCost)+' a costo / '+money(totSale)+' a precio de venta</td></tr></tfoot>':'';
   return '<div class="toolbar">'+segHTML('cat',[['all','Todos']].concat(PROD_CATS.map(function(c){return [c,c];})),ui.cat)+
+    '<span class="scanbtns"><button class="btn" data-action="scan-sell" title="Leer el código de barras de un producto para venderlo">📷 Vender con escáner</button>'+
+      (admin?'<button class="btn" data-action="scan-stock" title="Leer el código de barras para ingresar stock o cargar un producto nuevo">📷 Ingresar con escáner</button>':'')+'</span>'+
     (admin?'<button class="btn primary" data-action="new-product">Nuevo producto</button>':'')+'</div>'+
-    '<input id="stq" type="search" placeholder="Buscar producto" value="'+esc(ui.stq)+'" aria-label="Buscar producto" style="margin-bottom:1rem">'+
+    '<input id="stq" type="search" placeholder="Buscar producto (o leer un código con un lector USB y Enter)" value="'+esc(ui.stq)+'" aria-label="Buscar producto" style="margin-bottom:1rem">'+
     '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Stock</th><th class="num">Mínimo</th><th>Estado</th><th class="num">Precio de venta</th>'+(admin?'<th class="num col2">Costo unit.</th><th class="num col2">Margen</th><th class="num col2">Valor en stock</th>':'')+'<th></th></tr></thead><tbody>'+
     (rows||'<tr><td colspan="'+cols+'" class="empty">'+empty+'</td></tr>')+'</tbody>'+foot+'</table></div>';
 }
@@ -695,6 +705,73 @@ function viewReportes(){
 }
 
 /* ============================================================
+   Clientes (dueños) con varias mascotas
+   ============================================================ */
+function filteredClients(){
+  var q=norm(ui.cliq).trim(),qd=ui.cliq.replace(/\D/g,'');
+  return S.clients.filter(function(c){
+    if(!q)return true;
+    var hay=norm(c.name+' '+c.email+' '+c.phone+' '+c.address+' '+c.pets.map(function(p){return p.name;}).join(' '));
+    return hay.indexOf(q)>=0||(qd.length>=3&&c.phone.replace(/\D/g,'').indexOf(qd)>=0);
+  });
+}
+function clientListHTML(){
+  var L=filteredClients();
+  if(!L.length)return '<li class="empty">'+(S.clients.length?'No hay clientes con esa búsqueda.':'Todavía no hay clientes. Se crean al cargar una mascota o con “Nuevo cliente”.')+'</li>';
+  return L.map(function(c){
+    return '<li><button class="pitem" data-action="select-client" data-id="'+c.id+'" aria-current="'+(c.id===ui.csel)+'"><span class="avatar" aria-hidden="true">👤</span>'+
+      '<span class="pi-main"><b>'+esc(c.name)+'</b><small>'+plural(c.pets.length,'mascota','mascotas')+(c.phone?' · '+esc(c.phone):'')+'</small></span></button></li>';
+  }).join('');
+}
+function clientDetailHTML(c){
+  var tel=String(c.phone||'').replace(/[^\d+]/g,'');
+  var contact=[];
+  contact.push(c.phone?'Tel. <a href="'+(tel?'tel:'+tel:'#')+'">'+esc(c.phone)+'</a>':'<span class="mut">Sin teléfono</span>');
+  contact.push(c.email?'<a href="mailto:'+esc(c.email)+'">'+esc(c.email)+'</a>':'<span class="mut">Sin email</span>');
+  var pets=c.pets.length?'<div class="petlist">'+c.pets.map(function(p){
+    return '<button class="petrow" data-action="open-patient" data-id="'+p.id+'" title="Abrir la historia clínica de '+esc(p.name)+'"><span class="avatar" aria-hidden="true">'+(p.species==='Gato'?'🐱':'🐶')+'</span>'+
+      '<span class="pi-main"><b>'+esc(p.name)+'</b><small>'+(p.hc?'HC N° '+String(p.hc).padStart(4,'0')+' · ':'')+esc(p.breed||p.species)+'</small></span><span class="chev" aria-hidden="true">›</span></button>';
+  }).join('')+'</div>':'<p class="empty">Este cliente todavía no tiene mascotas asignadas.</p>';
+  var pay=c.payments.length?'<div class="tbl-wrap"><table class="tbl slim"><thead><tr><th>Fecha</th><th>Mascota</th><th>Concepto</th><th>Forma de pago</th><th class="num">Monto</th></tr></thead><tbody>'+c.payments.map(function(x){
+    return '<tr><td>'+fmtDate(x.date)+'</td><td><button class="link" data-action="open-patient" data-id="'+x.patientId+'">'+esc(x.patient)+'</button></td><td>'+esc(x.concept)+'</td><td>'+esc(x.method||'—')+'</td><td class="num">'+money(x.amount)+'</td></tr>';
+  }).join('')+'</tbody><tfoot><tr><td colspan="5"><b>Total pagado por todas sus mascotas:</b> '+money(c.totalPaid)+'</td></tr></tfoot></table></div>':'<p class="empty">Todavía no se cobró nada a las mascotas de este cliente.</p>';
+  return '<button class="btn back" data-action="back-client">Volver a la lista</button>'+
+    '<header class="phead"><div class="avatar big" aria-hidden="true">👤</div><div class="info"><h2>'+esc(c.name)+'</h2>'+
+    '<p class="meta">'+contact.join(' · ')+'</p><p class="meta">'+(c.address?esc(c.address):'<span class="mut">Sin dirección</span>')+'</p></div>'+
+    '<div class="pactions"><button class="btn primary" data-action="add-pet">Agregar mascota</button><button class="btn" data-action="edit-client">Editar datos</button>'+
+    (isAdmin()?'<button class="btn danger-o" data-action="del-client">Eliminar</button>':'')+'</div></header>'+
+    '<section class="sec"><div class="sec-head"><h3>Mascotas ('+c.pets.length+')</h3></div>'+pets+'</section>'+
+    '<section class="sec"><div class="sec-head"><h3>Historial de pagos</h3></div>'+pay+'</section>';
+}
+function viewClientes(){
+  var c=ui.csel&&ui.cdetail&&ui.cdetail.id===ui.csel?ui.cdetail:null;
+  var right;
+  if(ui.csel)right=c?clientDetailHTML(c):'<button class="btn back" data-action="back-client">Volver a la lista</button><p class="empty">Cargando…</p>';
+  else right='<p class="empty">Elegí un cliente de la lista para ver su contacto, sus mascotas y su historial de pagos.</p>';
+  return '<section class="pac '+(ui.csel?'show-detail':'')+'"><div class="pac-list">'+
+    '<div class="head"><h1>Clientes</h1><button class="btn primary" data-action="new-client">Nuevo cliente</button></div>'+
+    '<input id="cliq" type="search" placeholder="Buscar por nombre, teléfono, email, dirección o mascota" value="'+esc(ui.cliq)+'" aria-label="Buscar cliente">'+
+    '<ul class="plist" id="clist">'+clientListHTML()+'</ul></div><div class="pac-detail">'+right+'</div></section>';
+}
+function clientForm(c){
+  var isNew=!c;c=c||{};
+  openForm({title:isNew?'Nuevo cliente':'Editar datos de '+esc(c.name),
+    body:'<div class="fields">'+fld('Nombre','firstName',{value:c.firstName,req:true})+fld('Apellido','lastName',{value:c.lastName,req:true})+
+      fld('Teléfono','phone',{type:'tel',value:c.phone,pattern:PHONE_PAT,title:'Solo números, espacios, + , - y paréntesis (mínimo 6 dígitos)'})+
+      fld('Email','email',{type:'email',value:c.email,ph:'nombre@correo.com'})+fld('Dirección','address',{value:c.address,full:true,ph:'Calle, número, localidad'})+'</div>'+
+      (isNew?'':'<p><small>Estos datos se usan en todas las mascotas de este cliente: se cargan una sola vez.</small></p>'),
+    submit:isNew?'Agregar cliente':'Guardar cambios',
+    onSubmit:async function(d){
+      var body={firstName:d.firstName,lastName:d.lastName,phone:d.phone,email:d.email,address:d.address};
+      if(isNew){
+        var nm=(d.firstName+' '+d.lastName);
+        if(!(await confirmDuplicate(S.clients.some(function(x){return sameName(x.name,nm);}))))return false;
+        var r=await api('/clients',{body:body});ui.csel=r.id;ui.cdetail=null;await reload();toast('Cliente agregado');
+      }else{await api('/clients/'+c.id,{method:'PUT',body:body});await reload();toast('Datos del cliente guardados');}
+    }});
+}
+
+/* ============================================================
    G1 · Papelera
    ============================================================ */
 var TRASH_KIND={patient:'Paciente',vaccine:'Vacuna',diagnosis:'Diagnóstico',study:'Estudio',medication:'Medicación',charge:'Cobro'};
@@ -786,7 +863,8 @@ function viewProveedores(){
    ============================================================ */
 var WEEKDAYS=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
 // Texto de un turno en la grilla: "10:00 · Luna (Gómez)" (el apellido distingue pacientes homónimos).
-var apptLabel=function(a){return a.time.slice(0,5)+' · '+esc(a.patientName)+' ('+esc(surname(a.patientOwner))+')';};
+var ownerLast=function(a){return a.patientOwnerLast||surname(a.patientOwner);};
+var apptLabel=function(a){return a.time.slice(0,5)+' · '+esc(a.patientName)+' ('+esc(ownerLast(a))+')';};
 function dayAppts(iso){return (ui.appts||[]).filter(function(a){return a.date===iso;}).sort(function(a,b){return a.time.localeCompare(b.time);});}
 function calDayColumn(iso){
   var list=dayAppts(iso);
@@ -803,7 +881,7 @@ function calMonthGrid(){
   var r=calRange(),curMonth=ui.cal.anchor.slice(0,7),cells='',d=r[0];
   while(d<=r[1]){
     var list=dayAppts(d);
-    var out=d.slice(0,7)!==curMonth,isToday=d===todayIso();
+    var out=ui.cal.view==='month'&&d.slice(0,7)!==curMonth,isToday=d===todayIso();
     var shown=list.slice(0,3).map(function(a){
       return '<button class="cal-chip '+a.type+'" data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'</button>';
     }).join('');
@@ -832,12 +910,13 @@ function dayListDialog(iso){
 function viewCalendario(){
   if(!ui.appts)return '<section class="farm"><div class="head"><h1>Calendario</h1></div><p class="empty">Cargando…</p></section>';
   var body;
-  if(ui.cal.view==='month')body=calMonthGrid();
+  // Mes y 3 semanas: días de alto fijo con turnos compactos y "+N más". 1 y 2 semanas: todos los días miden lo que el día con más turnos.
+  if(ui.cal.view==='month'||ui.cal.view==='3weeks')body=calMonthGrid();
   else{
     // E5: semana, 2 y 3 semanas se muestran como grilla de una fila por semana (7 columnas), sin scroll horizontal.
     var r=calRange(),cells='',d=r[0];
     while(d<=r[1]){cells+=calDayColumn(d);d=shiftDays(1,d);}
-    body='<div class="cal-week">'+cells+'</div>';
+    body='<div class="cal-week fit">'+cells+'</div>';
   }
   return '<section class="farm"><div class="head"><h1>Calendario</h1><button class="btn primary" data-action="new-appt">Agregar turno</button></div>'+
     '<div class="cal-head"><div class="cal-nav"><button data-action="cal-prev" aria-label="Anterior">‹</button><button class="btn" data-action="cal-today">Hoy</button><button data-action="cal-next" aria-label="Siguiente">›</button></div>'+
@@ -853,7 +932,7 @@ function render(){
   if(ui.view==='farmacia'&&!isAdmin()&&ui.tab==='caja')ui.tab='stock';
   renderNav();renderAlerts();renderUserBox();
   var v=ui.view;
-  main.innerHTML=v==='pacientes'?viewPacientes():v==='calendario'?viewCalendario():v==='farmacia'?viewFarmacia():v==='proveedores'?viewProveedores():
+  main.innerHTML=v==='pacientes'?viewPacientes():v==='clientes'?viewClientes():v==='calendario'?viewCalendario():v==='farmacia'?viewFarmacia():v==='proveedores'?viewProveedores():
     v==='reportes'?viewReportes():v==='papelera'?viewTrash():v==='copias'?viewBackups():viewUsers();
   if(v==='pacientes')loadThumbs();
 }
@@ -861,9 +940,14 @@ function render(){
 /* ============================================================
    Formularios
    ============================================================ */
-function patientForm(p){
+// Opciones de cliente (dueño) para una mascota: uno existente o uno nuevo, que se carga en el mismo formulario.
+function clientOpts(){
+  return [['','Elegí un cliente…']].concat(S.clients.map(function(c){return [c.id,c.name+(c.phone?' · '+c.phone:'')];})).concat([['new','➕ Nuevo cliente…']]);
+}
+function patientForm(p,presetClient){
   var isNew=!p;p=p||{species:'Perro',sex:'Macho',neutered:false};
-  openForm({title:isNew?'Nuevo paciente':'Editar datos de '+esc(p.name),
+  var cur=isNew?(presetClient||''):(p.clientId||'');
+  var f=openForm({title:isNew?'Nuevo paciente':'Editar datos de '+esc(p.name),
     body:'<div class="fields">'+
       fld('Nombre','name',{value:p.name,req:true})+
       fld('Especie','species',{opts:['Perro','Gato'],value:p.species})+
@@ -871,20 +955,40 @@ function patientForm(p){
       fld('Sexo','sex',{opts:['Macho','Hembra'],value:p.sex})+
       fld('Fecha de nacimiento (aprox.)','birth',{type:'date',value:p.birth,max:todayIso()})+
       fld('Peso (kg)','weight',{type:'number',step:'0.01',min:0.01,max:150,value:p.weight})+
-      fld('Dueño','owner',{value:p.owner,req:true})+
-      fld('Teléfono','phone',{type:'tel',value:p.phone,pattern:PHONE_PAT,title:'Solo números, espacios, + , - y paréntesis (mínimo 6 dígitos)'})+
-      fld('Email del dueño','email',{type:'email',value:p.email,full:true,ph:'nombre@correo.com'})+
+      fld('Cliente (dueño)','clientId',{opts:clientOpts(),value:cur,req:true,full:true})+
+    '</div>'+
+    // Datos del cliente nuevo: se guardan en el cliente, no en la historia clínica de la mascota.
+    '<div class="fields newcli" id="newcli" hidden>'+
+      fld('Nombre del cliente','cFirst',{})+fld('Apellido del cliente','cLast',{})+
+      fld('Teléfono','cPhone',{type:'tel',pattern:PHONE_PAT,title:'Solo números, espacios, + , - y paréntesis (mínimo 6 dígitos)'})+
+      fld('Email','cEmail',{type:'email',ph:'nombre@correo.com'})+
+      fld('Dirección','cAddress',{full:true})+
+    '</div><div class="fields">'+
       fld('Castrado/a','neutered',{type:'checkbox',value:p.neutered,full:true})+
       fld('Alergias o notas importantes','notes',{type:'textarea',value:p.notes,full:true,ph:'Ej.: alérgico a la penicilina'})+
     '</div>',
     submit:isNew?'Agregar paciente':'Guardar cambios',
     onSubmit:async function(d){
-      var body={name:d.name,species:d.species,breed:d.breed,sex:d.sex,birth:d.birth,weight:d.weight,owner:d.owner,phone:d.phone,email:d.email,neutered:!!d.neutered,notes:d.notes};
+      var body={name:d.name,species:d.species,breed:d.breed,sex:d.sex,birth:d.birth,weight:d.weight,neutered:!!d.neutered,notes:d.notes};
+      var ownerName;
+      if(d.clientId==='new'){
+        body.client={firstName:d.cFirst,lastName:d.cLast,phone:d.cPhone,email:d.cEmail,address:d.cAddress};
+        ownerName=(d.cFirst+' '+d.cLast).trim();
+      }else{
+        body.clientId=Number(d.clientId);
+        var cl=S.clients.find(function(x){return x.id===body.clientId;});ownerName=cl?cl.name:'';
+      }
       if(isNew){
-        if(!(await confirmDuplicate(S.patients.some(function(x){return sameName(x.name,d.name)&&sameName(x.owner,d.owner);}))))return false;
+        if(!(await confirmDuplicate(S.patients.some(function(x){return sameName(x.name,d.name)&&sameName(x.owner,ownerName);}))))return false;
         var r=await api('/patients',{body:body});ui.sel=r.id;ui.detail=null;ui.view='pacientes';await reload();toast('Paciente agregado');}
       else{await api('/patients/'+p.id,{method:'PUT',body:body});await reload();toast('Datos guardados');}
     }});
+  var sel=f.querySelector('[name="clientId"]'),box=f.querySelector('#newcli');
+  var sync=function(){
+    var nw=sel.value==='new';box.hidden=!nw;
+    ['cFirst','cLast'].forEach(function(n){f.querySelector('[name="'+n+'"]').required=nw;}); // oculto no puede ser "required"
+  };
+  sel.addEventListener('change',sync);sync();
 }
 function vaccineForm(p,v){
   var isEdit=!!v;
@@ -1022,10 +1126,11 @@ function printDoc(kind,p){
   };
   var html='<header class="ph"><div><h1>'+esc(S.clinic)+'</h1><p>'+(cert?'Certificado de vacunación':'Historia clínica')+'</p></div><p class="pd">Emitido el '+fmtDate(todayIso())+'</p></header>'+
     '<h2>Paciente</h2><table class="kv"><tbody>'+
-    '<tr><th>Nombre</th><td>'+esc(p.name)+'</td><th>Especie / raza</th><td>'+esc(p.species)+(p.breed?' · '+esc(p.breed):'')+'</td></tr>'+
-    '<tr><th>Sexo</th><td>'+esc(p.sex)+(p.neutered?' (castrad'+(p.sex==='Hembra'?'a':'o')+')':'')+'</td><th>Edad</th><td>'+esc(ageText(p.birth))+'</td></tr>'+
-    '<tr><th>Peso</th><td>'+(p.weight!==''?fmtKg(p.weight):'—')+'</td><th>Dueño</th><td>'+esc(p.owner)+'</td></tr>'+
-    '<tr><th>Teléfono</th><td>'+yes(p.phone)+'</td><th>Email</th><td>'+yes(p.email)+'</td></tr></tbody></table>';
+    '<tr><th>Nombre</th><td>'+esc(p.name)+'</td><th>N° de historia clínica</th><td>'+(p.hc?hcNum(p):'—')+'</td></tr>'+
+    '<tr><th>Especie / raza</th><td>'+esc(p.species)+(p.breed?' · '+esc(p.breed):'')+'</td><th>Sexo</th><td>'+esc(p.sex)+(p.neutered?' (castrad'+(p.sex==='Hembra'?'a':'o')+')':'')+'</td></tr>'+
+    '<tr><th>Edad</th><td>'+esc(ageText(p.birth))+'</td><th>Peso</th><td>'+(p.weight!==''?fmtKg(p.weight):'—')+'</td></tr>'+
+    '<tr><th>Dueño</th><td>'+esc(p.owner)+'</td><th>Teléfono</th><td>'+yes(p.phone)+'</td></tr>'+
+    '<tr><th>Email</th><td colspan="3">'+yes(p.email)+'</td></tr></tbody></table>';
   var vacs=p.vaccines.slice().sort(byDate).map(function(v){return '<tr><td>'+fmtDate(v.date)+'</td><td>'+esc(v.name)+'</td><td>'+(v.next?fmtDate(v.next):'—')+'</td></tr>';});
   if(cert){
     html+='<h2>Vacunas aplicadas</h2>'+table(['Fecha de aplicación','Vacuna','Próxima dosis'],vacs,'No hay vacunas registradas.')+
@@ -1137,10 +1242,111 @@ function bindSpecies(f){
   var sync=function(){sp.hidden=cat.value!=='Vacunas';};
   cat.addEventListener('change',sync);sync();
 }
-function productForm(x){
-  var isNew=!x;x=x||{category:'Medicamentos',min:5,price:0};
+/* ============================================================
+   Lector de códigos de barras con la cámara (opcional)
+   Usa el detector nativo del navegador cuando existe (Chrome en Android) y, si no, la librería ZXing guardada en
+   /vendor (iPhone/Safari y otros). Siempre se puede escribir el código a mano, y un lector USB funciona como teclado.
+   ============================================================ */
+var zxingLoading=null;
+function loadZXing(){
+  if(window.ZXing)return Promise.resolve();
+  if(!zxingLoading)zxingLoading=new Promise(function(ok,fail){
+    var sc=document.createElement('script');sc.src='/vendor/zxing-library.min.js';
+    sc.onload=ok;sc.onerror=function(){zxingLoading=null;fail(new Error('No se pudo cargar el lector de códigos.'));};
+    document.head.appendChild(sc);
+  });
+  return zxingLoading;
+}
+// Devuelve una promesa con el código leído (o escrito a mano), o null si se cancela.
+function openScanner(title){
+  return new Promise(function(resolve){
+    var d=document.createElement('dialog');d.className='scan';
+    d.innerHTML='<form class="dform"><h2>'+esc(title||'Escanear código de barras')+'</h2>'+
+      '<div class="scanbox"><video playsinline muted autoplay></video><div class="scanline" aria-hidden="true"></div></div>'+
+      '<p class="scanmsg" role="status">Abriendo la cámara…</p>'+
+      '<div class="scanmanual"><label class="fld"><span>¿No lo lee? Escribí el código</span><input type="text" inputmode="numeric" autocomplete="off" id="scanman" placeholder="Ej.: 7791234567890"></label><button type="button" class="btn primary" id="scanuse">Usar</button></div>'+
+      '<div class="actions"><button type="button" class="btn ghost" id="scancancel">Cancelar</button></div></form>';
+    document.body.appendChild(d);
+    var video=d.querySelector('video'),msg=d.querySelector('.scanmsg'),stream=null,timer=null,done=false,reader=null;
+    var finish=function(code){
+      if(done)return;done=true;clearTimeout(timer);
+      if(stream)stream.getTracks().forEach(function(t){t.stop();});
+      try{if(navigator.vibrate&&code)navigator.vibrate(60);}catch(e){}
+      if(d.open)d.close();
+    };
+    d.addEventListener('close',function(){finish(null);d.remove();resolve(d._code||null);});
+    var take=function(code){d._code=String(code).trim();finish(d._code);};
+    d.querySelector('#scancancel').addEventListener('click',function(){finish(null);});
+    var man=d.querySelector('#scanman');
+    var useMan=function(){var v=man.value.trim();if(v)take(v);else msg.textContent='Escribí el código y tocá “Usar”.';};
+    d.querySelector('#scanuse').addEventListener('click',useMan);
+    man.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();useMan();}});
+    d.showModal();
+    if(!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia)){
+      msg.textContent='Este navegador no permite usar la cámara (hace falta abrir el sistema con https). Podés escribir el código.';return;
+    }
+    navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:false}).then(function(st){
+      if(done){st.getTracks().forEach(function(t){t.stop();});return;}
+      stream=st;video.srcObject=st;return video.play().catch(function(){});
+    }).then(function(){
+      if(done||!stream)return;
+      msg.textContent='Apuntá la cámara al código de barras y mantenelo quieto.';
+      var cv=document.createElement('canvas'),cx=cv.getContext('2d',{willReadFrequently:true});
+      var native=null,tick;
+      var setup=window.BarcodeDetector?BarcodeDetector.getSupportedFormats().then(function(f){
+        var want=['ean_13','ean_8','upc_a','upc_e','code_128','code_39','itf'].filter(function(x){return f.indexOf(x)>=0;});
+        if(want.length)native=new BarcodeDetector({formats:want});
+      }).catch(function(){}):Promise.resolve();
+      return setup.then(function(){return native?null:loadZXing();}).then(function(){
+        if(!native){
+          var Z=window.ZXing,hints=new Map();
+          hints.set(Z.DecodeHintType.POSSIBLE_FORMATS,[Z.BarcodeFormat.EAN_13,Z.BarcodeFormat.EAN_8,Z.BarcodeFormat.UPC_A,Z.BarcodeFormat.UPC_E,Z.BarcodeFormat.CODE_128,Z.BarcodeFormat.CODE_39,Z.BarcodeFormat.ITF]);
+          hints.set(Z.DecodeHintType.TRY_HARDER,true);
+          reader=new Z.MultiFormatReader();reader.setHints(hints);
+        }
+        tick=function(){
+          if(done)return;
+          var w=video.videoWidth,h=video.videoHeight;
+          if(!w||!h){timer=setTimeout(tick,150);return;}
+          var p=native?native.detect(video).then(function(r){return r&&r[0]?r[0].rawValue:null;}).catch(function(){return null;}):new Promise(function(ok){
+            var k=Math.min(1,900/w);cv.width=Math.round(w*k);cv.height=Math.round(h*k);cx.drawImage(video,0,0,cv.width,cv.height);
+            try{
+              var Z=window.ZXing,bmp=new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(cv)));
+              ok(reader.decode(bmp).getText());
+            }catch(e){ok(null);}
+          });
+          p.then(function(code){if(code)take(code);else timer=setTimeout(tick,native?120:180);});
+        };
+        tick();
+      });
+    }).catch(function(err){
+      var denied=err&&(err.name==='NotAllowedError'||err.name==='SecurityError');
+      msg.textContent=denied?'No se pudo usar la cámara: permitila en el navegador (candado de la barra de direcciones). Podés escribir el código.':'No se pudo abrir la cámara'+(err&&err.message?' ('+err.message+')':'')+'. Podés escribir el código.';
+    });
+  });
+}
+// Producto que tiene ese código de barras (o undefined).
+var prodByBarcode=function(code){var c=String(code||'').trim();return c?S.products.find(function(x){return x.barcode===c;}):undefined;};
+// Vender con el escáner: reconoce el producto y abre la venta (cantidad, forma de pago y paciente opcional).
+async function scanToSell(code){
+  var x=prodByBarcode(code);
+  if(!x){toast('No hay ningún producto con el código '+code+'. Asignale el código desde “Editar” en Stock.',true);return;}
+  var vac=vaccineOfDrug(x.id);
+  if(vac){toast('“'+x.name+'” es la droga de la vacuna “'+vac.name+'”: se descuenta al aplicarla y no se vende suelta.',true);return;}
+  sellForm(x);
+}
+// Ingresar stock con el escáner: si el producto existe, abre "Agregar stock"; si no, ofrece cargarlo con el código ya puesto.
+async function scanToStock(code){
+  var x=prodByBarcode(code);
+  if(x){buyForm(x);return;}
+  var ch=await choiceDialog('Producto nuevo','<p>No hay ningún producto con el código <b>'+esc(code)+'</b>. ¿Querés cargarlo como producto nuevo? El código queda guardado para reconocerlo después.</p>',
+    [{label:'Cancelar',value:null,cls:'ghost'},{label:'Cargar producto nuevo',value:'new',cls:'primary'}]);
+  if(ch==='new')productForm(null,{barcode:code});
+}
+function productForm(x,preset){
+  var isNew=!x;x=x||Object.assign({category:'Medicamentos',min:5,price:0},preset||{});
   var pf=openForm({title:isNew?'Nuevo producto':'Editar producto',
-    body:'<div class="fields">'+fld('Nombre','name',{value:x.name,req:true,full:true})+fld('Categoría','category',{opts:PROD_CATS,value:x.category})+fld('Precio de venta','price',{type:'number',min:0,step:'0.01',value:x.price,req:true})+
+    body:'<div class="fields">'+fld('Nombre','name',{value:x.name,req:true,full:true})+fld('Código de barras (opcional)','barcode',{value:x.barcode,full:true,ph:'Escribilo o escanealo con la cámara',pattern:'[0-9A-Za-z._\\-]{4,64}',title:'Entre 4 y 64 caracteres: letras, números, punto y guion'})+fld('Categoría','category',{opts:PROD_CATS,value:x.category})+fld('Precio de venta','price',{type:'number',min:0,step:'0.01',value:x.price,req:true})+
     fld('Especie (solo vacunas, opcional)','species',{opts:SPECIES_OPTS,value:x.species,full:true})+
     fld('Proveedor habitual (opcional)','supplierId',{opts:supplierOpts(),value:x.supplierId,full:true})+
     fld('Stock mínimo (para avisar)','min',{type:'number',min:0,step:'1',value:x.min,req:true})+
@@ -1155,11 +1361,22 @@ function productForm(x){
         if(!(await confirmDuplicate(S.products.some(function(x){return sameName(x.name,d.name);}))))return false;
         var cost=Number(d.stock)*Number(d.unitPrice);
         if(cost>0&&!(await confirmNegativeCash(cost,d.method)))return false;
-        await api('/products',{body:{name:d.name,category:d.category,price:d.price,min:d.min,stock:d.stock,unitPrice:d.unitPrice,method:d.method,species:d.species,supplierId:d.supplierId||null}});await reload();toast('Producto agregado');}
-      else{await api('/products/'+x.id,{method:'PUT',body:{name:d.name,category:d.category,price:d.price,min:d.min,species:d.species,supplierId:d.supplierId||null}});await reload();toast('Producto guardado');}
+        await api('/products',{body:{name:d.name,category:d.category,price:d.price,min:d.min,stock:d.stock,unitPrice:d.unitPrice,method:d.method,species:d.species,supplierId:d.supplierId||null,barcode:d.barcode}});await reload();toast('Producto agregado');}
+      else{await api('/products/'+x.id,{method:'PUT',body:{name:d.name,category:d.category,price:d.price,min:d.min,species:d.species,supplierId:d.supplierId||null,barcode:d.barcode}});await reload();toast('Producto guardado');}
     }});
   bindSpecies(pf);
   if(isNew)bindTotalPreview(pf,'stock','unitPrice');
+  // Botón de cámara junto al campo del código de barras.
+  var bcIn=pf.querySelector('[name="barcode"]'),row=document.createElement('div');row.className='withbtn';
+  bcIn.parentNode.insertBefore(row,bcIn);row.appendChild(bcIn);
+  var sb=document.createElement('button');sb.type='button';sb.className='btn';sb.textContent='📷 Escanear';row.appendChild(sb);
+  sb.addEventListener('click',async function(){
+    var code=await openScanner('Escanear el código del producto');
+    if(!code)return;
+    var other=prodByBarcode(code);
+    if(other&&(isNew||other.id!==x.id)){pf.querySelector('.err').textContent='Ese código ya pertenece al producto “'+other.name+'”.';return;}
+    pf.querySelector('.err').textContent='';bcIn.value=code;
+  });
 }
 function buyForm(x){
   var f=openForm({title:'Agregar stock de '+esc(x.name),
@@ -1378,7 +1595,7 @@ async function confirmNoOverlap(body,selfId){
   var s0=toMin(body.time),e0=s0+Number(body.duration);
   var hit=list.find(function(a){var as=toMin(a.time);return s0<as+a.duration&&as<e0;});
   if(!hit)return true;
-  var ch=await choiceDialog('Turno superpuesto','<p>Ya hay un turno a esa hora: '+esc(hit.patientName)+' ('+esc(surname(hit.patientOwner))+') – '+esc(hit.title)+'. ¿Agendar igual?</p>',
+  var ch=await choiceDialog('Turno superpuesto','<p>Ya hay un turno a esa hora: '+esc(hit.patientName)+' ('+esc(ownerLast(hit))+') – '+esc(hit.title)+'. ¿Agendar igual?</p>',
     [{label:'Cambiar la hora',value:'no',cls:'ghost'},{label:'Agendar igual',value:'ok',cls:'primary'}]);
   return ch==='ok';
 }
@@ -1526,6 +1743,21 @@ function findRec(kind,id){return ((ui.detail&&ui.detail[kind])||[]).find(functio
 var actions={
   nav:function(id,b){return go(b.dataset.v);},
   filter:function(id,b){ui.filter=b.dataset.v;dropHiddenSelection();render();},
+  // Clientes
+  'select-client':function(id){ui.csel=Number(id);ui.cdetail=null;window.scrollTo(0,0);return refreshView();},
+  'back-client':function(){ui.csel=null;ui.cdetail=null;render();},
+  'new-client':function(){clientForm();},
+  'edit-client':function(){if(ui.cdetail)clientForm(ui.cdetail);},
+  'add-pet':function(){if(ui.cdetail)patientForm(null,ui.cdetail.id);},
+  'del-client':function(){
+    var c=ui.cdetail;if(!c)return;
+    var extra=c.pets.length?' Tiene '+plural(c.pets.length,'mascota asignada','mascotas asignadas')+': primero pasalas a otro cliente (Editar datos de la mascota).':'';
+    confirmForm('Eliminar a '+esc(c.name),'Se elimina el cliente y sus datos de contacto.'+extra+' Esta acción no se puede deshacer.','Eliminar cliente',async function(){
+      await api('/clients/'+c.id,{method:'DELETE'});ui.csel=null;ui.cdetail=null;await reload();toast('Cliente eliminado');
+    });
+  },
+  'open-patient':function(id){ui.sel=Number(id);ui.detail=null;ui.filter='all';ui.q='';return go('pacientes');},
+  'open-client':function(id){ui.csel=Number(id);ui.cdetail=null;ui.cliq='';return go('clientes');},
   select:function(id){ui.sel=Number(id);ui.detail=null;window.scrollTo(0,0);return refreshView();},
   back:function(){ui.sel=null;ui.detail=null;render();},
   'goto-vac':function(){ui.view='pacientes';ui.filter='alert';ui.sel=null;ui.detail=null;render();},
@@ -1631,6 +1863,8 @@ var actions={
     return downloadFile('/cash/export?period=range&from='+from+'&to='+to,'movimientos-'+from+'_a_'+to+'.csv');
   },
   'new-product':function(){productForm();},
+  'scan-sell':async function(){var c=await openScanner('Vender: escanear el producto');if(c)await scanToSell(c);},
+  'scan-stock':async function(){var c=await openScanner('Ingresar stock: escanear el producto');if(c)await scanToStock(c);},
   'edit-product':function(id){productForm(S.products.find(function(x){return String(x.id)===String(id);}));},
   'del-product':function(id){
     var x=S.products.find(function(y){return String(y.id)===String(id);});if(!x)return;
@@ -1730,7 +1964,7 @@ var actions={
   logout:async function(){
     try{await api('/logout',{body:{}});}catch(e){}
     S.user=null;ui.sel=null;ui.detail=null;ui.cash=null;ui.rmonthly=null;ui.backups=null;ui.users=null;
-    ui.suppliers=null;ui.appts=null;ui.cal={view:'week',anchor:todayIso()}; // v2
+    ui.suppliers=null;ui.csel=null;ui.cdetail=null;ui.appts=null;ui.cal={view:'week',anchor:todayIso()}; // v2
     main.innerHTML='';
     showLogin();
   }
@@ -1762,6 +1996,13 @@ document.addEventListener('click',function(e){
   document.querySelectorAll('details.rowmenu[open]').forEach(function(o){if(!o.contains(e.target)||e.target.closest('.menu button'))o.open=false;});
 });
 window.addEventListener('scroll',function(){document.querySelectorAll('details.rowmenu[open]').forEach(function(o){o.open=false;});},true);
+// Lector USB/bluetooth (se comporta como un teclado): al leer un código en el buscador de Stock y terminar con Enter, abre la venta.
+document.addEventListener('keydown',function(e){
+  if(e.key!=='Enter'||!e.target||e.target.id!=='stq')return;
+  var code=e.target.value.trim();if(!code)return;
+  e.preventDefault();
+  if(prodByBarcode(code))scanToSell(code);
+});
 document.addEventListener('input',function(e){
   if(e.target.id==='q'){
     ui.q=e.target.value;
@@ -1769,6 +2010,7 @@ document.addEventListener('input',function(e){
     $('#plist').innerHTML=listHTML();
   }
   if(e.target.id==='stq'||e.target.id==='cq'){var id=e.target.id;ui[id]=e.target.value;render();var el=$('#'+id);if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length);}}
+  if(e.target.id==='cliq'){ui.cliq=e.target.value;$('#clist').innerHTML=clientListHTML();}
   if(e.target.id==='sq'){ui.sq=e.target.value;$('#srows').innerHTML=supplierRows();}
 });
 document.addEventListener('change',function(e){
