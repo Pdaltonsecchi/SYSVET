@@ -22,6 +22,9 @@ var norm=function(s){return String(s==null?'':s).normalize('NFD').replace(/\p{Di
 var surname=function(o){var w=String(o||'').trim().split(/\s+/);return w[w.length-1]||'';};
 var toMin=function(t){return Number(t.slice(0,2))*60+Number(t.slice(3,5));};
 var fmtBytes=function(n){n=Number(n)||0;if(n>=1073741824)return (n/1073741824).toFixed(n>=10737418240?0:1).replace('.',',')+' GB';if(n>=1048576)return (n/1048576).toFixed(n>=10485760?0:1).replace('.',',')+' MB';return Math.max(1,Math.round(n/1024))+' KB';};
+// Número de historia clínica: "HC N° 0012".
+var hcNum=function(p){return p.hc?String(p.hc).padStart(4,'0'):'';};
+var hcLabel=function(p){return p.hc?'HC N° '+hcNum(p):'';};
 var plural=function(n,a,b){return n+' '+(n===1?a:b);};
 var fmtTs=function(v){var d=new Date(v);if(isNaN(d.getTime()))return '';return d.toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});};
 // v2: lunes de la semana que contiene "iso" (semana de lunes a domingo).
@@ -353,12 +356,12 @@ function renderAlerts(){
   var warn=S.patients.filter(function(p){return patientAlert(p)==='warn';}).length;
   var low=S.products.filter(lowStock).length;
   var h='';
-  if(bad)h+='<button class="al" data-action="goto-vac"><span class="dot bad"></span><span>'+plural(bad,'paciente con vacuna vencida','pacientes con vacuna vencida')+'</span></button>';
-  if(warn)h+='<button class="al" data-action="goto-vac"><span class="dot warn"></span><span>'+plural(warn,'paciente con vacuna por vencer','pacientes con vacuna por vencer')+'</span></button>';
-  if(low)h+='<button class="al" data-action="goto-stock"><span class="dot warn"></span><span>'+plural(low,'producto con poco stock','productos con poco stock')+'</span></button>';
+  if(bad)h+='<button class="al" data-action="goto-vac"><span class="dot vencida"></span><span>'+plural(bad,'paciente con vacuna vencida','pacientes con vacuna vencida')+'</span></button>';
+  if(warn)h+='<button class="al" data-action="goto-vac"><span class="dot porvencer"></span><span>'+plural(warn,'paciente con vacuna por vencer','pacientes con vacuna por vencer')+'</span></button>';
+  if(low)h+='<button class="al" data-action="goto-stock"><span class="dot stock"></span><span>'+plural(low,'producto con poco stock','productos con poco stock')+'</span></button>';
   if(isAdmin()){
     var d=lastExportDays();
-    if(d===null||d>7)h+='<button class="al" data-action="goto-backups"><span class="dot warn"></span><span>'+(d===null?'Todavía no descargaste una copia de seguridad':'Hace '+plural(d,'día','días')+' que no descargás una copia de seguridad')+'</span></button>';
+    if(d===null||d>7)h+='<button class="al" data-action="goto-backups"><span class="dot copia"></span><span>'+(d===null?'Todavía no descargaste una copia de seguridad':'Hace '+plural(d,'día','días')+' que no descargás una copia de seguridad')+'</span></button>';
   }
   if(!h)h='<div class="al"><span class="dot ok"></span><span>Todo al día</span></div>';
   $('#alerts').innerHTML='<h3>Para revisar</h3>'+h;
@@ -388,7 +391,7 @@ function filteredPatients(){
   return S.patients.filter(function(p){
     if((ui.filter==='Perro'||ui.filter==='Gato')&&p.species!==ui.filter)return false;
     if(ui.filter==='alert'&&!patientAlert(p))return false;
-    if(q){var hay=norm(p.name+' '+p.owner+' '+p.breed+' '+p.phone);if(hay.indexOf(q)<0&&!(qd.length>=3&&p.phone.replace(/\D/g,'').indexOf(qd)>=0))return false;}
+    if(q){var hay=norm(hcNum(p)+' '+(p.hc||'')+' '+p.name+' '+p.owner+' '+p.breed+' '+p.phone);if(hay.indexOf(q)<0&&!(qd.length>=3&&p.phone.replace(/\D/g,'').indexOf(qd)>=0))return false;}
     return true;
   });
 }
@@ -400,7 +403,7 @@ function listHTML(){
     var chip=al==='bad'?'<span class="chip bad">Vacuna vencida</span>':al==='warn'?'<span class="chip warn">Vacuna por vencer</span>':'';
     return '<li><button class="pitem" data-action="select" data-id="'+p.id+'" aria-current="'+(p.id===ui.sel)+'">'+
       '<span class="avatar" aria-hidden="true">'+emo(p)+'</span>'+
-      '<span class="pi-main"><b>'+esc(p.name)+'</b><small>'+esc(p.breed||p.species)+' · '+esc(p.owner)+'</small></span>'+chip+'</button></li>';
+      '<span class="pi-main"><b>'+esc(p.name)+'</b><small>'+(p.hc?'<span class="hc">'+hcNum(p)+'</span> · ':'')+esc(p.breed||p.species)+' · '+esc(p.owner)+'</small></span>'+chip+'</button></li>';
   }).join('');
 }
 var emptyPane=function(){return '<p class="empty">'+(S.patients.length?'Elegí un paciente de la lista para ver su historia clínica, o agregá uno nuevo.':'Cuando cargues el primer paciente vas a ver acá su historia clínica.')+'</p>';};
@@ -537,7 +540,7 @@ function detailHTML(p){
 
   return '<button class="btn back" data-action="back">Volver a la lista</button>'+
     '<header class="phead"><div class="avatar big" aria-hidden="true">'+emo(p)+'</div>'+
-    '<div class="info"><h2>'+esc(p.name)+'</h2>'+
+    '<div class="info"><h2>'+esc(p.name)+(p.hc?' <span class="hcbadge" title="Número de historia clínica">'+hcLabel(p)+'</span>':'')+'</h2>'+
     '<p class="meta">'+esc(p.species)+(p.breed?' '+esc(p.breed):'')+' · '+esc(p.sex)+(p.neutered?' (castrad'+(p.sex==='Hembra'?'a':'o')+')':'')+' · '+ageText(p.birth)+(p.weight!==''?' · '+esc(p.weight)+' kg':'')+'</p>'+
     '<p class="meta">Dueño: '+esc(p.owner)+(p.phone?' · '+esc(p.phone):'')+(p.email?' · '+esc(p.email):'')+'</p></div>'+
     '<div class="pactions"><button class="btn primary" data-action="charge">Cobrar servicio</button><button class="btn" data-action="edit-patient">Editar datos</button><button class="btn" data-action="print">Imprimir</button>'+
@@ -803,7 +806,7 @@ function calMonthGrid(){
   var r=calRange(),curMonth=ui.cal.anchor.slice(0,7),cells='',d=r[0];
   while(d<=r[1]){
     var list=dayAppts(d);
-    var out=d.slice(0,7)!==curMonth,isToday=d===todayIso();
+    var out=ui.cal.view==='month'&&d.slice(0,7)!==curMonth,isToday=d===todayIso();
     var shown=list.slice(0,3).map(function(a){
       return '<button class="cal-chip '+a.type+'" data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'</button>';
     }).join('');
@@ -832,12 +835,13 @@ function dayListDialog(iso){
 function viewCalendario(){
   if(!ui.appts)return '<section class="farm"><div class="head"><h1>Calendario</h1></div><p class="empty">Cargando…</p></section>';
   var body;
-  if(ui.cal.view==='month')body=calMonthGrid();
+  // Mes y 3 semanas: días de alto fijo con turnos compactos y "+N más". 1 y 2 semanas: todos los días miden lo que el día con más turnos.
+  if(ui.cal.view==='month'||ui.cal.view==='3weeks')body=calMonthGrid();
   else{
     // E5: semana, 2 y 3 semanas se muestran como grilla de una fila por semana (7 columnas), sin scroll horizontal.
     var r=calRange(),cells='',d=r[0];
     while(d<=r[1]){cells+=calDayColumn(d);d=shiftDays(1,d);}
-    body='<div class="cal-week">'+cells+'</div>';
+    body='<div class="cal-week fit">'+cells+'</div>';
   }
   return '<section class="farm"><div class="head"><h1>Calendario</h1><button class="btn primary" data-action="new-appt">Agregar turno</button></div>'+
     '<div class="cal-head"><div class="cal-nav"><button data-action="cal-prev" aria-label="Anterior">‹</button><button class="btn" data-action="cal-today">Hoy</button><button data-action="cal-next" aria-label="Siguiente">›</button></div>'+
@@ -1022,10 +1026,11 @@ function printDoc(kind,p){
   };
   var html='<header class="ph"><div><h1>'+esc(S.clinic)+'</h1><p>'+(cert?'Certificado de vacunación':'Historia clínica')+'</p></div><p class="pd">Emitido el '+fmtDate(todayIso())+'</p></header>'+
     '<h2>Paciente</h2><table class="kv"><tbody>'+
-    '<tr><th>Nombre</th><td>'+esc(p.name)+'</td><th>Especie / raza</th><td>'+esc(p.species)+(p.breed?' · '+esc(p.breed):'')+'</td></tr>'+
-    '<tr><th>Sexo</th><td>'+esc(p.sex)+(p.neutered?' (castrad'+(p.sex==='Hembra'?'a':'o')+')':'')+'</td><th>Edad</th><td>'+esc(ageText(p.birth))+'</td></tr>'+
-    '<tr><th>Peso</th><td>'+(p.weight!==''?fmtKg(p.weight):'—')+'</td><th>Dueño</th><td>'+esc(p.owner)+'</td></tr>'+
-    '<tr><th>Teléfono</th><td>'+yes(p.phone)+'</td><th>Email</th><td>'+yes(p.email)+'</td></tr></tbody></table>';
+    '<tr><th>Nombre</th><td>'+esc(p.name)+'</td><th>N° de historia clínica</th><td>'+(p.hc?hcNum(p):'—')+'</td></tr>'+
+    '<tr><th>Especie / raza</th><td>'+esc(p.species)+(p.breed?' · '+esc(p.breed):'')+'</td><th>Sexo</th><td>'+esc(p.sex)+(p.neutered?' (castrad'+(p.sex==='Hembra'?'a':'o')+')':'')+'</td></tr>'+
+    '<tr><th>Edad</th><td>'+esc(ageText(p.birth))+'</td><th>Peso</th><td>'+(p.weight!==''?fmtKg(p.weight):'—')+'</td></tr>'+
+    '<tr><th>Dueño</th><td>'+esc(p.owner)+'</td><th>Teléfono</th><td>'+yes(p.phone)+'</td></tr>'+
+    '<tr><th>Email</th><td colspan="3">'+yes(p.email)+'</td></tr></tbody></table>';
   var vacs=p.vaccines.slice().sort(byDate).map(function(v){return '<tr><td>'+fmtDate(v.date)+'</td><td>'+esc(v.name)+'</td><td>'+(v.next?fmtDate(v.next):'—')+'</td></tr>';});
   if(cert){
     html+='<h2>Vacunas aplicadas</h2>'+table(['Fecha de aplicación','Vacuna','Próxima dosis'],vacs,'No hay vacunas registradas.')+

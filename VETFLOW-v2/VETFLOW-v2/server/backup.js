@@ -7,7 +7,7 @@ const U = require('./util');
 // Tablas incluidas en las copias, en orden de dependencia (las de abajo dependen de las de arriba).
 // No se incluyen los usuarios ni sus contraseñas.
 const TABLES = [
-  ['patients', ['id', 'name', 'species', 'breed', 'sex', 'neutered', 'birth', 'weight', 'owner_name', 'phone', 'email', 'notes', 'deleted_at']],
+  ['patients', ['id', 'name', 'species', 'breed', 'sex', 'neutered', 'birth', 'weight', 'owner_name', 'phone', 'email', 'notes', 'deleted_at', 'hc_number']],
   ['weights', ['id', 'patient_id', 'fecha', 'kg']],
   ['suppliers', ['id', 'name', 'phone', 'email', 'description']], // antes que productos y compras, que lo referencian
   // "products" y "stock_movements" van antes que vacunas, medicación y caja, que apuntan a ellos.
@@ -206,6 +206,8 @@ async function restore(data, opts) {
         }
         await db.resetSequence(c, table);
       }
+      // Copias anteriores a la numeración de historias clínicas: se asignan los números que falten.
+      await c.query('SELECT assign_patient_hc()');
       // El teléfono normalizado no viaja en las copias: se recalcula.
       await c.query("UPDATE patients SET phone_norm = regexp_replace(phone, '\\D', '', 'g')");
       await c.query("UPDATE suppliers SET phone_norm = regexp_replace(phone, '\\D', '', 'g')");

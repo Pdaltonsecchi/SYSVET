@@ -93,10 +93,11 @@ async function dispatch(req, res, url) {
 /* ============================================================
    Datos comunes
    ============================================================ */
-const PATIENT_COLS = 'id, name, species, breed, sex, neutered, birth, weight, owner_name, phone, email, notes';
+const PATIENT_COLS = 'id, hc_number, name, species, breed, sex, neutered, birth, weight, owner_name, phone, email, notes';
 
 const mapPatient = (r) => ({
   id: r.id,
+  hc: r.hc_number,
   name: r.name,
   species: r.species,
   breed: r.breed,

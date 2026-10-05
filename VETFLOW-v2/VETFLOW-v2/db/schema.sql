@@ -313,3 +313,24 @@ CREATE TABLE IF NOT EXISTS study_attachments (
   created_by INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS study_attachments_study_idx ON study_attachments(study_id);
+
+-- ============================================================
+-- Nueva etapa: historias clínicas numeradas
+-- ============================================================
+-- Cada paciente (mascota) tiene un número de historia clínica correlativo, asignado solo al crearlo. Los
+-- pacientes que ya existían se numeran por fecha de alta. Los números no se reutilizan aunque se borre un paciente.
+CREATE SEQUENCE IF NOT EXISTS patients_hc_seq;
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS hc_number INTEGER;
+CREATE OR REPLACE FUNCTION assign_patient_hc() RETURNS void AS $$
+DECLARE r RECORD;
+BEGIN
+  PERFORM setval('patients_hc_seq', COALESCE((SELECT MAX(hc_number) FROM patients), 0) + 1, false);
+  FOR r IN SELECT id FROM patients WHERE hc_number IS NULL ORDER BY created_at, id LOOP
+    UPDATE patients SET hc_number = nextval('patients_hc_seq') WHERE id = r.id;
+  END LOOP;
+  PERFORM setval('patients_hc_seq', COALESCE((SELECT MAX(hc_number) FROM patients), 0) + 1, false);
+END
+$$ LANGUAGE plpgsql;
+SELECT assign_patient_hc();
+ALTER TABLE patients ALTER COLUMN hc_number SET DEFAULT nextval('patients_hc_seq');
+CREATE UNIQUE INDEX IF NOT EXISTS patients_hc_idx ON patients(hc_number);
