@@ -390,3 +390,20 @@ SELECT ensure_clients();
 -- si se carga, no puede repetirse entre productos.
 ALTER TABLE products ADD COLUMN IF NOT EXISTS barcode TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS products_barcode_idx ON products(barcode) WHERE barcode IS NOT NULL;
+
+-- Configuración del negocio (una sola fila con un JSON: nombre, horario, formas de pago, informe semanal...).
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Envíos del informe semanal por email (con el error, si lo hubo).
+CREATE TABLE IF NOT EXISTS report_log (
+  id SERIAL PRIMARY KEY,
+  at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  week TEXT NOT NULL,          -- 'AAAA-MM-DD' del lunes de la semana informada; 'manual AAAA-MM-DD' si se mandó a mano
+  recipients TEXT NOT NULL DEFAULT '',
+  ok BOOLEAN NOT NULL,
+  error TEXT NOT NULL DEFAULT ''
+);

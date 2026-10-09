@@ -125,9 +125,9 @@ const server = http.createServer(async (req, res) => {
   try {
     await api.dispatch(req, res, url);
   } catch (e) {
-    const status = e.status && e.status < 500 ? e.status : 500;
-    if (status === 500) console.error('Error interno en', req.method, url.pathname, '-', e.message);
-    if (!res.headersSent) U.sendJson(res, status, { error: status === 500 ? 'Ocurrió un error interno. Probá de nuevo.' : e.message });
+    const status = e.status && (e.status < 500 || e.expose) ? e.status : 500;
+    if (status === 500 && !e.expose) console.error('Error interno en', req.method, url.pathname, '-', e.message);
+    if (!res.headersSent) U.sendJson(res, status, { error: status === 500 && !e.expose ? 'Ocurrió un error interno. Probá de nuevo.' : e.message });
     else res.end();
   }
   console.log(req.method, url.pathname, res.statusCode, Date.now() - started + 'ms');
@@ -139,6 +139,9 @@ async function main() {
   require('./storage').ensureBucket();
   backup.ensureDaily().catch((e) => console.error('Copia diaria:', e.message));
   setInterval(() => backup.ensureDaily().catch((e) => console.error('Copia diaria:', e.message)), 60 * 60 * 1000).unref();
+  // Informe semanal por email: se revisa cada hora mientras el servidor está despierto (en el plan gratuito de
+  // Render conviene además un cron externo que llame a /api/cron/weekly-report; ver README).
+  setInterval(() => api.weeklyTick().catch((e) => console.error('Informe semanal:', e.message)), 60 * 60 * 1000).unref();
   server.listen(PORT, '0.0.0.0', () => {
     console.log('Sistema de la veterinaria funcionando en el puerto ' + PORT + (PROD ? ' (modo producción)' : ' (modo prueba)'));
   });
