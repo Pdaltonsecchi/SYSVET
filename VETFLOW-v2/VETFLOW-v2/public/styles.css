@@ -405,3 +405,25 @@ dialog.scan{width:min(560px,calc(100% - 1rem))}
 #sessbar{position:fixed;top:0;left:0;right:0;z-index:100;display:flex;gap:1rem;align-items:center;justify-content:center;flex-wrap:wrap;padding:.8rem 1rem;background:var(--warn-bg);color:var(--warn);border-bottom:2px solid var(--warn);font-size:.98rem;box-shadow:0 4px 16px rgba(55,65,81,.25)}
 body[data-stale] #app,body[data-stale] dialog{pointer-events:none;opacity:.55}
 .drugtag{margin-top:.3rem}
+
+/* Configuración */
+.cfg{display:flex;flex-direction:column;gap:1rem;max-width:860px}
+.cfg .panel{margin:0}
+.note2{margin:.4rem 0 .8rem}
+.reqmark{color:var(--bad)}
+.fld .hint{font-weight:400}
+.fld [aria-invalid="true"]{border-color:var(--bad);outline-color:var(--bad)}
+.hours input[type=time]{width:auto}
+/* Casillas de Configuración (gastos fijos, formas de pago, días abiertos): cada opción es una tarjetita clickeable
+   con la casilla a la izquierda y el texto al lado; la marcada se resalta. */
+.checkgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:.5rem;margin-top:.45rem}
+.checkgrid .check{display:flex;align-items:center;gap:.6rem;padding:.6rem .75rem;border:1px solid var(--line);border-radius:10px;background:var(--panel);font-weight:500;line-height:1.25;cursor:pointer;transition:border-color .15s,background .15s}
+.checkgrid .check:hover{border-color:var(--brand)}
+.checkgrid .check:has(input:checked){background:var(--brand-soft);border-color:var(--brand)}
+.checkgrid .check:focus-within{outline:2px solid var(--brand);outline-offset:2px}
+.checkgrid .check input,.hrow .check input{width:1.1rem;height:1.1rem;flex:none;margin:0;padding:0;accent-color:var(--brand);cursor:pointer}
+.hrow .check{display:flex;align-items:center;gap:.5rem;font-weight:500;cursor:pointer}
+.hours{display:grid;gap:.4rem;max-width:520px}
+.hrow{display:grid;grid-template-columns:7rem 5rem 1fr 1fr;gap:.6rem;align-items:center}
+.hrow input[type=time]{min-width:0}
+@media (max-width:600px){.hrow{grid-template-columns:1fr 1fr}.hrow>span{grid-column:1/-1;font-weight:600}}

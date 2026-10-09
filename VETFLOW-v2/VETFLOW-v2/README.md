@@ -151,3 +151,10 @@ Permisos: el ayudante puede ver y subir adjuntos; solo el administrador puede bo
 - **Clientes:** en la pantalla *Clientes* están los dueños (nombre, apellido, teléfono, email y dirección), sus mascotas (al tocar una se abre su historia clínica) y el historial de pagos de todas sus mascotas. Los datos de contacto se cargan una sola vez, en el cliente; la historia clínica muestra solo el nombre y apellido. Para pasar una mascota a otro cliente: *Editar datos* de la mascota → *Cliente*.
 - **Historia clínica N°:** cada mascota recibe un número correlativo (HC N° 0001…) que se ve en la lista, la ficha y las impresiones, y se puede buscar.
 - **Código de barras (opcional):** en *Stock* → *Nuevo producto* / *Editar* se puede cargar o escanear el código del producto. Con *📷 Vender con escáner* se lee el código y se abre la venta del producto; con *📷 Ingresar con escáner* se abre *Agregar stock* (o *Nuevo producto* con el código ya cargado si todavía no existe). Funciona con la cámara de Android y de iPhone (hace falta abrir el sistema con https, como en Render) y con lectores USB/bluetooth (se lee el código en el buscador de Stock y Enter). El lector de códigos usa la librería ZXing (MIT), guardada en `public/vendor/`.
+
+## Configuración e informe semanal por email
+
+- El dueño (administrador) edita todo desde **Configuración** (último ítem del menú).
+- Para el informe por email, definí en Render `EMAIL_PROVIDER` (`resend` o `brevo`), `EMAIL_API_KEY` y `EMAIL_FROM` (por ejemplo `SYSVET <avisos@tudominio.com>`, un remitente verificado). Sin esas variables el informe queda desactivado y el sistema arranca igual.
+- En el plan gratuito de Render el servidor se duerme: conviene un cron externo que haga `POST /api/cron/weekly-report` con el encabezado `X-Cron-Secret` igual a `CRON_SECRET`.
+- Pruebas: `DATABASE_URL=postgres://... npm test` (usar una base de prueba, nunca la real). La prueba de pantalla necesita Playwright y se sasaltea si no está.

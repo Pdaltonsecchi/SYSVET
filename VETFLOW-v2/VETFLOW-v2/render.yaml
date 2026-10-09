@@ -28,3 +28,12 @@ services:
         value: estudios
       - key: CLINIC_NAME
         sync: false
+      # Opcional: informe semanal por email (resend o brevo). Sin estas, el informe queda desactivado.
+      - key: EMAIL_PROVIDER
+        sync: false
+      - key: EMAIL_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: CRON_SECRET
+        generateValue: true

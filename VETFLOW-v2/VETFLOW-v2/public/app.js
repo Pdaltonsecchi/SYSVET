@@ -38,6 +38,9 @@ var CASH_IN_CATS=['Servicios','Venta de productos','Aporte de capital','Otros'];
 var CASH_OUT_CATS=['Compra de stock','Alquiler y servicios','Sueldos','Retiro de caja','Impuestos','Otros'];
 var ADJUST_REASONS=['Rotura','Vencimiento','Error de carga','Uso interno','Otro'];
 var PAY=['Efectivo','Transferencia','Tarjeta de débito','Tarjeta de crédito'];
+// Formas de pago habilitadas en Configuración (para cobrar, registrar egresos y cargar mercadería).
+var payMethods=function(){var m=S.settings&&S.settings.methods;return m&&m.length?m:PAY;};
+var WEEKDAYS_LONG=['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
 var VAC_SUGG=['Sextuple','Quíntuple','Antirrábica','Tos de las perreras','Triple felina','Leucemia felina','Desparasitación'];
 // B4: especie habitual de cada vacuna sugerida (las que no figuran, o 'Ambos', se ofrecen siempre).
 var VAC_SPECIES={'Sextuple':'Perro','Quíntuple':'Perro','Tos de las perreras':'Perro','Triple felina':'Gato','Leucemia felina':'Gato'};
@@ -53,7 +56,7 @@ var APPT_VIEWS=[['week','Semana'],['2weeks','2 semanas'],['3weeks','3 semanas'],
 /* ============================================================
    Estado
    ============================================================ */
-var S={attachments:false,clinic:'SYSVET',user:null,clients:[],patients:[],products:[],services:[],suppliers:[],summary:null};
+var S={attachments:false,clinic:'SYSVET',settings:{},user:null,clients:[],patients:[],products:[],services:[],suppliers:[],summary:null};
 var ui={view:'pacientes',sel:null,detail:null,filter:'all',q:'',tab:'stock',cat:'all',
   stq:'',cq:'',cfopen:false,cashp:'month',cashf:'all',cashm:'all',cash:null,
   rep:'90',rmonthly:null,rservices:null,rproducts:null,backups:null,users:null,
@@ -94,7 +97,7 @@ function showLogin(msg){
   $('#lerror').textContent=msg||'';
 }
 function applyBootstrap(d){
-  S.clinic=d.clinic||'SYSVET';S.attachments=!!d.attachments;S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.suppliers=d.suppliers||[];S.clients=d.clients||[];S.summary=d.summary||null;
+  S.clinic=d.clinic||'SYSVET';S.settings=d.settings||{};document.title=S.clinic;var sn=$('#shopname');if(sn)sn.textContent=S.clinic;S.attachments=!!d.attachments;S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.suppliers=d.suppliers||[];S.clients=d.clients||[];S.summary=d.summary||null;
 }
 async function start(){
   var d=await api('/bootstrap');
@@ -242,10 +245,10 @@ function fld(label,name,o){
     return '<label class="fld check'+(o.full?' full':'')+'"><input type="checkbox" name="'+name+'"'+(value?' checked':'')+'><span>'+label+'</span></label>';
   }else{
     ctl='<input name="'+name+'" type="'+(o.type||'text')+'" value="'+esc(value)+'"'+(o.req?' required':'')+' placeholder="'+esc(o.ph||'')+'"'+
-      (o.step?' step="'+o.step+'"':'')+(o.minlength?' minlength="'+o.minlength+'"':'')+(o.pattern?' pattern="'+o.pattern+'" title="'+esc(o.title||'')+'"':'')+(o.min!=null?' min="'+o.min+'"':'')+(o.max!=null?' max="'+o.max+'"':'')+(o.list?' list="'+o.list+'"':'')+
+      (o.maxlength?' maxlength="'+o.maxlength+'"':'')+(o.inputmode?' inputmode="'+o.inputmode+'"':'')+(o.step?' step="'+o.step+'"':'')+(o.minlength?' minlength="'+o.minlength+'"':'')+(o.pattern?' pattern="'+o.pattern+'" title="'+esc(o.title||'')+'"':'')+(o.min!=null?' min="'+o.min+'"':'')+(o.max!=null?' max="'+o.max+'"':'')+(o.list?' list="'+o.list+'"':'')+
       (o.auto?' autocomplete="'+o.auto+'"':' autocomplete="off"')+'>';
   }
-  return '<label class="fld'+(o.full?' full':'')+'"><span>'+label+'</span>'+ctl+'</label>';
+  return '<label class="fld'+(o.full?' full':'')+'"><span>'+label+(o.req&&o.star?' <b class="reqmark" aria-hidden="true">*</b>':'')+'</span>'+ctl+(o.hint?'<small class="hint">'+esc(o.hint)+'</small>':'')+'</label>';
 }
 function openForm(o){
   dlg.innerHTML='<form class="dform"><h2>'+o.title+'</h2>'+o.body+'<p class="err" role="alert"></p>'+
@@ -306,7 +309,7 @@ function navItems(){
   // v2: Calendario y Proveedores son visibles para admin y ayudante (agendar turnos y
   // consultar a quién comprarle es tarea del día a día, no solo del administrador).
   var a=[['pacientes','Pacientes'],['clientes','Clientes'],['calendario','Calendario'],['farmacia','Farmacia y caja'],['proveedores','Proveedores']];
-  if(isAdmin())a.push(['reportes','Reportes'],['papelera','Papelera'],['copias','Copias de seguridad'],['usuarios','Usuarios']);
+  if(isAdmin())a.push(['reportes','Reportes'],['papelera','Papelera'],['copias','Copias de seguridad'],['usuarios','Usuarios'],['configuracion','Configuración']);
   return a;
 }
 function renderNav(){
@@ -926,15 +929,79 @@ function viewCalendario(){
     '<span><i style="background:var(--appt-cirugia)"></i>Cirugía</span><span><i style="background:var(--appt-otro)"></i>Otro</span></div>'+body+'</section>';
 }
 
+
+/* ============================================================
+   Configuración del negocio (solo el dueño/administrador)
+   Datos del negocio, alertas de stock, gastos fijos, formas de pago, horario y el informe semanal por email.
+   ============================================================ */
+// Valida los campos del formulario con la API nativa y los marca (aria-invalid) en vez de usar el aviso del navegador.
+function validateForm(f){
+  var ok=true;
+  Array.prototype.forEach.call(f.elements,function(el){
+    if(!el.name||el.disabled)return;
+    var bad=!el.checkValidity();
+    if(bad)ok=false;
+    el.setAttribute('aria-invalid',bad?'true':'false');
+  });
+  return ok;
+}
+var cfld=function(l,n,o){o=o||{};o.star=true;return fld(l,n,o);};
+function viewConfig(){
+  var st=S.settings,hours=st.hours||{},rep=st.report||{};
+  var day=function(d){var h=hours[d];return '<div class="hrow"><span>'+WEEKDAYS_LONG[d]+'</span>'+
+    '<label class="check"><input type="checkbox" name="open_'+d+'"'+(h?' checked':'')+'> Abre</label>'+
+    '<input type="time" name="from_'+d+'" value="'+(h?h[0]:'09:00')+'" aria-label="'+WEEKDAYS_LONG[d]+': apertura">'+
+    '<input type="time" name="to_'+d+'" value="'+(h?h[1]:'19:00')+'" aria-label="'+WEEKDAYS_LONG[d]+': cierre"></div>';};
+  var checks=function(name,all,on){return '<div class="checkgrid">'+all.map(function(x){return '<label class="check"><input type="checkbox" name="'+name+'" value="'+esc(x)+'"'+(on.indexOf(x)>=0?' checked':'')+'> '+esc(x)+'</label>';}).join('')+'</div>';};
+  return '<section class="farm"><div class="head"><h1>Configuración</h1><button class="btn primary" data-action="config-save">Guardar cambios</button></div>'+
+    '<form id="cfgform" class="cfg" novalidate>'+
+    '<section class="panel" id="cfg-negocio"><h2 class="h3">Datos del negocio</h2><div class="fields">'+
+      cfld('Nombre del negocio','shopName',{value:st.shopName||S.clinic,req:true,maxlength:100})+cfld('Teléfono','phone',{value:st.phone,maxlength:50,inputmode:'tel'})+
+      cfld('Dirección','address',{value:st.address,full:true,maxlength:200})+
+      cfld('Texto al pie del ticket','ticketText',{value:st.ticketText,full:true,maxlength:200})+cfld('Ancho del ticket','ticketWidth',{opts:[[80,'80 mm'],[58,'58 mm']],value:st.ticketWidth||80})+'</div></section>'+
+    '<section class="panel" id="cfg-stock"><h2 class="h3">Alertas de stock</h2><div class="fields">'+
+      cfld('Stock mínimo que se propone al cargar un producto','defaultMinStock',{type:'number',min:0,step:'0.001',value:st.defaultMinStock!=null?st.defaultMinStock:2,req:true,hint:'Cada producto tiene su propio mínimo (se cambia al editarlo); este es el valor de partida.'})+
+      cfld('Avisar vencimientos con cuántos días de anticipación','expiryDays',{type:'number',min:1,max:365,step:'1',value:st.expiryDays||30,req:true})+'</div></section>'+
+    '<section class="panel" id="cfg-fijos"><h2 class="h3">Gastos fijos (punto de equilibrio)</h2>'+
+      '<p class="note2">El Resumen → Proyección calcula cuánto tenés que vender para cubrir los gastos fijos. Podés cargar el monto mensual o dejarlo en 0 para que se calcule con los egresos de las categorías marcadas.</p><div class="fields">'+
+      cfld('Gastos fijos por mes','fixedMonthly',{type:'number',min:0,step:'0.01',value:st.fixedMonthly||0,inputmode:'decimal',hint:'Ej.: alquiler + sueldos + servicios. 0 = calcularlos con la caja.'})+
+      cfld('Margen bajo (para marcar en rojo), en %','lowMargin',{type:'number',min:0,max:100,step:'0.1',value:st.lowMargin!=null?st.lowMargin:10,req:true})+
+      '<div class="fld full"><span>Categorías de egresos que son gastos fijos</span>'+checks('fixedCategories',CASH_OUT_CATS,st.fixedCategories||[])+'</div>'+
+      cfld('Cliente perdido: días sin comprar','lostDays',{type:'number',min:7,max:365,step:'1',value:st.lostDays||30,req:true})+'</div></section>'+
+    '<section class="panel"><h2 class="h3">Formas de pago habilitadas</h2>'+checks('methods',PAY,st.methods||PAY)+'</section>'+
+    '<section class="panel"><h2 class="h3">Horario de atención</h2><p class="note2">La agenda avisa si un turno queda fuera de este horario.</p><div class="hours">'+[1,2,3,4,5,6,0].map(day).join('')+'</div></section>'+
+    '<section class="panel"><h2 class="h3">Informe semanal por email</h2>'+(st.emailReady?'':'<p class="warnbox">El envío de emails no está configurado en el servidor (faltan EMAIL_PROVIDER, EMAIL_API_KEY y EMAIL_FROM en Render). Podés dejarlo listo y se va a enviar cuando se configure.</p>')+
+      '<div class="fields">'+cfld('Enviar el informe de la semana todos los lunes','repEnabled',{type:'checkbox',value:!!rep.enabled,full:true})+
+      cfld('Hora de envío','repHour',{type:'number',min:0,max:23,step:'1',value:rep.hour!=null?rep.hour:8})+
+      cfld('Destinatarios (separados por coma)','repTo',{value:rep.recipients,full:true,maxlength:500,ph:'Ej.: duena@gmail.com'})+'</div></section>'+
+    '<p class="err" role="alert" id="cfgerr"></p></form></section>';
+}
+async function saveConfig(){
+  var f=$('#cfgform'),err=$('#cfgerr');err.textContent='';
+  if(!validateForm(f)){err.textContent='Revisá los campos marcados.';throw new Error('Revisá los campos marcados.');}
+  var v=function(n){var el=f.querySelector('[name="'+n+'"]');return el?el.value:'';};
+  var all=function(n){return Array.prototype.map.call(f.querySelectorAll('[name="'+n+'"]:checked'),function(x){return x.value;});};
+  var hours={};[0,1,2,3,4,5,6].forEach(function(d){hours[d]=f.querySelector('[name="open_'+d+'"]').checked?[v('from_'+d),v('to_'+d)]:null;});
+  var rep=S.settings.report||{};
+  var body={shopName:v('shopName'),address:v('address'),phone:v('phone'),ticketText:v('ticketText'),ticketWidth:Number(v('ticketWidth')),hours:hours,methods:all('methods'),
+    fixedCategories:all('fixedCategories'),fixedMonthly:v('fixedMonthly')||0,lowMargin:v('lowMargin'),lostDays:v('lostDays'),defaultMinStock:v('defaultMinStock'),expiryDays:v('expiryDays'),
+    report:{enabled:f.querySelector('[name="repEnabled"]').checked,weekday:rep.weekday!=null?rep.weekday:1,hour:Number(v('repHour')),recipients:v('repTo')}};
+  var r;
+  try{r=await api('/settings',{method:'PUT',body:body});}
+  catch(e){err.textContent=e.message;throw e;}
+  S.settings=Object.assign({},S.settings,r);S.clinic=r.shopName||S.clinic;document.title=S.clinic;$('#shopname').textContent=S.clinic;
+  render();toast('Configuración guardada');
+}
+
 function render(){
   if(!S.user)return;
-  var adminOnly={reportes:1,copias:1,usuarios:1,papelera:1};
+  var adminOnly={reportes:1,copias:1,usuarios:1,papelera:1,configuracion:1};
   if(adminOnly[ui.view]&&!isAdmin())ui.view='pacientes';
   if(ui.view==='farmacia'&&!isAdmin()&&ui.tab==='caja')ui.tab='stock';
   renderNav();renderAlerts();renderUserBox();
   var v=ui.view;
   main.innerHTML=v==='pacientes'?viewPacientes():v==='clientes'?viewClientes():v==='calendario'?viewCalendario():v==='farmacia'?viewFarmacia():v==='proveedores'?viewProveedores():
-    v==='reportes'?viewReportes():v==='papelera'?viewTrash():v==='copias'?viewBackups():viewUsers();
+    v==='reportes'?viewReportes():v==='papelera'?viewTrash():v==='copias'?viewBackups():v==='usuarios'?viewUsers():viewConfig();
   if(v==='pacientes')loadThumbs();
 }
 
@@ -1009,7 +1076,7 @@ function vaccineForm(p,v){
   var top=isEdit?(vacProducts.length?'<div class="fields">'+fld('Producto del stock que descuenta 1 unidad','product',{opts:prodOpts,value:v.productId,full:true})+'</div>':'')
     :(vacServices.length?'<div class="fields">'+fld('Vacuna de la Lista de precios','service',{opts:svcOpts,full:true})+'</div>':'');
   var chargeBox=isEdit?'':'<div class="fields" id="chgbox" hidden>'+fld('Cobrar ahora (registra el cobro y el ingreso en caja)','chargeNow',{type:'checkbox',value:true,full:true})+
-    fld('Monto a cobrar','chargeAmount',{type:'number',min:0,step:'0.01'})+fld('Forma de pago','chargeMethod',{opts:PAY,value:'Efectivo'})+'</div>';
+    fld('Monto a cobrar','chargeAmount',{type:'number',min:0,step:'0.01'})+fld('Forma de pago','chargeMethod',{opts:payMethods(),value:payMethods()[0]})+'</div>';
   var f=openForm({title:(isEdit?'Editar vacuna de ':'Agregar vacuna a ')+esc(p.name),
     body:top+
     '<datalist id="vaclist">'+names.map(function(n){return '<option value="'+esc(n)+'">';}).join('')+'</datalist>'+
@@ -1164,7 +1231,7 @@ function chargeForm(p){
     body:'<div class="cline head"><span>Servicio o producto</span><span>Cant.</span><span>Precio</span><span>Subtotal</span><span></span></div><div id="lines"></div>'+
       '<button type="button" class="btn" id="addline">+ Agregar línea</button>'+
       '<div class="fields" style="margin-top:.8rem">'+fld('Descuento','dtype',{opts:[['none','Sin descuento'],['amount','Monto ($)'],['percent','Porcentaje (%)']],value:'none'})+fld('Valor del descuento','dvalue',{type:'number',min:0,step:'0.01'})+
-      fld('Fecha','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+fld('Forma de pago','method',{opts:PAY,value:'Efectivo'})+
+      fld('Fecha','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+fld('Forma de pago','method',{opts:payMethods(),value:payMethods()[0]})+
       fld('Registrar como ingreso en caja','cash',{type:'checkbox',value:true,full:true})+'</div>'+
       '<div class="ctotals"><div><span>Subtotal</span><span id="c-sub"></span></div><div><span>Descuento</span><span id="c-disc"></span></div><div class="grand"><span>Total</span><span id="c-tot"></span></div></div>',
     submit:'Cobrar',
@@ -1345,7 +1412,7 @@ async function scanToStock(code){
   if(ch==='new')productForm(null,{barcode:code});
 }
 function productForm(x,preset){
-  var isNew=!x;x=x||Object.assign({category:'Medicamentos',min:5,price:0},preset||{});
+  var isNew=!x;x=x||Object.assign({category:'Medicamentos',min:S.settings.defaultMinStock!=null?S.settings.defaultMinStock:5,price:0},preset||{});
   var pf=openForm({title:isNew?'Nuevo producto':'Editar producto',
     body:'<div class="fields">'+fld('Nombre','name',{value:x.name,req:true,full:true})+fld('Código de barras (opcional)','barcode',{value:x.barcode,full:true,ph:'Escribilo o escanealo con la cámara',pattern:'[0-9A-Za-z._\\-]{4,64}',title:'Entre 4 y 64 caracteres: letras, números, punto y guion'})+fld('Categoría','category',{opts:PROD_CATS,value:x.category})+fld('Precio de venta','price',{type:'number',min:0,step:'0.01',value:x.price,req:true})+
     fld('Especie (solo vacunas, opcional)','species',{opts:SPECIES_OPTS,value:x.species,full:true})+
@@ -1354,7 +1421,7 @@ function productForm(x,preset){
     (isNew?fld('Stock inicial','stock',{type:'number',min:0,step:'1',value:0,req:true})+
       // v2: se carga precio unitario; el costo total (para la caja) se calcula solo.
       fld('Precio unitario que pagaste (opcional)','unitPrice',{type:'number',min:0.01,step:'0.01',ph:'Ej.: 800'})+
-      fld('Forma de pago','method',{opts:PAY,value:'Transferencia'}):'')+'</div>'+
+      fld('Forma de pago','method',{opts:payMethods(),value:payMethods().indexOf('Transferencia')>=0?'Transferencia':payMethods()[0]}):'')+'</div>'+
     (isNew?'':'<p>Para cambiar la cantidad usá el botón + (llegó mercadería) o “Ajustar” (corrección).</p>'),
     submit:isNew?'Agregar producto':'Guardar cambios',
     onSubmit:async function(d){
@@ -1382,7 +1449,7 @@ function productForm(x,preset){
 function buyForm(x){
   var f=openForm({title:'Agregar stock de '+esc(x.name),
     body:'<div class="fields">'+fld('Cantidad que llegó','qty',{type:'number',min:1,step:'1',value:1,req:true})+fld('Precio unitario que pagaste','unitPrice',{type:'number',min:0.01,step:'0.01'})+
-      fld('Forma de pago','method',{opts:PAY,value:'Transferencia'})+fld('Fecha','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+
+      fld('Forma de pago','method',{opts:payMethods(),value:payMethods().indexOf('Transferencia')>=0?'Transferencia':payMethods()[0]})+fld('Fecha','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+
       fld('Proveedor (opcional)','supplierId',{opts:supplierOpts(),value:x.supplierId,full:true})+
       fld('Registrar como egreso en caja','cash',{type:'checkbox',value:true,full:true})+'</div><p>Stock actual: '+x.stock+'.</p>',
     submit:'Agregar stock',
@@ -1431,7 +1498,7 @@ function sellForm(x){
   if(x.stock<1){toast('No queda stock de este producto');return;}
   var pats=[['','Sin paciente (venta de mostrador)']].concat(S.patients.slice().sort(function(a,b){return a.name.localeCompare(b.name,'es');}).map(function(p){return [p.id,p.name+' ('+p.owner+')'];}));
   openForm({title:'Vender '+esc(x.name),
-    body:'<div class="fields">'+fld('Cantidad','qty',{type:'number',min:1,max:x.stock,step:'1',value:1,req:true})+fld('Forma de pago','method',{opts:PAY,value:'Efectivo'})+
+    body:'<div class="fields">'+fld('Cantidad','qty',{type:'number',min:1,max:x.stock,step:'1',value:1,req:true})+fld('Forma de pago','method',{opts:payMethods(),value:payMethods()[0]})+
       fld('Paciente (opcional)','patientId',{opts:pats,full:true})+'</div><p>Precio por unidad: '+money(x.price)+'. Quedan '+x.stock+' en stock.</p>',
     submit:'Registrar venta',
     onSubmit:async function(d){var r=await api('/products/'+x.id+'/sell',{body:{qty:d.qty,method:d.method,patientId:d.patientId?Number(d.patientId):null}});await reload();toast('Venta registrada: '+money(r.total));}});
@@ -1590,6 +1657,15 @@ function supplierDetail(id){
 
 // v2: turnos del calendario.
 var APPT_DEFAULT_MIN={consulta:20,vacuna:10,cirugia:120,otro:30};
+// Aviso NO bloqueante si el turno queda fuera del horario de atención de ese día (Configuración → Horario).
+async function confirmHours(body){
+  var h=(S.settings.hours||{})[parse(body.date).getDay()];
+  var s0=toMin(body.time),e0=s0+Number(body.duration);
+  if(h&&s0>=toMin(h[0])&&e0<=toMin(h[1]))return true;
+  var ch=await choiceDialog('Fuera de horario','<p>'+(h?'Ese turno queda fuera del horario de atención de ese día ('+h[0]+' a '+h[1]+' hs).':'Ese día el negocio figura cerrado.')+' ¿Agendar igual?</p>',
+    [{label:'Cambiar la hora',value:'no',cls:'ghost'},{label:'Agendar igual',value:'ok',cls:'primary'}]);
+  return ch==='ok';
+}
 // E2: aviso NO bloqueante si el turno se pisa con otro del mismo día (se tiene en cuenta la duración).
 async function confirmNoOverlap(body,selfId){
   var list=(await api('/appointments?from='+body.date+'&to='+body.date)).items.filter(function(a){return a.id!==selfId;});
@@ -1617,6 +1693,7 @@ function appointmentForm(a,presetDate){
     submit:isNew?'Agregar turno':'Guardar cambios',
     onSubmit:async function(d){
       var body={patientId:Number(d.patientId),title:d.title,description:d.description,date:d.date,time:d.time,type:d.type,duration:Number(d.duration)};
+      if(!(await confirmHours(body)))return false;
       if(!(await confirmNoOverlap(body,isNew?null:a.id)))return false;
       if(isNew)await api('/appointments',{body:body});else await api('/appointments/'+a.id,{method:'PUT',body:body});
       await reloadCal();toast(isNew?'Turno agregado':'Turno guardado');
@@ -1658,7 +1735,7 @@ function cashForm(type){
   openForm({title:type==='in'?'Registrar ingreso':'Registrar egreso',
     body:'<div class="fields">'+fld('Fecha','date',{type:'date',value:todayIso(),req:true})+fld('Monto','amount',{type:'number',min:0.01,step:'0.01',req:true})+
     fld('Concepto','concept',{req:true,full:true,ph:type==='in'?'Ej.: Venta de alimento':'Ej.: Pago de luz'})+
-    fld('Categoría','category',{opts:type==='in'?CASH_IN_CATS:CASH_OUT_CATS,value:type==='in'?'Servicios':'Compra de stock'})+fld('Forma de pago','method',{opts:PAY,value:'Efectivo'})+
+    fld('Categoría','category',{opts:type==='in'?CASH_IN_CATS:CASH_OUT_CATS,value:type==='in'?'Servicios':'Compra de stock'})+fld('Forma de pago','method',{opts:payMethods(),value:payMethods()[0]})+
     (type==='out'?fld('Proveedor (opcional)','supplierId',{opts:supplierOpts(),full:true}):'')+'</div>',
     submit:'Registrar',
     onSubmit:async function(d){
@@ -1939,6 +2016,11 @@ var actions={
       var r=await api('/trash/purge-expired',{body:{}});await reload();toast(plural(r.purged,'elemento eliminado','elementos eliminados'));
     });
   },
+  'config-save':async function(id,btn){
+    var label=btn.textContent;btn.classList.add('busy');btn.textContent='Guardando…';
+    try{await saveConfig();}finally{btn.classList.remove('busy');btn.textContent=label;}
+  },
+  'goto-fixed':async function(){await go('configuracion');var el=$('#cfg-fijos');if(el){el.scrollIntoView({block:'start'});var i=el.querySelector('[name="fixedMonthly"]');if(i)i.focus();}},
   'new-user':function(){userForm();},
   'edit-user':function(id){userForm((ui.users||[]).find(function(x){return String(x.id)===String(id);}));},
   'change-pass':function(){passwordForm();},

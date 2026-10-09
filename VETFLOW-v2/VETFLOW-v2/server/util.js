@@ -1,9 +1,11 @@
 'use strict';
 
 class HttpError extends Error {
-  constructor(status, message) {
+  // expose: un 502/503 con mensaje pensado para el usuario (ej.: email no configurado) se muestra tal cual.
+  constructor(status, message, expose) {
     super(message);
     this.status = status;
+    this.expose = !!expose;
   }
 }
 const bad = (message) => new HttpError(400, message);

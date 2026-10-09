@@ -5,6 +5,9 @@ const auth = require('./auth');
 const backup = require('./backup');
 const storage = require('./storage');
 const U = require('./util');
+const settings = require('./settings');
+const report = require('./report');
+const weekly = require('./weekly');
 const { HttpError } = U;
 
 const routes = [];
@@ -466,7 +469,8 @@ add('GET', '/api/bootstrap', async (ctx) => {
     db.query('SELECT id, name, phone, email, description FROM suppliers ORDER BY lower(name), id'),
     listClients(db),
   ]);
-  const out = { user: ctx.user, clinic: process.env.CLINIC_NAME || 'SYSVET', attachments: storage.configured(), patients, products, services, suppliers: sup.rows.map(mapSupplier), clients };
+  const st = await settings.getSettings();
+  const out = { user: ctx.user, clinic: st.shopName, settings: settings.publicSettings(st, ctx.user.role === 'admin'), attachments: storage.configured(), patients, products, services, suppliers: sup.rows.map(mapSupplier), clients };
   if (ctx.user.role === 'admin') out.summary = await cashSummary();
   return out;
 });
@@ -1802,4 +1806,26 @@ add('DELETE', '/api/appointments/:id', async (ctx) => {
   await db.query('DELETE FROM appointments WHERE id = $1', [U.idParam(ctx.params.id)]);
 });
 
-module.exports = { dispatch };
+/* ============================================================
+   Configuración del negocio e informe semanal por email
+   ============================================================ */
+add('GET', '/api/settings', async (ctx) => settings.publicSettings(await settings.getSettings(), ctx.user.role === 'admin'));
+add('PUT', '/api/settings', { admin: true }, async (ctx) => {
+  const next = settings.validate(ctx.body, await settings.getSettings());
+  await settings.saveSettings(next);
+  return settings.publicSettings(await settings.getSettings(), true);
+});
+add('POST', '/api/report/send', { admin: true }, async () => weekly.sendWeekly(true));
+add('GET', '/api/report/preview', { admin: true }, async () => {
+  const r = await weekly.buildWeekly();
+  return { subject: r.subject, html: r.html };
+});
+add('GET', '/api/report/log', { admin: true }, async () => weekly.reportLog());
+// Para un cron externo (Render se duerme en el plan gratuito): POST con el encabezado X-Cron-Secret.
+add('POST', '/api/cron/weekly-report', { public: true }, async (ctx) => {
+  const secret = process.env.CRON_SECRET || '';
+  if (!secret || ctx.req.headers['x-cron-secret'] !== secret) throw new HttpError(403, 'No autorizado.');
+  return weekly.weeklyTick();
+});
+
+module.exports = { dispatch, weeklyTick: weekly.weeklyTick };
