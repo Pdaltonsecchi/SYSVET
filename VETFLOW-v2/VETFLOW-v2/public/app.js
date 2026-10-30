@@ -90,7 +90,8 @@ var ui={view:'pacientes',sel:null,detail:null,filter:'all',q:'',tab:'stock',cat:
   stq:'',cq:'',cfopen:false,cashp:'month',cashf:'all',cashm:'all',cash:null,
   rep:'90',rmonthly:null,rservices:null,rproducts:null,backups:null,users:null,
   suppliers:null,sq:'',trash:null,csel:null,cdetail:null,cliq:'',cfrom:'',cto:'',rfrom:'',rto:'', // v2: proveedores y su búsqueda
-  cal:{view:'week',anchor:todayIso()},appts:null}; // v2: calendario de turnos
+  cal:{view:'week',anchor:todayIso()},appts:null, // v2: calendario de turnos
+  cfgTab:'general'}; // Configuración: general, usuarios, copias o papelera
 var main=$('#main'),dlg=$('#dlg');
 var isAdmin=function(){return !!S.user&&S.user.role==='admin';};
 
@@ -164,12 +165,12 @@ async function loadView(){
     ui.suppliers=(await api('/suppliers')).items;S.suppliers=ui.suppliers;
   }else if(ui.view==='reportes'&&isAdmin()){
     await loadReports();
-  }else if(ui.view==='papelera'&&isAdmin()){
+  }else if(ui.view==='configuracion'&&ui.cfgTab==='papelera'&&isAdmin()){
     ui.trash=await api('/trash');
-  }else if(ui.view==='copias'&&isAdmin()){
+  }else if(ui.view==='configuracion'&&ui.cfgTab==='copias'&&isAdmin()){
     ui.backups=(await api('/backups')).items;
     ui.attUsage=await api('/attachments/usage').catch(function(){return null;});
-  }else if(ui.view==='usuarios'&&isAdmin()){
+  }else if(ui.view==='configuracion'&&ui.cfgTab==='usuarios'&&isAdmin()){
     ui.users=(await api('/users')).items;
   }
 }
@@ -249,7 +250,10 @@ async function reload(){
   }catch(e){toast(e.message);}
   render();
 }
+// Papelera, Copias de seguridad y Usuarios son pestañas de Configuración: ir a ellas abre esa pestaña.
+var CFG_TABS=[['general','General'],['usuarios','Usuarios'],['copias','Copias de seguridad'],['papelera','Papelera']];
 async function go(view){
+  if(CFG_TABS.some(function(t){return t[0]===view;})){ui.cfgTab=view;view='configuracion';}
   ui.view=view;
   render();
   window.scrollTo(0,0);
@@ -334,20 +338,22 @@ function segHTML(action,items,active){
 /* ============================================================
    Navegación, avisos y usuario
    ============================================================ */
-function navItems(){
-  // v2: Calendario y Proveedores son visibles para admin y ayudante (agendar turnos y
-  // consultar a quién comprarle es tarea del día a día, no solo del administrador).
-  var a=[['pacientes','Pacientes'],['clientes','Clientes'],['calendario','Calendario'],['farmacia','Farmacia y caja'],['proveedores','Proveedores']];
-  if(isAdmin())a.push(['reportes','Reportes'],['papelera','Papelera'],['copias','Copias de seguridad'],['usuarios','Usuarios'],['configuracion','Configuración']);
-  return a;
+// Menú lateral en grupos: la atención (pacientes, dueños, agenda), el negocio (farmacia y caja, proveedores,
+// reportes) y, abajo y aparte, Configuración.
+// v2: Calendario y Proveedores son visibles para admin y ayudante (agendar turnos y
+// consultar a quién comprarle es tarea del día a día, no solo del administrador).
+function navGroups(){
+  var g2=[['farmacia','Farmacia y caja'],['proveedores','Proveedores']];
+  if(isAdmin())g2.push(['reportes','Reportes']);
+  return [[['pacientes','Pacientes'],['clientes','Clientes'],['calendario','Calendario']],g2];
 }
 // Celular: barra inferior con las tareas del día (ficha, agenda, caja, dueños) y "Más" para el resto.
 var TAB_PRI=[['pacientes','Pacientes','paw'],['calendario','Calendario','calendar'],['farmacia','Farmacia','pill'],['clientes','Clientes','users']];
 var isPri=function(v){return TAB_PRI.some(function(t){return t[0]===v;});};
 function renderNav(){
-  $('#nav').innerHTML=navItems().map(function(i){
-    return '<button class="navb'+(isPri(i[0])?' pri':'')+'" data-action="nav" data-v="'+i[0]+'" aria-current="'+(ui.view===i[0]?'page':'false')+'">'+i[1]+'</button>';
-  }).join('');
+  var btn=function(i){return '<button class="navb'+(isPri(i[0])?' pri':'')+'" data-action="nav" data-v="'+i[0]+'" aria-current="'+(ui.view===i[0]?'page':'false')+'">'+i[1]+'</button>';};
+  $('#nav').innerHTML=navGroups().map(function(g){return '<div class="navg" role="group">'+g.map(btn).join('')+'</div>';}).join('');
+  var cfg=$('#navcfg');cfg.innerHTML=isAdmin()?btn(['configuracion','Configuración']):'';cfg.hidden=!isAdmin();
   var open=!!document.body.dataset.more;
   $('#tabbar').innerHTML=TAB_PRI.map(function(t){
     return '<button class="tabb" data-action="nav" data-v="'+t[0]+'" aria-current="'+(ui.view===t[0]?'page':'false')+'">'+ico(t[2])+'<span>'+t[1]+'</span></button>';
@@ -836,8 +842,8 @@ function clientForm(c){
    G1 · Papelera
    ============================================================ */
 var TRASH_KIND={patient:'Paciente',vaccine:'Vacuna',diagnosis:'Diagnóstico',study:'Estudio',medication:'Medicación',charge:'Cobro'};
-function viewTrash(){
-  if(!ui.trash)return '<section class="farm"><div class="head"><h1>Papelera</h1></div><p class="empty">Cargando…</p></section>';
+function trashBody(){
+  if(!ui.trash)return '<p class="empty">Cargando…</p>';
   var t=ui.trash;
   var rows=t.items.map(function(x){
     var left=x.expired?'<span class="chip bad">Vencido</span>':'<span class="chip '+(x.daysLeft<=5?'warn':'none')+'">Quedan '+plural(x.daysLeft,'día','días')+'</span>';
@@ -845,10 +851,9 @@ function viewTrash(){
       '<td class="act">'+(x.expired?'':'<button class="link" data-action="trash-restore" data-kind="'+x.kind+'" data-id="'+x.id+'">Restaurar</button>')+
       '<button class="link bad" data-action="trash-purge" data-kind="'+x.kind+'" data-id="'+x.id+'">Eliminar definitivamente</button></td></tr>';
   }).join('');
-  return '<section class="farm"><div class="head"><h1>Papelera</h1>'+(t.expiredCount?'<button class="btn danger-o" data-action="trash-purge-expired">Eliminar definitivamente los vencidos ('+t.expiredCount+')</button>':'')+'</div>'+
-    '<p class="empty">Lo que se borra de la historia clínica queda acá '+t.days+' días y se puede restaurar. Pasado ese plazo solo se puede eliminar definitivamente. Si lo borrado había devuelto stock, al restaurarlo se vuelve a descontar (si no alcanza el stock, se restaura igual y te avisamos).</p>'+
+  return '<div class="cfg-tabacts">'+'<p class="empty">Lo que se borra de la historia clínica queda acá '+t.days+' días y se puede restaurar. Pasado ese plazo solo se puede eliminar definitivamente. Si lo borrado había devuelto stock, al restaurarlo se vuelve a descontar (si no alcanza el stock, se restaura igual y te avisamos).</p>'+(t.expiredCount?'<button class="btn danger-o" data-action="trash-purge-expired">Eliminar definitivamente los vencidos ('+t.expiredCount+')</button>':'')+'</div>'+
     '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Tipo</th><th>Elemento</th><th>Paciente</th><th>Borrado</th><th>Plazo</th><th></th></tr></thead><tbody>'+
-    (rows||'<tr><td colspan="6" class="empty">La papelera está vacía.</td></tr>')+'</tbody></table></div></section>';
+    (rows||'<tr><td colspan="6" class="empty">La papelera está vacía.</td></tr>')+'</tbody></table></div>';
 }
 
 /* ============================================================
@@ -867,8 +872,8 @@ function attachmentsPanel(){
   return '<section class="sec"><h3>Archivos adjuntos de los estudios</h3>'+meter+
     '<p class="warnbox">Los archivos adjuntos <b>no se incluyen</b> en la copia que descargás (el JSON solo guarda sus datos: nombre, tamaño y a qué estudio pertenecen). Los archivos quedan en <b>Supabase Storage</b>, en el bucket privado de estudios.</p></section>';
 }
-function viewBackups(){
-  if(!ui.backups)return '<section class="farm"><div class="head"><h1>Copias de seguridad</h1></div><p class="empty">Cargando…</p></section>';
+function backupsBody(){
+  if(!ui.backups)return '<p class="empty">Cargando…</p>';
   var d=lastExportDays();
   var lastAuto=ui.backups.filter(function(b){return b.auto;})[0];
   var rows=ui.backups.length?ui.backups.map(function(b){
@@ -876,22 +881,20 @@ function viewBackups(){
     return '<div class="bk"><div><b>'+esc(b.label)+'</b><br><small>'+fmtTs(b.createdAt)+' · '+plural(c.patients||0,'paciente','pacientes')+' · '+plural(c.products||0,'producto','productos')+' · '+plural(c.cash_movements||0,'movimiento de caja','movimientos de caja')+'</small></div>'+
       '<div><button class="link" data-action="restore" data-id="'+b.id+'">Restaurar</button><button class="link bad" data-action="del-backup" data-id="'+b.id+'">Eliminar</button></div></div>';
   }).join(''):'<p class="empty">Todavía no hay copias guardadas.</p>';
-  return '<section class="farm"><div class="head"><h1>Copias de seguridad</h1></div>'+
-    '<p class="warnbox">El sistema guarda solo una copia por día dentro de la misma base de datos (te sirve si borrás algo por error), pero <b>si se perdiera la base, esas copias también se pierden</b>. Descargá un archivo a tu computadora o a un pendrive, por lo menos una vez por semana.'+
+  return '<p class="warnbox">El sistema guarda solo una copia por día dentro de la misma base de datos (te sirve si borrás algo por error), pero <b>si se perdiera la base, esas copias también se pierden</b>. Descargá un archivo a tu computadora o a un pendrive, por lo menos una vez por semana.'+
     (d===null?' Todavía no descargaste ninguno desde esta computadora.':' La última descarga desde esta computadora fue hace '+plural(d,'día','días')+'.')+'</p>'+
     '<div class="cashbox" style="margin-top:1rem"><div class="panel"><h3>Copia automática diaria</h3><p>'+(lastAuto?'Última copia automática: '+fmtTs(lastAuto.createdAt)+'.':'Todavía no se hizo ninguna.')+' Se hace sola una vez por día y se conservan las últimas 14.</p></div>'+
     '<div class="panel"><h3>Archivo y copias manuales</h3><div class="filerow"><button class="btn primary" data-action="backup-download">Descargar copia a mi computadora</button><button class="btn" data-action="backup-now">Crear copia ahora</button><button class="btn" data-action="pick-file">Cargar desde archivo</button><input id="bfile" type="file" accept=".json,application/json" hidden></div></div></div>'+
     attachmentsPanel()+
-    '<section class="sec"><h3>Copias guardadas en el sistema</h3><div class="bk-list">'+rows+'</div></section></section>';
+    '<section class="sec"><h3>Copias guardadas en el sistema</h3><div class="bk-list">'+rows+'</div></section>';
 }
-function viewUsers(){
-  if(!ui.users)return '<section class="farm"><div class="head"><h1>Usuarios</h1></div><p class="empty">Cargando…</p></section>';
+function usersBody(){
+  if(!ui.users)return '<p class="empty">Cargando…</p>';
   var rows=ui.users.map(function(u){
     return '<tr><td><b>'+esc(u.name)+'</b><br><small>'+esc(u.email)+'</small></td><td>'+(u.role==='admin'?'Administrador':'Ayudante')+'</td><td>'+(u.active?'<span class="chip ok">Activo</span>':'<span class="chip none">Desactivado</span>')+'</td><td class="act"><button class="link" data-action="edit-user" data-id="'+u.id+'">Editar</button></td></tr>';
   }).join('');
-  return '<section class="farm"><div class="head"><h1>Usuarios</h1><button class="btn primary" data-action="new-user">Nuevo usuario</button></div>'+
-    '<p class="empty">El administrador ve todo. El ayudante puede cargar y ver pacientes, cobrar servicios y vender productos, pero no ve la caja, los reportes ni las copias, y no puede borrar pacientes ni cambiar precios.</p>'+
-    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Usuario</th><th>Rol</th><th>Estado</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></section>';
+  return '<div class="cfg-tabacts">'+'<p class="empty">El administrador ve todo. El ayudante puede cargar y ver pacientes, cobrar servicios y vender productos, pero no ve la caja, los reportes ni las copias, y no puede borrar pacientes ni cambiar precios.</p>'+'<button class="btn primary" data-action="new-user">Nuevo usuario</button></div>'+
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Usuario</th><th>Rol</th><th>Estado</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
 
 /* ============================================================
@@ -1029,16 +1032,22 @@ function hourDayHTML(d){
     '<button type="button" class="link hadd" data-action="hr-add">'+ico('plus')+' Agregar horario</button></div></div>';
 }
 function viewConfig(){
+  var tab=ui.cfgTab,body=tab==='usuarios'?usersBody():tab==='copias'?backupsBody():tab==='papelera'?trashBody():configGeneral();
+  return '<section class="farm cfg-page"><div class="head"><h1>Configuración</h1>'+(tab==='general'?'<button class="btn primary" data-action="config-save">Guardar cambios</button>':'')+'</div>'+
+    '<div class="tabs cfg-tabs" role="tablist" aria-label="Secciones de Configuración">'+CFG_TABS.map(function(t){
+      return '<button class="tab" role="tab" data-action="cfg-tab" data-v="'+t[0]+'" aria-selected="'+(tab===t[0])+'">'+t[1]+'</button>';}).join('')+'</div>'+
+    '<div class="cfg-body" role="tabpanel">'+body+'</div></section>';
+}
+function configGeneral(){
   var st=S.settings,on=payMethods();
-  return '<section class="farm cfg-page"><div class="head"><h1>Configuración</h1><button class="btn primary" data-action="config-save">Guardar cambios</button></div>'+
-    '<form id="cfgform" class="cfg" novalidate>'+
+  return '<form id="cfgform" class="cfg" novalidate>'+
     '<section class="panel"><h2>Veterinaria</h2><div class="fields">'+fld('Nombre de la veterinaria','shopName',{value:st.shopName||S.clinic,req:true,maxlength:100,full:true})+'</div>'+
       '<p class="cfg-hint">Se ve en el menú, en la pestaña del navegador y en las impresiones.</p></section>'+
     '<section class="panel"><h2>Horario de atención</h2><p class="cfg-hint">Un día puede tener más de un horario, por ejemplo de 08:00 a 12:00 y de 16:00 a 19:00. Al anotar un turno fuera de estos horarios, la agenda te avisa antes de guardarlo.</p>'+
       '<div class="hours" id="cfghours">'+WEEK_ORDER.map(hourDayHTML).join('')+'</div></section>'+
     '<section class="panel"><h2>Medios de pago</h2><p class="cfg-hint">Los que marques son los que aparecen al cobrar y al registrar ingresos o egresos.</p>'+
       '<div class="checkgrid" id="cfgpay">'+PAY.map(function(m){return '<label class="check"><input type="checkbox" name="methods" value="'+esc(m)+'"'+(on.indexOf(m)>=0?' checked':'')+'> '+esc(m)+'</label>';}).join('')+'</div></section>'+
-    '<p class="err" role="alert" id="cfgerr"></p><div class="actions"><button type="button" class="btn primary" data-action="config-save">Guardar cambios</button></div></form></section>';
+    '<p class="err" role="alert" id="cfgerr"></p><div class="actions"><button type="button" class="btn primary" data-action="config-save">Guardar cambios</button></div></form>';
 }
 // Lee el horario del formulario y lo valida igual que el servidor (franjas completas, en orden y sin superponerse).
 function readHours(f){
@@ -1088,13 +1097,13 @@ async function saveConfig(){
 
 function render(){
   if(!S.user)return;
-  var adminOnly={reportes:1,copias:1,usuarios:1,papelera:1,configuracion:1};
+  var adminOnly={reportes:1,configuracion:1};
   if(adminOnly[ui.view]&&!isAdmin())ui.view='pacientes';
   if(ui.view==='farmacia'&&!isAdmin()&&ui.tab==='caja')ui.tab='stock';
   renderNav();renderAlerts();renderUserBox();
   var v=ui.view;
   main.innerHTML=v==='pacientes'?viewPacientes():v==='clientes'?viewClientes():v==='calendario'?viewCalendario():v==='farmacia'?viewFarmacia():v==='proveedores'?viewProveedores():
-    v==='reportes'?viewReportes():v==='papelera'?viewTrash():v==='copias'?viewBackups():v==='usuarios'?viewUsers():v==='configuracion'?viewConfig():viewPacientes();
+    v==='reportes'?viewReportes():v==='configuracion'?viewConfig():viewPacientes();
   if(v==='pacientes')loadThumbs();
 }
 
@@ -2111,6 +2120,7 @@ var actions={
       var r=await api('/trash/purge-expired',{body:{}});await reload();toast(plural(r.purged,'elemento eliminado','elementos eliminados'));
     });
   },
+  'cfg-tab':function(id,b){ui.cfgTab=b.dataset.v;return refreshView();},
   'config-save':async function(id,btn){
     var label=btn.textContent;btn.classList.add('busy');btn.textContent='Guardando…';
     try{await saveConfig();}finally{btn.classList.remove('busy');btn.textContent=label;}
@@ -2155,7 +2165,7 @@ var actions={
   logout:async function(){
     try{await api('/logout',{body:{}});}catch(e){}
     S.user=null;ui.sel=null;ui.detail=null;ui.cash=null;ui.rmonthly=null;ui.backups=null;ui.users=null;
-    ui.suppliers=null;ui.csel=null;ui.cdetail=null;ui.appts=null;ui.cal={view:'week',anchor:todayIso()}; // v2
+    ui.suppliers=null;ui.csel=null;ui.cdetail=null;ui.appts=null;ui.cal={view:'week',anchor:todayIso()};ui.cfgTab='general'; // v2
     main.innerHTML='';
     showLogin();
   }

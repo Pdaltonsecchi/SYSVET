@@ -71,7 +71,7 @@ Esa dirección ya funciona con **HTTPS** (el candadito del navegador): Render lo
 3. Tocá **Cambiar contraseña** (abajo a la izquierda) y poné una que solo vos sepas.
 4. En **Farmacia y caja → Lista de precios** cargá tus consultas, vacunas y cirugías.
 5. En **Farmacia y caja → Stock** cargá tus productos. Si completás cuánto pagaste por el stock inicial, se suma a egresos.
-6. En **Usuarios** creá a tus ayudantes. Ellos ven pacientes, cobran y venden, pero no ven la caja, los reportes ni las copias, y no pueden borrar pacientes ni cambiar precios.
+6. En **Configuración → Usuarios** creá a tus ayudantes. Ellos ven pacientes, cobran y venden, pero no ven la caja, los reportes ni las copias, y no pueden borrar pacientes ni cambiar precios.
 7. En **Pacientes** empezá a cargar.
 
 > Después de que el sistema crea tu usuario, cambiar `ADMIN_PASSWORD` en Render ya no tiene efecto. Para cambiar la contraseña usá el botón dentro del sistema.
@@ -83,11 +83,11 @@ Esa dirección ya funciona con **HTTPS** (el candadito del navegador): Render lo
 La base de datos gratuita **no incluye copias de seguridad propias**. Por eso el sistema hace lo siguiente:
 
 - **Una copia automática por día**, guardada dentro de la misma base de datos (se conservan las últimas 14). Sirve para recuperarte de un error, por ejemplo si borrás algo sin querer.
-- **Descarga a un archivo** (Copias de seguridad → *Descargar copia a mi computadora*). Esto es lo que te protege de verdad si se perdiera la base.
+- **Descarga a un archivo** (Configuración → Copias de seguridad → *Descargar copia a mi computadora*). Esto es lo que te protege de verdad si se perdiera la base.
 
 **Hábito recomendado: descargá una copia por lo menos una vez por semana** y guardala en un pendrive o en tu correo. El sistema te avisa a la izquierda si pasaron más de 7 días.
 
-Para volver atrás, entrá a **Copias de seguridad** y tocá **Restaurar** en una copia guardada, o **Cargar desde archivo**. Antes de restaurar, el sistema guarda automáticamente una copia de lo que hay.
+Para volver atrás, entrá a **Configuración → Copias de seguridad** y tocá **Restaurar** en una copia guardada, o **Cargar desde archivo**. Antes de restaurar, el sistema guarda automáticamente una copia de lo que hay.
 
 ---
 
@@ -116,7 +116,7 @@ Si algún día cambian los archivos, subilos al repositorio de GitHub y Render v
   - La contraseña de la base tiene símbolos y la dirección quedó mal. Cambiala en Supabase por una solo con letras y números.
   - Se usó la conexión directa en vez del *Session pooler*.
 - **"Email o contraseña incorrectos" con tu usuario administrador:** revisá que `ADMIN_EMAIL` y `ADMIN_PASSWORD` estén bien escritos en Render.
-- **Se olvidó la contraseña de administrador:** otro administrador puede cambiarla desde **Usuarios**. Si eras el único, hay que pedir ayuda técnica.
+- **Se olvidó la contraseña de administrador:** otro administrador puede cambiarla desde **Configuración → Usuarios**. Si eras el único, hay que pedir ayuda técnica.
 
 ## Para quien lo mantenga (técnico)
 
@@ -140,7 +140,7 @@ Los estudios complementarios admiten archivos (ecografías, radiografías, anál
    - `SUPABASE_SERVICE_ROLE_KEY` = la clave service_role
    - `SUPABASE_BUCKET` = `estudios` (opcional)
    - `CLINIC_NAME` = nombre de la veterinaria para las impresiones (opcional)
-5. Guardá: Render reinicia solo. En **Copias de seguridad** vas a ver cuánto espacio usan los adjuntos (el plan gratuito de Supabase da 1 GB).
+5. Guardá: Render reinicia solo. En **Configuración → Copias de seguridad** vas a ver cuánto espacio usan los adjuntos (el plan gratuito de Supabase da 1 GB).
 
 Permisos: el ayudante puede ver y subir adjuntos; solo el administrador puede borrarlos. Las copias de seguridad (JSON) guardan los datos de los adjuntos pero **no los archivos**, que quedan en Supabase Storage.
 
@@ -154,7 +154,7 @@ Permisos: el ayudante puede ver y subir adjuntos; solo el administrador puede bo
 
 ## Configuración e informe semanal por email
 
-- En **Configuración** (último ítem del menú, solo el administrador) se cambia el nombre de la veterinaria, el horario de atención y los medios de pago. Un día puede tener varios horarios (por ejemplo de 08:00 a 12:00 y de 16:00 a 19:00): la agenda avisa al anotar un turno fuera de ellos. Los medios de pago marcados son los que aparecen al cobrar y en la caja.
+- **Configuración** (último ítem del menú, solo el administrador) tiene cuatro pestañas: *General*, *Usuarios*, *Copias de seguridad* y *Papelera*. En *General* se cambia el nombre de la veterinaria, el horario de atención y los medios de pago. Un día puede tener varios horarios (por ejemplo de 08:00 a 12:00 y de 16:00 a 19:00): la agenda avisa al anotar un turno fuera de ellos. Los medios de pago marcados son los que aparecen al cobrar y en la caja.
 - El resto de la configuración guardada (ticket, gastos fijos, informe semanal) no tiene pantalla: se conserva al guardar y se cambia con `PUT /api/settings` como administrador.
 - Para el informe por email, definí en Render `EMAIL_PROVIDER` (`resend` o `brevo`), `EMAIL_API_KEY` y `EMAIL_FROM` (por ejemplo `SYSVET <avisos@tudominio.com>`, un remitente verificado). Sin esas variables el informe queda desactivado y el sistema arranca igual.
 - En el plan gratuito de Render el servidor se duerme: conviene un cron externo que haga `POST /api/cron/weekly-report` con el encabezado `X-Cron-Secret` igual a `CRON_SECRET`.

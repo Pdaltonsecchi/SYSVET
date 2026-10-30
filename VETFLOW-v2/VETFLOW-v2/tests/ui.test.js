@@ -24,7 +24,7 @@ test('pantalla Configuración', { skip: !pw && 'Playwright no está instalado' }
     await page.fill('#lemail', ENV.ADMIN_EMAIL);
     await page.fill('#lpass', ENV.ADMIN_PASSWORD);
     await page.click('#lbtn');
-    await page.click('#nav [data-action="nav"][data-v="configuracion"]');
+    await page.click('#side [data-action="nav"][data-v="configuracion"]');
     await page.waitForSelector('#cfgform');
     if (process.env.SHOTS) await page.screenshot({ path: process.env.SHOTS + '/config-1280.png', fullPage: true });
 
