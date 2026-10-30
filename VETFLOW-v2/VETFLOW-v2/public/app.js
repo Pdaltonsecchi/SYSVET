@@ -338,20 +338,22 @@ function segHTML(action,items,active){
 /* ============================================================
    Navegación, avisos y usuario
    ============================================================ */
-function navItems(){
-  // v2: Calendario y Proveedores son visibles para admin y ayudante (agendar turnos y
-  // consultar a quién comprarle es tarea del día a día, no solo del administrador).
-  var a=[['pacientes','Pacientes'],['clientes','Clientes'],['calendario','Calendario'],['farmacia','Farmacia y caja'],['proveedores','Proveedores']];
-  if(isAdmin())a.push(['reportes','Reportes'],['configuracion','Configuración']);
-  return a;
+// Menú lateral en grupos: la atención (pacientes, dueños, agenda), el negocio (farmacia y caja, proveedores,
+// reportes) y, abajo y aparte, Configuración.
+// v2: Calendario y Proveedores son visibles para admin y ayudante (agendar turnos y
+// consultar a quién comprarle es tarea del día a día, no solo del administrador).
+function navGroups(){
+  var g2=[['farmacia','Farmacia y caja'],['proveedores','Proveedores']];
+  if(isAdmin())g2.push(['reportes','Reportes']);
+  return [[['pacientes','Pacientes'],['clientes','Clientes'],['calendario','Calendario']],g2];
 }
 // Celular: barra inferior con las tareas del día (ficha, agenda, caja, dueños) y "Más" para el resto.
 var TAB_PRI=[['pacientes','Pacientes','paw'],['calendario','Calendario','calendar'],['farmacia','Farmacia','pill'],['clientes','Clientes','users']];
 var isPri=function(v){return TAB_PRI.some(function(t){return t[0]===v;});};
 function renderNav(){
-  $('#nav').innerHTML=navItems().map(function(i){
-    return '<button class="navb'+(isPri(i[0])?' pri':'')+'" data-action="nav" data-v="'+i[0]+'" aria-current="'+(ui.view===i[0]?'page':'false')+'">'+i[1]+'</button>';
-  }).join('');
+  var btn=function(i){return '<button class="navb'+(isPri(i[0])?' pri':'')+'" data-action="nav" data-v="'+i[0]+'" aria-current="'+(ui.view===i[0]?'page':'false')+'">'+i[1]+'</button>';};
+  $('#nav').innerHTML=navGroups().map(function(g){return '<div class="navg" role="group">'+g.map(btn).join('')+'</div>';}).join('');
+  var cfg=$('#navcfg');cfg.innerHTML=isAdmin()?btn(['configuracion','Configuración']):'';cfg.hidden=!isAdmin();
   var open=!!document.body.dataset.more;
   $('#tabbar').innerHTML=TAB_PRI.map(function(t){
     return '<button class="tabb" data-action="nav" data-v="'+t[0]+'" aria-current="'+(ui.view===t[0]?'page':'false')+'">'+ico(t[2])+'<span>'+t[1]+'</span></button>';

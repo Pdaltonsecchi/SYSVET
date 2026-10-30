@@ -12,7 +12,7 @@
   --brand-tint:color-mix(in srgb,var(--brand) 55%,white);   /* detalles claros sobre el menú grafito (4,8:1) */
   --brand-ink:#FFFFFF; --brand-soft:#DDE8DC;
   /* Menú grafito */
-  --side:#374151; --side-ink:#F3F4F6; --side-muted:#C3C9D3; --side-hover:rgba(255,255,255,.08); --side-active:rgba(255,255,255,.12);
+  --side:#374151; --side-ink:#F3F4F6; --side-muted:#C3C9D3; --side-hover:rgba(255,255,255,.08); --side-active:rgba(255,255,255,.12); --side-line:rgba(255,255,255,.14);
   /* Estados: éxito, advertencia, error e información, con fondos suaves. */
   --ok:#15803D; --ok-bg:#DCFCE7; --warn:#B45309; --warn-bg:#FEF3C7; --bad:#B91C1C; --bad-bg:#FEE2E2; --info:#1D4ED8; --info-bg:#DBEAFE;
   /* Puntos de aviso sobre el menú grafito (claros a propósito: ≥3:1 contra --side) */
@@ -71,6 +71,11 @@ body[data-state="error"] #login, body[data-state="error"] #app{display:none}
 .navb:hover{background:var(--side-hover)}
 /* indicador en --brand-tint: el --brand daba 2,1:1 contra el grafito */
 .navb[aria-current="page"]{background:var(--side-active);box-shadow:inset 3px 0 0 var(--brand-tint)}
+/* Grupos del menú separados por una línea fina; Configuración va sola, abajo, junto a la cuenta */
+.navg{display:flex;flex-direction:column;gap:.15rem}
+.navg+.navg{margin-top:.55rem;padding-top:.55rem;border-top:1px solid var(--side-line)}
+.nav-cfg{margin-top:auto;padding-top:.55rem;border-top:1px solid var(--side-line)}
+.nav-cfg:not([hidden])+.side-foot{margin-top:0}
 .alerts{display:flex;flex-direction:column;gap:.35rem}
 .alerts h3{font-size:.95rem;color:var(--side-muted);font-family:var(--f-body);font-weight:500;margin-bottom:.15rem}
 .al{display:flex;gap:.55rem;align-items:flex-start;text-align:left;background:transparent;border:0;padding:.35rem .5rem;border-radius:8px;color:var(--side-ink);font-size:.92rem;width:100%}
@@ -567,8 +572,15 @@ body[data-stale] #app,body[data-stale] dialog{pointer-events:none;opacity:.55}
     height:auto;max-height:calc(100dvh - 3.6rem - 2.5rem);overflow:auto;border-radius:14px 14px 0 0;padding:1rem 1rem 1.25rem;gap:1rem;
     box-shadow:0 -8px 24px rgba(55,65,81,.25)}
   body[data-more] .scrim{display:block;position:fixed;inset:0;z-index:28;background:rgba(55,65,81,.45)}
-  .side .nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.25rem}
+  /* Hoja "Más": solo lo que no está en la barra inferior (Proveedores, Reportes, Configuración), juntos arriba */
+  .side .navg,.side .nav-cfg{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.25rem}
   .side .navb.pri{display:none}
+  .side .navg:not(:has(.navb:not(.pri))){display:none}
+  .side .navg+.navg{margin-top:0;padding-top:0;border-top:0}
+  .side .nav-cfg{order:1;margin-top:-.75rem;padding-top:0;border-top:0}
+  .side .nav{order:1}
+  .side .alerts{order:2}
+  .side .side-foot{order:3;margin-top:0}
   .navb,.al,.side-foot button{min-height:2.75rem}
   .side-foot{flex-direction:row;flex-wrap:wrap;gap:.25rem 1.25rem;align-items:center}
   .side-foot .who{flex-basis:100%;margin-bottom:0}
