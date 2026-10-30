@@ -474,9 +474,9 @@ function weightChart(ws){
   var dots=ws.map(function(w,i){return '<circle cx="'+X(w,i).toFixed(1)+'" cy="'+Y(w.kg).toFixed(1)+'" r="3.5" fill="var(--brand)"/>';}).join('');
   return '<svg class="wchart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Evolución del peso de '+fmtKg(kgs[0])+' a '+fmtKg(kgs[kgs.length-1])+'">'+
     (ws.length>1?'<polyline points="'+pts+'" fill="none" stroke="var(--brand)" stroke-width="2"/>':'')+dots+
-    '<text x="'+pl+'" y="'+(H-6)+'" font-size="11" fill="var(--muted)">'+fmtDate(ws[0].date)+'</text>'+
-    '<text x="'+(W-pr)+'" y="'+(H-6)+'" font-size="11" text-anchor="end" fill="var(--muted)">'+fmtDate(ws[ws.length-1].date)+'</text>'+
-    '<text x="'+pl+'" y="10" font-size="11" fill="var(--muted)">'+fmtKg(Math.max.apply(null,kgs))+'</text></svg>';
+    '<text x="'+pl+'" y="'+(H-6)+'" font-size="13" fill="var(--muted)">'+fmtDate(ws[0].date)+'</text>'+
+    '<text x="'+(W-pr)+'" y="'+(H-6)+'" font-size="13" text-anchor="end" fill="var(--muted)">'+fmtDate(ws[ws.length-1].date)+'</text>'+
+    '<text x="'+pl+'" y="10" font-size="13" fill="var(--muted)">'+fmtKg(Math.max.apply(null,kgs))+'</text></svg>';
 }
 function weightHTML(p){
   var ws=p.weights||[];
@@ -543,6 +543,20 @@ function uploadFiles(studyId,files,onProgress){
     x.send(fd);
   });
 }
+// Franja clínica del encabezado de la ficha: especie, edad, peso y último control, siempre en el mismo orden y alineados.
+function clinicStrip(p){
+  var it=function(k,v,sub){return '<div><dt>'+k+'</dt><dd>'+v+(sub?'<small>'+sub+'</small>':'')+'</dd></div>';};
+  var age=ageText(p.birth).match(/^(.*) \((.*)\)$/);
+  var ws=p.weights||[],lw=ws.length?ws[ws.length-1]:null;
+  var kg=lw?fmtKg(lw.kg):p.weight!==''?fmtKg(p.weight):'';
+  var dx=(p.diagnoses||[])[0];
+  return '<dl class="cstrip">'+
+    it('Especie',esc(p.species)+' · '+esc(p.sex)+(p.neutered?' (castrad'+(p.sex==='Hembra'?'a':'o')+')':''),p.breed?esc(p.breed):'')+
+    it('Edad',age?age[1]:'Sin datos',age?age[2]:'')+
+    it('Peso',kg||'Sin datos',lw?fmtDate(lw.date):'')+
+    it('Último control',dx?fmtDate(dx.date):'Sin registros',dx?esc(dx.title):'')+
+    '</dl>';
+}
 function detailHTML(p){
   var L=latestIds(p);
   var vacHTML=p.vaccines.length?'<div class="rows">'+p.vaccines.map(function(v){
@@ -571,10 +585,10 @@ function detailHTML(p){
   }).join('')+'</div><div class="sum"><span>Total cobrado</span><span>'+money(total)+'</span></div>':'<p class="empty">Todavía no se cobró ningún servicio a este paciente.</p>';
 
   return '<button class="btn back" data-action="back">Volver a la lista</button>'+
-    '<header class="phead"><div class="avatar big" aria-hidden="true">'+emo(p)+'</div>'+
+    '<header class="phead"><div class="phead-id"><div class="avatar avatar--lg" aria-hidden="true">'+emo(p)+'</div>'+
     '<div class="info"><h2>'+esc(p.name)+(p.hc?' <span class="hcbadge" title="Número de historia clínica">'+hcLabel(p)+'</span>':'')+'</h2>'+
-    '<p class="meta">'+esc(p.species)+(p.breed?' '+esc(p.breed):'')+' · '+esc(p.sex)+(p.neutered?' (castrad'+(p.sex==='Hembra'?'a':'o')+')':'')+' · '+ageText(p.birth)+(p.weight!==''?' · '+esc(p.weight)+' kg':'')+'</p>'+
-    '<p class="meta">Dueño: '+(p.clientId?'<button class="link ownerlink" data-action="open-client" data-id="'+p.clientId+'" title="Ver datos de contacto y mascotas del cliente">'+esc(p.owner)+'</button>':esc(p.owner))+'</p></div>'+
+    '<p class="meta">Dueño: '+(p.clientId?'<button class="link ownerlink" data-action="open-client" data-id="'+p.clientId+'" title="Ver datos de contacto y mascotas del cliente">'+esc(p.owner)+'</button>':esc(p.owner))+'</p></div></div>'+
+    clinicStrip(p)+
     '<div class="pactions"><button class="btn primary" data-action="charge">Cobrar servicio</button><button class="btn" data-action="edit-patient">Editar datos</button><button class="btn" data-action="print">Imprimir</button>'+
     (isAdmin()?'<button class="btn danger-o" data-action="del-patient">Eliminar</button>':'')+'</div></header>'+
     (p.notes?'<p class="note"><b>Notas:</b> '+esc(p.notes)+'</p>':'')+
@@ -727,7 +741,7 @@ function viewReportes(){
   return '<section class="farm"><div class="head"><h1>Reportes</h1></div>'+
     '<div class="repsec"><h2>Ingresos por mes</h2><div class="legend"><span><i class="sw-in"></i>Ingresos</span><span><i class="sw-out"></i>Egresos</span></div>'+chartSVG(ui.rmonthly)+
     '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Mes</th><th class="num">Efectivo</th><th class="num">Transferencias</th><th class="num">Tarjetas</th><th class="num">Total ingresos</th><th class="num">Egresos</th><th class="num">Balance</th></tr></thead><tbody>'+mrows+'</tbody></table></div></div>'+
-    '<div class="repsec"><div class="toolbar"><h2 style="margin:0">Servicios y productos</h2>'+segHTML('rep',[['30','Últimos 30 días'],['90','Últimos 3 meses'],['365','Último año']],ui.rfrom&&ui.rto?'':ui.rep)+rangeHTML('rfrom','rto',ui.rfrom,ui.rto)+'<button class="btn" data-action="rep-export">Exportar CSV de movimientos</button></div>'+
+    '<div class="repsec"><div class="toolbar"><h2>Servicios y productos</h2>'+segHTML('rep',[['30','Últimos 30 días'],['90','Últimos 3 meses'],['365','Último año']],ui.rfrom&&ui.rto?'':ui.rep)+rangeHTML('rfrom','rto',ui.rfrom,ui.rto)+'<button class="btn" data-action="rep-export">Exportar CSV de movimientos</button></div>'+
     '<div class="grp"><h3>Servicios más vendidos</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Servicio</th><th>Veces cobrado</th><th class="num">Total cobrado</th></tr></thead><tbody>'+(svRows||'<tr><td colspan="3" class="empty">No hay servicios cobrados en este período.</td></tr>')+'</tbody></table></div></div>'+
     '<div class="grp"><h3>Productos que más rotan</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Unidades vendidas o usadas</th><th class="num">Stock actual</th><th>Cuánto dura el stock</th></tr></thead><tbody>'+(prRows||'<tr><td colspan="4" class="empty">Todavía no cargaste productos.</td></tr>')+'</tbody></table></div></div></div></section>';
 }
@@ -830,7 +844,7 @@ function attachmentsPanel(){
     meter='<p><b>Adjuntos: '+fmtBytes(u.bytes)+' de '+fmtBytes(u.limit)+'</b> <small>('+plural(u.count,'archivo','archivos')+')</small></p>'+
       '<div class="meter'+(pct>=80?' hot':'')+'" role="img" aria-label="'+pct+'% del espacio usado"><i style="width:'+Math.max(pct,u.bytes?1:0)+'%"></i></div>'+
       (pct>=80?'<p class="warnbox">Queda poco espacio para adjuntos. Revisá los archivos pesados o ampliá el plan de Supabase.</p>':'');
-  }else meter='<p class="empty" style="padding:0">Los adjuntos todavía no están activados en el servidor.</p>';
+  }else meter='<p class="empty">Los adjuntos todavía no están activados en el servidor.</p>';
   return '<section class="sec"><h3>Archivos adjuntos de los estudios</h3>'+meter+
     '<p class="warnbox">Los archivos adjuntos <b>no se incluyen</b> en la copia que descargás (el JSON solo guarda sus datos: nombre, tamaño y a qué estudio pertenecen). Los archivos quedan en <b>Supabase Storage</b>, en el bucket privado de estudios.</p></section>';
 }

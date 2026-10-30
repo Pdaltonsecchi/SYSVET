@@ -28,8 +28,9 @@
   color-scheme:light;
 }
 *,*::before,*::after{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:16px;line-height:1.5}
-h1,h2,h3{font-family:var(--f-head);margin:0;line-height:1.15;letter-spacing:-.01em}
+/* Números tabulares en toda la interfaz: fechas, pesos, dosis y montos quedan alineados en columnas. */
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:16px;line-height:1.5;font-variant-numeric:tabular-nums}
+h1,h2,h3{font-family:var(--f-head);margin:0;line-height:1.15;letter-spacing:-.01em;font-variant-numeric:normal}
 h1{font-size:1.6rem} h2{font-size:1.5rem} h3{font-size:1.1rem}
 button{font:inherit;color:inherit;cursor:pointer}
 button:disabled{opacity:.6;cursor:default}
@@ -77,12 +78,13 @@ body[data-state="error"] #login, body[data-state="error"] #app{display:none}
 .side-foot{margin-top:auto;font-size:.85rem;color:var(--side-muted);display:flex;flex-direction:column;gap:.15rem;align-items:flex-start}
 .side-foot .who{margin-bottom:.4rem;display:flex;flex-direction:column}
 .side-foot .who b{color:var(--side-ink)}
+.side-foot .who small{font-size:inherit}
 .side-foot button{background:transparent;border:0;color:var(--side-ink);text-decoration:underline;padding:.15rem 0;font-size:.85rem}
 
 main{min-width:0}
 .head{display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap}
 
-.btn{border:1px solid var(--line);background:var(--panel);padding:.5rem .95rem;border-radius:8px;font-weight:600;font-size:.95rem}
+.btn{border:1px solid var(--line-strong);background:var(--panel);padding:.5rem .95rem;border-radius:8px;font-weight:600;font-size:.95rem;display:inline-flex;align-items:center;justify-content:center;gap:.4rem;text-decoration:none;color:var(--ink)}
 .btn:hover:not(:disabled){border-color:var(--brand)}
 .btn.primary{background:var(--brand);border-color:var(--brand);color:var(--brand-ink)}
 .btn.primary:hover:not(:disabled){filter:brightness(1.08)}
@@ -99,7 +101,7 @@ main{min-width:0}
 .chip.none{background:var(--brand-soft);color:var(--brand-dark)}
 .chip.info{background:var(--info-bg);color:var(--info)}
 .seg{display:flex;flex-wrap:wrap;gap:.35rem}
-.segb{border:1px solid var(--line);background:var(--panel);border-radius:99px;padding:.3rem .8rem;font-size:.88rem;font-weight:500}
+.segb{border:1px solid var(--line-strong);background:var(--panel);border-radius:99px;padding:.3rem .8rem;font-size:.88rem;font-weight:500}
 .segb[aria-pressed="true"]{background:var(--brand-soft);color:var(--brand-dark);border-color:var(--brand);font-weight:600}
 input,select,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line-strong);border-radius:8px;padding:.5rem .65rem;width:100%}
 textarea{resize:vertical}
@@ -122,12 +124,35 @@ textarea{resize:vertical}
 .pac-detail{padding:1.5rem clamp(1rem,3vw,2.25rem) 3rem;min-width:0}
 .empty{color:var(--muted);padding:1.5rem 0;max-width:46ch}
 .back{display:none;margin-bottom:1rem}
-.phead{display:flex;gap:1.1rem;align-items:center;flex-wrap:wrap;padding-bottom:1.25rem;border-bottom:1px solid var(--line)}
-.phead .info{flex:1;min-width:220px}
+/* Encabezado de la ficha: identidad + franja clínica + acciones. En celular, una columna. */
+.phead{display:flex;flex-wrap:wrap;align-items:center;gap:1rem 1.5rem;padding-bottom:1.25rem;border-bottom:1px solid var(--line)}
+.phead-id{flex:1 1 16rem;display:flex;gap:.9rem;align-items:center;min-width:0}
+.phead .info{flex:1;min-width:0}
+.phead h2{overflow-wrap:anywhere}
+.phead .pactions{order:3;flex:1 1 100%}
+/* Franja clínica: el dato que se busca primero en cada consulta, en una sola línea de lectura */
+.cstrip{order:2;flex:1 1 100%;margin:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--brand);border-radius:10px}
+.cstrip>div{padding:.6rem .85rem;min-width:0}
+.cstrip>div:nth-child(even){border-left:1px solid var(--line)}
+.cstrip>div:nth-child(n+3){border-top:1px solid var(--line)}
+.cstrip dt{font-size:.82rem;color:var(--muted)}
+.cstrip dd{margin:0;font-family:var(--f-head);font-weight:600;font-size:1.05rem;line-height:1.25;overflow-wrap:anywhere}
+.cstrip dd small{display:block;font-family:var(--f-body);font-weight:400;font-size:.85rem;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (min-width:1000px){
+  /* Acciones al lado del nombre si entran; si no, bajan de línea (nunca aprietan el nombre) */
+  .phead .pactions{order:2;flex:0 1 auto}
+  .cstrip{order:3}
+  .cstrip{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .cstrip>div:nth-child(n+2){border-left:1px solid var(--line)}
+  .cstrip>div:nth-child(n+3){border-top:0}
+}
 .meta{margin:.25rem 0 0;color:var(--muted)}
 .pactions{display:flex;gap:.5rem;flex-wrap:wrap}
 .note{margin:1rem 0 0;padding:.6rem .85rem;background:var(--warn-bg);color:var(--warn);border-radius:8px;font-size:.95rem}
 .sec{padding:1.4rem 0;border-bottom:1px solid var(--line)}
+/* Dentro de secciones y paneles el aviso de vacío no suma su propio relleno al de la sección */
+.empty{margin:0}
+.sec .empty,.panel .empty{padding:.25rem 0}
 .sec-head{display:flex;justify-content:space-between;align-items:center;gap:1rem;margin-bottom:.6rem}
 .rows{display:flex;flex-direction:column}
 .row{display:grid;gap:.75rem;align-items:center;padding:.65rem 0;border-top:1px solid var(--line)}
@@ -199,6 +224,7 @@ textarea{resize:vertical}
 .warnbox{background:var(--warn-bg);color:var(--warn);padding:.7rem .9rem;border-radius:8px;font-size:.95rem;margin:1rem 0 0}
 .repsec{margin-top:1.75rem}
 .repsec h2{font-size:1.25rem;margin-bottom:.6rem}
+.repsec .toolbar h2{margin:0}
 
 /* v2: calendario de turnos */
 .cal-head{display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem}
@@ -218,7 +244,7 @@ textarea{resize:vertical}
 .appt{border-radius:7px;padding:.32rem .5rem;font-size:.82rem;color:#fff;text-align:left;width:100%;border:0;cursor:pointer;line-height:1.3}
 .appt{overflow:hidden;overflow-wrap:anywhere;min-width:0;text-shadow:0 1px 1px rgba(0,0,0,.25)}
 /* texto secundario en blanco pleno: con alfa .88 caía a 4,0–4,4:1 */
-.appt small{display:block;color:#fff;font-weight:400;font-size:.78rem}
+.appt small{display:block;color:#fff;font-weight:400;font-size:.8rem}
 .appt.consulta,.cal-chip.consulta{background:var(--appt-consulta)}
 .appt.vacuna,.cal-chip.vacuna{background:var(--appt-vacuna)}
 .appt.cirugia,.cal-chip.cirugia{background:var(--appt-cirugia)}
@@ -278,7 +304,7 @@ dialog::backdrop{background:rgba(55,65,81,.5)}
 [hidden]{display:none!important}
 .racts{display:flex;gap:.2rem;align-items:flex-start;white-space:nowrap}
 
-.big.neg{color:var(--bad)}
+.stat-num.neg{color:var(--bad)}
 .negnote{color:var(--bad)}
 .preview{margin:.6rem 0 0;font-weight:600;font-variant-numeric:tabular-nums;min-height:1.2em}
 .cline{display:grid;grid-template-columns:minmax(0,2.2fr) 64px 96px minmax(70px,.9fr) auto;gap:.4rem;align-items:center;margin-bottom:.4rem}
