@@ -674,8 +674,8 @@ function chartSVG(M){
   var gw=(W-pl*2)/M.length,bw=Math.min(34,gw/2-6),g='';
   M.forEach(function(x,i){
     var x0=pl+i*gw+gw/2,hi=Math.round(x.in/max*ch),he=Math.round(x.out/max*ch);
-    g+='<rect x="'+(x0-bw-2)+'" y="'+(pt+ch-hi)+'" width="'+bw+'" height="'+hi+'" rx="3" fill="var(--brand)"/>';
-    g+='<rect x="'+(x0+2)+'" y="'+(pt+ch-he)+'" width="'+bw+'" height="'+he+'" rx="3" fill="var(--muted)" opacity=".55"/>';
+    g+='<rect x="'+(x0-bw-2)+'" y="'+(pt+ch-hi)+'" width="'+bw+'" height="'+hi+'" rx="3" fill="var(--chart-in)"/>';
+    g+='<rect x="'+(x0+2)+'" y="'+(pt+ch-he)+'" width="'+bw+'" height="'+he+'" rx="3" fill="var(--chart-out)"/>';
     g+='<text x="'+x0+'" y="'+(H-8)+'" text-anchor="middle" font-size="13" fill="var(--muted)">'+monthLabel(x.ym)+'</text>';
   });
   return '<svg class="chart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Ingresos y egresos de los últimos 6 meses"><line x1="0" x2="'+W+'" y1="'+(pt+ch)+'" y2="'+(pt+ch)+'" stroke="var(--line)"/>'+g+'</svg>';
@@ -701,7 +701,7 @@ function viewReportes(){
     return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small></td><td><div class="bars"><div class="bar" style="width:'+Math.max(4,Math.round(x.units/maxU*140))+'px"></div><span>'+x.units+'</span></div></td><td class="num">'+x.stock+'</td><td>'+st+'</td></tr>';
   }).join('');
   return '<section class="farm"><div class="head"><h1>Reportes</h1></div>'+
-    '<div class="repsec"><h2>Ingresos por mes</h2><div class="legend"><span><i style="background:var(--brand)"></i>Ingresos</span><span><i style="background:var(--muted);opacity:.55"></i>Egresos</span></div>'+chartSVG(ui.rmonthly)+
+    '<div class="repsec"><h2>Ingresos por mes</h2><div class="legend"><span><i class="sw-in"></i>Ingresos</span><span><i class="sw-out"></i>Egresos</span></div>'+chartSVG(ui.rmonthly)+
     '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Mes</th><th class="num">Efectivo</th><th class="num">Transferencias</th><th class="num">Tarjetas</th><th class="num">Total ingresos</th><th class="num">Egresos</th><th class="num">Balance</th></tr></thead><tbody>'+mrows+'</tbody></table></div></div>'+
     '<div class="repsec"><div class="toolbar"><h2 style="margin:0">Servicios y productos</h2>'+segHTML('rep',[['30','Últimos 30 días'],['90','Últimos 3 meses'],['365','Último año']],ui.rfrom&&ui.rto?'':ui.rep)+rangeHTML('rfrom','rto',ui.rfrom,ui.rto)+'<button class="btn" data-action="rep-export">Exportar CSV de movimientos</button></div>'+
     '<div class="grp"><h3>Servicios más vendidos</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Servicio</th><th>Veces cobrado</th><th class="num">Total cobrado</th></tr></thead><tbody>'+(svRows||'<tr><td colspan="3" class="empty">No hay servicios cobrados en este período.</td></tr>')+'</tbody></table></div></div>'+
@@ -925,8 +925,8 @@ function viewCalendario(){
   return '<section class="farm"><div class="head"><h1>Calendario</h1><button class="btn primary" data-action="new-appt">Agregar turno</button></div>'+
     '<div class="cal-head"><div class="cal-nav"><button data-action="cal-prev" aria-label="Anterior">‹</button><button class="btn" data-action="cal-today">Hoy</button><button data-action="cal-next" aria-label="Siguiente">›</button></div>'+
     '<div class="cal-title">'+calTitle()+'</div>'+segHTML('cal-view',APPT_VIEWS,ui.cal.view)+'</div>'+
-    '<div class="cal-legend"><span><i style="background:var(--appt-consulta)"></i>Consulta</span><span><i style="background:var(--appt-vacuna)"></i>Vacuna</span>'+
-    '<span><i style="background:var(--appt-cirugia)"></i>Cirugía</span><span><i style="background:var(--appt-otro)"></i>Otro</span></div>'+body+'</section>';
+    '<div class="cal-legend"><span><i class="consulta"></i>Consulta</span><span><i class="vacuna"></i>Vacuna</span>'+
+    '<span><i class="cirugia"></i>Cirugía</span><span><i class="otro"></i>Otro</span></div>'+body+'</section>';
 }
 
 
