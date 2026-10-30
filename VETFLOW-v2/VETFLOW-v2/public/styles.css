@@ -488,7 +488,20 @@ body[data-stale] #app,body[data-stale] dialog{pointer-events:none;opacity:.55}
 .dv-empty{background:var(--panel);border:1px dashed var(--line-strong);border-radius:10px;padding:1.25rem;display:flex;flex-wrap:wrap;gap:.75rem;align-items:center;justify-content:space-between}
 .dv-empty p{margin:0;color:var(--muted)}
 
-/* Configuración */
+/* Configuración: pestañas General, Usuarios, Copias de seguridad y Papelera */
+.cfg-tabs{margin-bottom:1.25rem}
+.cfg-body{max-width:1100px}
+/* Botón propio de la pestaña (Nuevo usuario, Eliminar vencidos) a la derecha, arriba del contenido */
+.cfg-tabacts{display:flex;justify-content:space-between;align-items:flex-start;gap:.75rem 1.5rem;margin-bottom:1rem}
+.cfg-tabacts .empty{padding:0;margin:0;max-width:62ch}
+.cfg-tabacts .btn{flex:none}
+@media (max-width:600px){
+  /* Cuatro pestañas en una grilla de 2×2 en vez de una que queda sola en otra línea */
+  .cfg-tabs{display:grid;grid-template-columns:1fr 1fr;gap:0 1rem}
+  .cfg-tabs .tab{text-align:left;border-bottom-color:var(--line)}
+  .cfg-tabs .tab[aria-selected="true"]{border-bottom-color:var(--brand)}
+  .cfg-tabacts{flex-direction:column;align-items:stretch}
+}
 .cfg{display:flex;flex-direction:column;gap:1rem;max-width:760px}
 .cfg .panel{margin:0;padding:1.1rem 1.2rem}
 .cfg .panel h2{font-size:1.15rem;margin-bottom:.3rem}
