@@ -57,7 +57,7 @@ body[data-state="error"] #login, body[data-state="error"] #app{display:none}
 .err{margin:0;color:var(--bad);font-size:.92rem;min-height:1.2em}
 
 .app{display:grid;grid-template-columns:232px 1fr;min-height:100vh}
-.side{background:var(--side);color:var(--side-ink);padding:1.25rem 1rem;display:flex;flex-direction:column;gap:1.5rem;
+.side{background:var(--side);color:var(--side-ink);padding:1.25rem 1rem;display:flex;flex-direction:column;gap:1.1rem;
   position:sticky;top:0;align-self:start;height:100vh;overflow:auto;
   padding-top:calc(1.25rem + env(safe-area-inset-top,0px))}
 .brand{display:flex;align-items:center;gap:.7rem}
@@ -65,8 +65,9 @@ body[data-state="error"] #login, body[data-state="error"] #app{display:none}
 .brand .mark .ico{width:1.55rem;height:1.55rem}
 .brand b{font-family:var(--f-head);font-size:1.15rem;display:block;line-height:1.1}
 .brand small,.side small{color:var(--side-muted)}
-.nav{display:flex;flex-direction:column;gap:.25rem}
-.navb{text-align:left;padding:.65rem .8rem;border-radius:8px;background:transparent;border:0;font-weight:600;color:var(--side-ink)}
+/* Menú compacto: con las 11 secciones del administrador, "Cerrar sesión" entra en pantallas de 900 px de alto */
+.nav{display:flex;flex-direction:column;gap:.15rem}
+.navb{text-align:left;padding:.5rem .8rem;border-radius:8px;background:transparent;border:0;font-weight:600;color:var(--side-ink)}
 .navb:hover{background:var(--side-hover)}
 /* indicador en --brand-tint: el --brand daba 2,1:1 contra el grafito */
 .navb[aria-current="page"]{background:var(--side-active);box-shadow:inset 3px 0 0 var(--brand-tint)}
@@ -220,7 +221,8 @@ textarea{resize:vertical}
 .legend{display:flex;gap:1.1rem;font-size:.88rem;color:var(--muted);margin:.2rem 0 .5rem}
 .legend i{display:inline-block;width:.75rem;height:.75rem;border-radius:3px;margin-right:.35rem;vertical-align:-1px}
 .sw-in{background:var(--chart-in)}.sw-out{background:var(--chart-out)}
-.chart{width:100%;height:auto;display:block;margin-bottom:1rem}
+/* El gráfico conserva sus proporciones pero no pasa de 280 px de alto en pantallas anchas */
+.chart{width:100%;height:auto;max-height:280px;display:block;margin-bottom:1rem}
 .chart text{font-family:var(--f-body)}
 .filerow{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center;margin-top:.4rem}
 .warnbox{background:var(--warn-bg);color:var(--warn);padding:.7rem .9rem;border-radius:8px;font-size:.95rem;margin:1rem 0 0}
