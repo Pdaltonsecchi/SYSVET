@@ -30,6 +30,30 @@ var fmtTs=function(v){var d=new Date(v);if(isNaN(d.getTime()))return '';return d
 // v2: lunes de la semana que contiene "iso" (semana de lunes a domingo).
 var mondayOf=function(iso){var d=parse(iso);var wd=d.getDay();wd=wd===0?7:wd;return shiftDays(-(wd-1),iso);};
 
+// Íconos de interfaz: SVG inline con currentColor (toman el color del texto), en línea con la pata de la marca.
+// Reemplazan a los emojis decorativos; los emojis que cargue el usuario en sus datos se muestran tal cual.
+var ICONS={
+  paw:'<g fill="currentColor" stroke="none"><ellipse cx="6.2" cy="10.4" rx="2" ry="2.6"/><ellipse cx="9.6" cy="5.8" rx="2" ry="2.7"/><ellipse cx="14.4" cy="5.8" rx="2" ry="2.7"/><ellipse cx="17.8" cy="10.4" rx="2" ry="2.6"/><path d="M12 11.4c-2.6 0-5.4 3.6-5.4 6 0 1.6 1.2 2.4 2.6 2.4 1.1 0 1.8-.6 2.8-.6s1.7.6 2.8.6c1.4 0 2.6-.8 2.6-2.4 0-2.4-2.8-6-5.4-6z"/></g>',
+  dog:'<path d="M8 5h8a3 3 0 0 1 3 3v5.5a7 7 0 0 1-14 0V8a3 3 0 0 1 3-3z"/><path d="M8 5 3.8 7.4l1.2 6M16 5l4.2 2.4-1.2 6"/><path d="M10.6 16.2h2.8L12 17.6z" fill="currentColor"/><path d="M9.5 11.5h.01M14.5 11.5h.01" stroke-width="2.4"/>',
+  cat:'<path d="M4.5 3.5 8.2 7.6h7.6l3.7-4.1V13a7.5 7.5 0 0 1-15 0z"/><path d="M9.5 12h.01M14.5 12h.01" stroke-width="2.4"/><path d="M11 15.2h2L12 16.4zM3 14.5l4 .5M3.5 17.5l3.7-1M21 14.5l-4 .5M20.5 17.5l-3.7-1"/>',
+  user:'<circle cx="12" cy="8" r="4"/><path d="M4 20.5a8 8 0 0 1 16 0"/>',
+  file:'<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
+  image:'<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="m3.5 16 5-5 4 4 3-3 5 5"/><path d="M15.5 9h.01" stroke-width="2.4"/>',
+  xray:'<rect x="3.5" y="3.5" width="17" height="17" rx="2"/><path d="M12 6.5v11M8 9.5c1.5-.8 2.8-.8 4 0 1.2-.8 2.5-.8 4 0M8 12.5c1.5-.8 2.8-.8 4 0 1.2-.8 2.5-.8 4 0M8.5 15.5c1.2-.6 2.4-.6 3.5 0 1.1-.6 2.3-.6 3.5 0"/>',
+  camera:'<path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/>',
+  lock:'<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  alert:'<path d="M10.3 4.2 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z"/><path d="M12 10v4"/><path d="M12 17.5h.01" stroke-width="2.4"/>',
+  x:'<path d="M6 6l12 12M18 6 6 18"/>',
+  more:'<path d="M12 5h.01M12 12h.01M12 19h.01" stroke-width="3"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  calendar:'<rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+  pill:'<path d="M10.6 3.9a5 5 0 0 1 7.1 7.1l-6.7 6.7a5 5 0 0 1-7.1-7.1z"/><path d="m7.3 7.3 7 7"/>',
+  users:'<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.2a6.5 6.5 0 0 1 3.5 5.8"/>',
+  menu:'<path d="M4 7h16M4 12h16M4 17h16"/>'
+};
+var ico=function(n,cls){return '<svg class="ico'+(cls?' '+cls:'')+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'+ICONS[n]+'</svg>';};
+var petIco=function(sp){return ico(sp==='Gato'?'cat':'dog');};
+
 // F1: teléfono con números, espacios, + , - y paréntesis (el servidor exige además 6 dígitos como mínimo).
 var PHONE_PAT='[0-9 +\\(\\)\\-]{6,50}';
 var PROD_CATS=['Medicamentos','Vacunas','Higiene','Pulguicidas','Antiparasitarios','Otros'];
@@ -312,10 +336,22 @@ function navItems(){
   if(isAdmin())a.push(['reportes','Reportes'],['papelera','Papelera'],['copias','Copias de seguridad'],['usuarios','Usuarios'],['configuracion','Configuración']);
   return a;
 }
+// Celular: barra inferior con las tareas del día (ficha, agenda, caja, dueños) y "Más" para el resto.
+var TAB_PRI=[['pacientes','Pacientes','paw'],['calendario','Calendario','calendar'],['farmacia','Farmacia','pill'],['clientes','Clientes','users']];
+var isPri=function(v){return TAB_PRI.some(function(t){return t[0]===v;});};
 function renderNav(){
   $('#nav').innerHTML=navItems().map(function(i){
-    return '<button class="navb" data-action="nav" data-v="'+i[0]+'" aria-current="'+(ui.view===i[0]?'page':'false')+'">'+i[1]+'</button>';
+    return '<button class="navb'+(isPri(i[0])?' pri':'')+'" data-action="nav" data-v="'+i[0]+'" aria-current="'+(ui.view===i[0]?'page':'false')+'">'+i[1]+'</button>';
   }).join('');
+  var open=!!document.body.dataset.more;
+  $('#tabbar').innerHTML=TAB_PRI.map(function(t){
+    return '<button class="tabb" data-action="nav" data-v="'+t[0]+'" aria-current="'+(ui.view===t[0]?'page':'false')+'">'+ico(t[2])+'<span>'+t[1]+'</span></button>';
+  }).join('')+'<button class="tabb" data-action="more" aria-controls="side" aria-expanded="'+open+'"'+(!isPri(ui.view)?' aria-current="page"':'')+'>'+ico('menu')+'<span>Más</span></button>';
+}
+function setMore(open){
+  if(open)document.body.dataset.more='1';else delete document.body.dataset.more;
+  var b=$('#tabbar [data-action="more"]');if(b)b.setAttribute('aria-expanded',String(open));
+  if(open){var f=$('#side .navb:not(.pri)')||$('#side button');if(f)f.focus();}
 }
 function renderUserBox(){
   var u=S.user;
@@ -373,12 +409,14 @@ function renderAlerts(){
   }
   if(!h)h='<div class="al"><span class="dot ok"></span><span>Todo al día</span></div>';
   $('#alerts').innerHTML='<h3>Para revisar</h3>'+h;
+  // En celular los avisos viven dentro de "Más": un punto en el botón indica que hay algo para revisar.
+  var mb=$('#tabbar [data-action="more"]');if(mb)mb.classList.toggle('has-alerts',!!$('#alerts button.al'));
 }
 
 /* ============================================================
    Pacientes
    ============================================================ */
-var emo=function(p){return p.species==='Gato'?'🐱':'🐶';};
+var emo=function(p){return petIco(p.species);};
 
 // F7: edad con la fecha de nacimiento: "5 años (10/05/2021)"; en menores de 2 años, años y meses.
 function ageText(b){
@@ -450,9 +488,9 @@ function weightChart(ws){
   var dots=ws.map(function(w,i){return '<circle cx="'+X(w,i).toFixed(1)+'" cy="'+Y(w.kg).toFixed(1)+'" r="3.5" fill="var(--brand)"/>';}).join('');
   return '<svg class="wchart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Evolución del peso de '+fmtKg(kgs[0])+' a '+fmtKg(kgs[kgs.length-1])+'">'+
     (ws.length>1?'<polyline points="'+pts+'" fill="none" stroke="var(--brand)" stroke-width="2"/>':'')+dots+
-    '<text x="'+pl+'" y="'+(H-6)+'" font-size="11" fill="var(--muted)">'+fmtDate(ws[0].date)+'</text>'+
-    '<text x="'+(W-pr)+'" y="'+(H-6)+'" font-size="11" text-anchor="end" fill="var(--muted)">'+fmtDate(ws[ws.length-1].date)+'</text>'+
-    '<text x="'+pl+'" y="10" font-size="11" fill="var(--muted)">'+fmtKg(Math.max.apply(null,kgs))+'</text></svg>';
+    '<text x="'+pl+'" y="'+(H-6)+'" font-size="13" fill="var(--muted)">'+fmtDate(ws[0].date)+'</text>'+
+    '<text x="'+(W-pr)+'" y="'+(H-6)+'" font-size="13" text-anchor="end" fill="var(--muted)">'+fmtDate(ws[ws.length-1].date)+'</text>'+
+    '<text x="'+pl+'" y="10" font-size="13" fill="var(--muted)">'+fmtKg(Math.max.apply(null,kgs))+'</text></svg>';
 }
 function weightHTML(p){
   var ws=p.weights||[];
@@ -473,9 +511,9 @@ function attsHTML(st){
   var L=st.attachments||[];
   if(!L.length)return '';
   return '<div class="atts">'+L.map(function(a){
-    var thumb=isImg(a.mime)&&S.attachments?'<img data-att="'+a.id+'" alt="" loading="lazy">':'<span class="aicon" aria-hidden="true">'+(a.mime==='application/pdf'?'📄':a.mime==='application/dicom'?'🩻':'🖼️')+'</span>';
+    var thumb=isImg(a.mime)&&S.attachments?'<img data-att="'+a.id+'" alt="" loading="lazy">':'<span class="aicon" aria-hidden="true">'+ico(a.mime==='application/pdf'?'file':a.mime==='application/dicom'?'xray':'image')+'</span>';
     return '<span class="att"><button class="attb" data-action="att-open" data-id="'+a.id+'" data-mime="'+esc(a.mime)+'" title="'+(a.mime==='application/dicom'||a.mime==='image/heic'?'Descargar':'Ver')+' '+esc(a.name)+'">'+thumb+'<span class="aname">'+esc(a.name)+'</span></button>'+
-      (isAdmin()?'<button class="link bad attx" data-action="att-del" data-id="'+a.id+'" aria-label="Quitar archivo '+esc(a.name)+'">✕</button>':'')+'</span>';
+      (isAdmin()?'<button class="link bad attx" data-action="att-del" data-id="'+a.id+'" aria-label="Quitar archivo '+esc(a.name)+'">'+ico('x')+'</button>':'')+'</span>';
   }).join('')+'</div>';
 }
 // Miniaturas: se piden con una URL firmada (vence a los 10 minutos); se guarda para no repetir el pedido.
@@ -519,6 +557,20 @@ function uploadFiles(studyId,files,onProgress){
     x.send(fd);
   });
 }
+// Franja clínica del encabezado de la ficha: especie, edad, peso y último control, siempre en el mismo orden y alineados.
+function clinicStrip(p){
+  var it=function(k,v,sub){return '<div><dt>'+k+'</dt><dd>'+v+(sub?'<small>'+sub+'</small>':'')+'</dd></div>';};
+  var age=ageText(p.birth).match(/^(.*) \((.*)\)$/);
+  var ws=p.weights||[],lw=ws.length?ws[ws.length-1]:null;
+  var kg=lw?fmtKg(lw.kg):p.weight!==''?fmtKg(p.weight):'';
+  var dx=(p.diagnoses||[])[0];
+  return '<dl class="cstrip">'+
+    it('Especie',esc(p.species)+' · '+esc(p.sex)+(p.neutered?' (castrad'+(p.sex==='Hembra'?'a':'o')+')':''),p.breed?esc(p.breed):'')+
+    it('Edad',age?age[1]:'Sin datos',age?age[2]:'')+
+    it('Peso',kg||'Sin datos',lw?fmtDate(lw.date):'')+
+    it('Último control',dx?fmtDate(dx.date):'Sin registros',dx?esc(dx.title):'')+
+    '</dl>';
+}
 function detailHTML(p){
   var L=latestIds(p);
   var vacHTML=p.vaccines.length?'<div class="rows">'+p.vaccines.map(function(v){
@@ -547,10 +599,10 @@ function detailHTML(p){
   }).join('')+'</div><div class="sum"><span>Total cobrado</span><span>'+money(total)+'</span></div>':'<p class="empty">Todavía no se cobró ningún servicio a este paciente.</p>';
 
   return '<button class="btn back" data-action="back">Volver a la lista</button>'+
-    '<header class="phead"><div class="avatar big" aria-hidden="true">'+emo(p)+'</div>'+
+    '<header class="phead"><div class="phead-id"><div class="avatar avatar--lg" aria-hidden="true">'+emo(p)+'</div>'+
     '<div class="info"><h2>'+esc(p.name)+(p.hc?' <span class="hcbadge" title="Número de historia clínica">'+hcLabel(p)+'</span>':'')+'</h2>'+
-    '<p class="meta">'+esc(p.species)+(p.breed?' '+esc(p.breed):'')+' · '+esc(p.sex)+(p.neutered?' (castrad'+(p.sex==='Hembra'?'a':'o')+')':'')+' · '+ageText(p.birth)+(p.weight!==''?' · '+esc(p.weight)+' kg':'')+'</p>'+
-    '<p class="meta">Dueño: '+(p.clientId?'<button class="link ownerlink" data-action="open-client" data-id="'+p.clientId+'" title="Ver datos de contacto y mascotas del cliente">'+esc(p.owner)+'</button>':esc(p.owner))+'</p></div>'+
+    '<p class="meta">Dueño: '+(p.clientId?'<button class="link ownerlink" data-action="open-client" data-id="'+p.clientId+'" title="Ver datos de contacto y mascotas del cliente">'+esc(p.owner)+'</button>':esc(p.owner))+'</p></div></div>'+
+    clinicStrip(p)+
     '<div class="pactions"><button class="btn primary" data-action="charge">Cobrar servicio</button><button class="btn" data-action="edit-patient">Editar datos</button><button class="btn" data-action="print">Imprimir</button>'+
     (isAdmin()?'<button class="btn danger-o" data-action="del-patient">Eliminar</button>':'')+'</div></header>'+
     (p.notes?'<p class="note"><b>Notas:</b> '+esc(p.notes)+'</p>':'')+
@@ -593,14 +645,14 @@ function stockHTML(){
     // Una droga de vacuna no se vende suelta: se descuenta al aplicar la vacuna.
     var vac=vaccineOfDrug(x.id);
     var sellBtn=vac?'<button class="link" disabled title="Droga de la vacuna “'+esc(vac.name)+'”: se descuenta al aplicarla, no se vende suelta">Vender</button>':'<button class="link" data-action="sell" data-id="'+x.id+'">Vender</button>';
-    var acts=sellBtn+(admin?'<details class="rowmenu"><summary aria-label="Más acciones de '+esc(x.name)+'" title="Más acciones">⋮</summary><div class="menu">'+
+    var acts=sellBtn+(admin?'<details class="rowmenu"><summary aria-label="Más acciones de '+esc(x.name)+'" title="Más acciones">'+ico('more')+'</summary><div class="menu">'+
       '<button class="link" data-action="stock-adjust" data-id="'+x.id+'">Ajustar stock</button><button class="link" data-action="stock-history" data-id="'+x.id+'">Historial</button><button class="link" data-action="edit-product" data-id="'+x.id+'">Editar</button><button class="link bad" data-action="del-product" data-id="'+x.id+'">Eliminar</button></div></details>':'');
     // Etiqueta siempre visible (sin pasar el mouse): esta droga se descuenta al aplicar la vacuna y no se vende suelta.
-    var vacNote=vac?'<br><span class="chip info drugtag" title="Se descuenta al aplicar la vacuna “'+esc(vac.name)+'”; no se vende suelta">🔒 Droga de vacuna</span>':'';
+    var vacNote=vac?'<br><span class="chip info drugtag" title="Se descuenta al aplicar la vacuna “'+esc(vac.name)+'”; no se vende suelta">'+ico('lock')+' Droga de vacuna</span>':'';
     var units=Math.max(x.stock,0),val=x.cost!=null?units*x.cost:null;
     if(admin){totCost+=val||0;totSale+=units*x.price;}
     var margin=x.cost!=null&&x.price>0?Math.round((x.price-x.cost)/x.price*1000)/10:null;
-    var mCell=margin==null?'—':'<span class="'+(x.price<x.cost?'negtxt':'')+'"'+(x.price<x.cost?' title="El precio de venta es menor que el costo"':'')+'>'+(x.price<x.cost?'⚠ ':'')+String(margin).replace('.',',')+'%</span>';
+    var mCell=margin==null?'—':'<span class="'+(x.price<x.cost?'negtxt':'')+'"'+(x.price<x.cost?' title="El precio de venta es menor que el costo"':'')+'>'+(x.price<x.cost?ico('alert')+' ':'')+String(margin).replace('.',',')+'%</span>';
     var costCells=admin?'<td class="num col2">'+(x.cost!=null?money(x.cost):'—')+'</td><td class="num col2">'+mCell+'</td><td class="num col2">'+(val!=null?money(val):'—')+'</td>':'';
     return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small>'+(x.barcode?'<br><small class="bc" title="Código de barras">▮ '+esc(x.barcode)+'</small>':'')+vacNote+'</td><td>'+stockCell+'</td><td class="num">'+x.min+'</td><td>'+chip+'</td><td class="num">'+money(x.price)+'</td>'+costCells+'<td class="act">'+acts+'</td></tr>';
   }).join('');
@@ -608,8 +660,8 @@ function stockHTML(){
   var empty=S.products.length?'No hay productos en esta categoría.':'Todavía no cargaste productos. '+(admin?'Empezá con “Nuevo producto”.':'Pedile al administrador que los cargue.');
   var foot=admin&&L.length?'<tfoot><tr><td colspan="'+cols+'"><b>Stock valorizado:</b> '+money(totCost)+' a costo / '+money(totSale)+' a precio de venta</td></tr></tfoot>':'';
   return '<div class="toolbar">'+segHTML('cat',[['all','Todos']].concat(PROD_CATS.map(function(c){return [c,c];})),ui.cat)+
-    '<span class="scanbtns"><button class="btn" data-action="scan-sell" title="Leer el código de barras de un producto para venderlo">📷 Vender con escáner</button>'+
-      (admin?'<button class="btn" data-action="scan-stock" title="Leer el código de barras para ingresar stock o cargar un producto nuevo">📷 Ingresar con escáner</button>':'')+'</span>'+
+    '<span class="scanbtns"><button class="btn" data-action="scan-sell" title="Leer el código de barras de un producto para venderlo">'+ico('camera')+' Vender con escáner</button>'+
+      (admin?'<button class="btn" data-action="scan-stock" title="Leer el código de barras para ingresar stock o cargar un producto nuevo">'+ico('camera')+' Ingresar con escáner</button>':'')+'</span>'+
     (admin?'<button class="btn primary" data-action="new-product">Nuevo producto</button>':'')+'</div>'+
     '<input id="stq" type="search" placeholder="Buscar producto (o leer un código con un lector USB y Enter)" value="'+esc(ui.stq)+'" aria-label="Buscar producto" style="margin-bottom:1rem">'+
     '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Stock</th><th class="num">Mínimo</th><th>Estado</th><th class="num">Precio de venta</th>'+(admin?'<th class="num col2">Costo unit.</th><th class="num col2">Margen</th><th class="num col2">Valor en stock</th>':'')+'<th></th></tr></thead><tbody>'+
@@ -626,7 +678,7 @@ function cajaHTML(){
   }).join('');
   var mes=new Date().toLocaleDateString('es-AR',{month:'long'});
   var pm=PAY.map(function(m){return '<div class="bk"><span>'+m+'</span><b>'+money(sm.month.byMethod[m]||0)+'</b></div>';}).join('');
-  return '<div class="cashbox"><div class="panel"><h3>Efectivo que debería haber en caja</h3><div class="big'+(sm.drawer<0?' neg':'')+'">'+(sm.drawer<0?'<span aria-hidden="true">⚠️ </span>':'')+money(sm.drawer)+'</div>'+(sm.drawer<0?'<p class="negnote">La caja da negativa: revisá si algún egreso en efectivo se pagó con otro fondo.</p>':'')+''+
+  return '<div class="cashbox"><div class="panel"><h3>Efectivo que debería haber en caja</h3><div class="stat-num'+(sm.drawer<0?' neg':'')+'">'+(sm.drawer<0?ico('alert')+' ':'')+money(sm.drawer)+'</div>'+(sm.drawer<0?'<p class="negnote">La caja da negativa: revisá si algún egreso en efectivo se pagó con otro fondo.</p>':'')+''+
     '<p>Ingresos menos egresos en efectivo, desde el primer registro. Hoy entró '+money(sm.todayCash.in)+' y salió '+money(sm.todayCash.out)+' en efectivo. Si sacás plata de la caja, registrala como egreso en efectivo (categoría “Retiro de caja”).</p></div>'+
     '<div class="panel"><h3>Ingresos de '+mes+' por forma de pago</h3><div class="bk-list">'+pm+'</div></div></div>'+
     // Acciones (exportar / registrar) separadas de los filtros; los filtros van en un panel colapsable.
@@ -656,7 +708,7 @@ function preciosHTML(){
       (s.items||[]).forEach(function(it){var pr=prodById(it.productId);if(pr&&pr.cost!=null){costSum+=pr.cost*it.qty;costKnown=true;}});
       var below=costKnown&&s.price<costSum;
       var noDrug=s.category==='Vacunas'&&!linked;
-      return '<tr><td><b>'+esc(s.name)+'</b>'+(noDrug?'<br><small class="negtxt">⚠ Sin droga asignada: no se puede aplicar. Editala y elegí la droga del stock.</small>':'')+(below?'<br><small class="negtxt">⚠ El precio ('+money(s.price)+') es menor que el costo de los productos que descuenta ('+money(costSum)+')</small>':'')+(linked?'<br><small>Descuenta: '+esc(linked.name)+'</small>':'')+((s.items||[]).length?'<br><small>Descuenta al cobrar: '+s.items.map(function(it){var pr=prodById(it.productId);return (pr?esc(pr.name):'producto eliminado')+' ×'+it.qty;}).join(', ')+'</small>':'')+'</td><td class="num">'+money(s.price)+'</td><td class="act">'+
+      return '<tr><td><b>'+esc(s.name)+'</b>'+(noDrug?'<br><small class="negtxt">'+ico('alert')+' Sin droga asignada: no se puede aplicar. Editala y elegí la droga del stock.</small>':'')+(below?'<br><small class="negtxt">'+ico('alert')+' El precio ('+money(s.price)+') es menor que el costo de los productos que descuenta ('+money(costSum)+')</small>':'')+(linked?'<br><small>Descuenta: '+esc(linked.name)+'</small>':'')+((s.items||[]).length?'<br><small>Descuenta al cobrar: '+s.items.map(function(it){var pr=prodById(it.productId);return (pr?esc(pr.name):'producto eliminado')+' ×'+it.qty;}).join(', ')+'</small>':'')+'</td><td class="num">'+money(s.price)+'</td><td class="act">'+
         (admin?'<button class="link" data-action="edit-service" data-id="'+s.id+'">Editar</button><button class="link bad" data-action="del-service" data-id="'+s.id+'">Eliminar</button>':'')+'</td></tr>';
     }).join('')+'</tbody></table></div></div>';
   }).join('');
@@ -674,8 +726,8 @@ function chartSVG(M){
   var gw=(W-pl*2)/M.length,bw=Math.min(34,gw/2-6),g='';
   M.forEach(function(x,i){
     var x0=pl+i*gw+gw/2,hi=Math.round(x.in/max*ch),he=Math.round(x.out/max*ch);
-    g+='<rect x="'+(x0-bw-2)+'" y="'+(pt+ch-hi)+'" width="'+bw+'" height="'+hi+'" rx="3" fill="var(--brand)"/>';
-    g+='<rect x="'+(x0+2)+'" y="'+(pt+ch-he)+'" width="'+bw+'" height="'+he+'" rx="3" fill="var(--muted)" opacity=".55"/>';
+    g+='<rect x="'+(x0-bw-2)+'" y="'+(pt+ch-hi)+'" width="'+bw+'" height="'+hi+'" rx="3" fill="var(--chart-in)"/>';
+    g+='<rect x="'+(x0+2)+'" y="'+(pt+ch-he)+'" width="'+bw+'" height="'+he+'" rx="3" fill="var(--chart-out)"/>';
     g+='<text x="'+x0+'" y="'+(H-8)+'" text-anchor="middle" font-size="13" fill="var(--muted)">'+monthLabel(x.ym)+'</text>';
   });
   return '<svg class="chart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Ingresos y egresos de los últimos 6 meses"><line x1="0" x2="'+W+'" y1="'+(pt+ch)+'" y2="'+(pt+ch)+'" stroke="var(--line)"/>'+g+'</svg>';
@@ -701,9 +753,9 @@ function viewReportes(){
     return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small></td><td><div class="bars"><div class="bar" style="width:'+Math.max(4,Math.round(x.units/maxU*140))+'px"></div><span>'+x.units+'</span></div></td><td class="num">'+x.stock+'</td><td>'+st+'</td></tr>';
   }).join('');
   return '<section class="farm"><div class="head"><h1>Reportes</h1></div>'+
-    '<div class="repsec"><h2>Ingresos por mes</h2><div class="legend"><span><i style="background:var(--brand)"></i>Ingresos</span><span><i style="background:var(--muted);opacity:.55"></i>Egresos</span></div>'+chartSVG(ui.rmonthly)+
+    '<div class="repsec"><h2>Ingresos por mes</h2><div class="legend"><span><i class="sw-in"></i>Ingresos</span><span><i class="sw-out"></i>Egresos</span></div>'+chartSVG(ui.rmonthly)+
     '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Mes</th><th class="num">Efectivo</th><th class="num">Transferencias</th><th class="num">Tarjetas</th><th class="num">Total ingresos</th><th class="num">Egresos</th><th class="num">Balance</th></tr></thead><tbody>'+mrows+'</tbody></table></div></div>'+
-    '<div class="repsec"><div class="toolbar"><h2 style="margin:0">Servicios y productos</h2>'+segHTML('rep',[['30','Últimos 30 días'],['90','Últimos 3 meses'],['365','Último año']],ui.rfrom&&ui.rto?'':ui.rep)+rangeHTML('rfrom','rto',ui.rfrom,ui.rto)+'<button class="btn" data-action="rep-export">Exportar CSV de movimientos</button></div>'+
+    '<div class="repsec"><div class="toolbar"><h2>Servicios y productos</h2>'+segHTML('rep',[['30','Últimos 30 días'],['90','Últimos 3 meses'],['365','Último año']],ui.rfrom&&ui.rto?'':ui.rep)+rangeHTML('rfrom','rto',ui.rfrom,ui.rto)+'<button class="btn" data-action="rep-export">Exportar CSV de movimientos</button></div>'+
     '<div class="grp"><h3>Servicios más vendidos</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Servicio</th><th>Veces cobrado</th><th class="num">Total cobrado</th></tr></thead><tbody>'+(svRows||'<tr><td colspan="3" class="empty">No hay servicios cobrados en este período.</td></tr>')+'</tbody></table></div></div>'+
     '<div class="grp"><h3>Productos que más rotan</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Unidades vendidas o usadas</th><th class="num">Stock actual</th><th>Cuánto dura el stock</th></tr></thead><tbody>'+(prRows||'<tr><td colspan="4" class="empty">Todavía no cargaste productos.</td></tr>')+'</tbody></table></div></div></div></section>';
 }
@@ -723,7 +775,7 @@ function clientListHTML(){
   var L=filteredClients();
   if(!L.length)return '<li class="empty">'+(S.clients.length?'No hay clientes con esa búsqueda.':'Todavía no hay clientes. Se crean al cargar una mascota o con “Nuevo cliente”.')+'</li>';
   return L.map(function(c){
-    return '<li><button class="pitem" data-action="select-client" data-id="'+c.id+'" aria-current="'+(c.id===ui.csel)+'"><span class="avatar" aria-hidden="true">👤</span>'+
+    return '<li><button class="pitem" data-action="select-client" data-id="'+c.id+'" aria-current="'+(c.id===ui.csel)+'"><span class="avatar" aria-hidden="true">'+ico('user')+'</span>'+
       '<span class="pi-main"><b>'+esc(c.name)+'</b><small>'+plural(c.pets.length,'mascota','mascotas')+(c.phone?' · '+esc(c.phone):'')+'</small></span></button></li>';
   }).join('');
 }
@@ -733,14 +785,14 @@ function clientDetailHTML(c){
   contact.push(c.phone?'Tel. <a href="'+(tel?'tel:'+tel:'#')+'">'+esc(c.phone)+'</a>':'<span class="mut">Sin teléfono</span>');
   contact.push(c.email?'<a href="mailto:'+esc(c.email)+'">'+esc(c.email)+'</a>':'<span class="mut">Sin email</span>');
   var pets=c.pets.length?'<div class="petlist">'+c.pets.map(function(p){
-    return '<button class="petrow" data-action="open-patient" data-id="'+p.id+'" title="Abrir la historia clínica de '+esc(p.name)+'"><span class="avatar" aria-hidden="true">'+(p.species==='Gato'?'🐱':'🐶')+'</span>'+
+    return '<button class="petrow" data-action="open-patient" data-id="'+p.id+'" title="Abrir la historia clínica de '+esc(p.name)+'"><span class="avatar" aria-hidden="true">'+petIco(p.species)+'</span>'+
       '<span class="pi-main"><b>'+esc(p.name)+'</b><small>'+(p.hc?'HC N° '+String(p.hc).padStart(4,'0')+' · ':'')+esc(p.breed||p.species)+'</small></span><span class="chev" aria-hidden="true">›</span></button>';
   }).join('')+'</div>':'<p class="empty">Este cliente todavía no tiene mascotas asignadas.</p>';
   var pay=c.payments.length?'<div class="tbl-wrap"><table class="tbl slim"><thead><tr><th>Fecha</th><th>Mascota</th><th>Concepto</th><th>Forma de pago</th><th class="num">Monto</th></tr></thead><tbody>'+c.payments.map(function(x){
     return '<tr><td>'+fmtDate(x.date)+'</td><td><button class="link" data-action="open-patient" data-id="'+x.patientId+'">'+esc(x.patient)+'</button></td><td>'+esc(x.concept)+'</td><td>'+esc(x.method||'—')+'</td><td class="num">'+money(x.amount)+'</td></tr>';
   }).join('')+'</tbody><tfoot><tr><td colspan="5"><b>Total pagado por todas sus mascotas:</b> '+money(c.totalPaid)+'</td></tr></tfoot></table></div>':'<p class="empty">Todavía no se cobró nada a las mascotas de este cliente.</p>';
   return '<button class="btn back" data-action="back-client">Volver a la lista</button>'+
-    '<header class="phead"><div class="avatar big" aria-hidden="true">👤</div><div class="info"><h2>'+esc(c.name)+'</h2>'+
+    '<header class="phead"><div class="avatar avatar--lg" aria-hidden="true">'+ico('user')+'</div><div class="info"><h2>'+esc(c.name)+'</h2>'+
     '<p class="meta">'+contact.join(' · ')+'</p><p class="meta">'+(c.address?esc(c.address):'<span class="mut">Sin dirección</span>')+'</p></div>'+
     '<div class="pactions"><button class="btn primary" data-action="add-pet">Agregar mascota</button><button class="btn" data-action="edit-client">Editar datos</button>'+
     (isAdmin()?'<button class="btn danger-o" data-action="del-client">Eliminar</button>':'')+'</div></header>'+
@@ -806,7 +858,7 @@ function attachmentsPanel(){
     meter='<p><b>Adjuntos: '+fmtBytes(u.bytes)+' de '+fmtBytes(u.limit)+'</b> <small>('+plural(u.count,'archivo','archivos')+')</small></p>'+
       '<div class="meter'+(pct>=80?' hot':'')+'" role="img" aria-label="'+pct+'% del espacio usado"><i style="width:'+Math.max(pct,u.bytes?1:0)+'%"></i></div>'+
       (pct>=80?'<p class="warnbox">Queda poco espacio para adjuntos. Revisá los archivos pesados o ampliá el plan de Supabase.</p>':'');
-  }else meter='<p class="empty" style="padding:0">Los adjuntos todavía no están activados en el servidor.</p>';
+  }else meter='<p class="empty">Los adjuntos todavía no están activados en el servidor.</p>';
   return '<section class="sec"><h3>Archivos adjuntos de los estudios</h3>'+meter+
     '<p class="warnbox">Los archivos adjuntos <b>no se incluyen</b> en la copia que descargás (el JSON solo guarda sus datos: nombre, tamaño y a qué estudio pertenecen). Los archivos quedan en <b>Supabase Storage</b>, en el bucket privado de estudios.</p></section>';
 }
@@ -925,8 +977,8 @@ function viewCalendario(){
   return '<section class="farm"><div class="head"><h1>Calendario</h1><button class="btn primary" data-action="new-appt">Agregar turno</button></div>'+
     '<div class="cal-head"><div class="cal-nav"><button data-action="cal-prev" aria-label="Anterior">‹</button><button class="btn" data-action="cal-today">Hoy</button><button data-action="cal-next" aria-label="Siguiente">›</button></div>'+
     '<div class="cal-title">'+calTitle()+'</div>'+segHTML('cal-view',APPT_VIEWS,ui.cal.view)+'</div>'+
-    '<div class="cal-legend"><span><i style="background:var(--appt-consulta)"></i>Consulta</span><span><i style="background:var(--appt-vacuna)"></i>Vacuna</span>'+
-    '<span><i style="background:var(--appt-cirugia)"></i>Cirugía</span><span><i style="background:var(--appt-otro)"></i>Otro</span></div>'+body+'</section>';
+    '<div class="cal-legend"><span><i class="consulta"></i>Consulta</span><span><i class="vacuna"></i>Vacuna</span>'+
+    '<span><i class="cirugia"></i>Cirugía</span><span><i class="otro"></i>Otro</span></div>'+body+'</section>';
 }
 
 
@@ -1010,7 +1062,7 @@ function render(){
    ============================================================ */
 // Opciones de cliente (dueño) para una mascota: uno existente o uno nuevo, que se carga en el mismo formulario.
 function clientOpts(){
-  return [['','Elegí un cliente…']].concat(S.clients.map(function(c){return [c.id,c.name+(c.phone?' · '+c.phone:'')];})).concat([['new','➕ Nuevo cliente…']]);
+  return [['','Elegí un cliente…']].concat(S.clients.map(function(c){return [c.id,c.name+(c.phone?' · '+c.phone:'')];})).concat([['new','+ Nuevo cliente…']]);
 }
 function patientForm(p,presetClient){
   var isNew=!p;p=p||{species:'Perro',sex:'Macho',neutered:false};
@@ -1226,7 +1278,7 @@ function chargeForm(p){
     (prods.length?'<optgroup label="Productos">'+prods.map(function(x){return '<option value="p'+x.id+'">'+esc(x.name)+' — '+money(x.price)+' (stock: '+x.stock+')</option>';}).join('')+'</optgroup>':'');
   var lineHTML='<div class="cline"><select class="l-item" aria-label="Servicio o producto">'+itemOpts+'</select>'+
     '<input class="l-qty" type="number" min="1" step="1" value="1" aria-label="Cantidad" disabled><input class="l-price" type="number" min="0" step="0.01" aria-label="Precio unitario">'+
-    '<span class="l-sub num"></span><button type="button" class="link bad l-del" aria-label="Quitar línea">✕</button></div>';
+    '<span class="l-sub num"></span><button type="button" class="link bad l-del" aria-label="Quitar línea">'+ico('x')+'</button></div>';
   var f=openForm({title:'Cobrar a '+esc(p.name),
     body:'<div class="cline head"><span>Servicio o producto</span><span>Cant.</span><span>Precio</span><span>Subtotal</span><span></span></div><div id="lines"></div>'+
       '<button type="button" class="btn" id="addline">+ Agregar línea</button>'+
@@ -1437,7 +1489,7 @@ function productForm(x,preset){
   // Botón de cámara junto al campo del código de barras.
   var bcIn=pf.querySelector('[name="barcode"]'),row=document.createElement('div');row.className='withbtn';
   bcIn.parentNode.insertBefore(row,bcIn);row.appendChild(bcIn);
-  var sb=document.createElement('button');sb.type='button';sb.className='btn';sb.textContent='📷 Escanear';row.appendChild(sb);
+  var sb=document.createElement('button');sb.type='button';sb.className='btn';sb.innerHTML=ico('camera')+' Escanear';row.appendChild(sb);
   sb.addEventListener('click',async function(){
     var code=await openScanner('Escanear el código del producto');
     if(!code)return;
@@ -1513,7 +1565,7 @@ function serviceForm(s){
   var allOpts=[['','Elegí un producto…']].concat(S.products.map(function(x){return [x.id,x.name+' (stock: '+x.stock+')'];}));
   var itemRow=function(it){
     return '<div class="sline"><select class="si-prod" aria-label="Producto">'+allOpts.map(function(o){return '<option value="'+o[0]+'"'+(String(o[0])===String(it.productId||'')?' selected':'')+'>'+esc(o[1])+'</option>';}).join('')+'</select>'+
-      '<input class="si-qty" type="number" min="1" step="1" value="'+(it.qty||1)+'" aria-label="Cantidad"><button type="button" class="link bad si-del" aria-label="Quitar producto">✕</button></div>';
+      '<input class="si-qty" type="number" min="1" step="1" value="'+(it.qty||1)+'" aria-label="Cantidad"><button type="button" class="link bad si-del" aria-label="Quitar producto">'+ico('x')+'</button></div>';
   };
   var sf=openForm({title:isNew?'Nuevo precio':'Editar precio',
     body:'<div class="fields">'+fld('Servicio','name',{value:s.name,req:true,full:true,ph:'Ej.: Consulta general'})+fld('Categoría','category',{opts:SERV_CATS,value:s.category})+fld('Precio','price',{type:'number',min:0,step:'0.01',value:s.price,req:true})+
@@ -1551,7 +1603,7 @@ function serviceForm(s){
 function studyForm(p,st){
   var e=!!st,pending=[],existing=e?(st.attachments||[]).slice():[];
   var zone=S.attachments?
-    '<div class="attach"><div class="drop" id="drop"><p>Arrastrá archivos acá, o</p><div class="dropbtns"><button type="button" class="btn" id="pick">Adjuntar archivos</button><button type="button" class="btn" id="shoot">📷 Sacar foto</button></div>'+
+    '<div class="attach"><div class="drop" id="drop"><p>Arrastrá archivos acá, o</p><div class="dropbtns"><button type="button" class="btn" id="pick">Adjuntar archivos</button><button type="button" class="btn" id="shoot">'+ico('camera')+' Sacar foto</button></div>'+
     '<small>PDF, JPG, PNG, WEBP, HEIC o DICOM (.dcm) · hasta 10 MB cada uno · máximo 5 por estudio</small></div>'+
     '<input type="file" id="fin" multiple accept="image/*,application/pdf,.pdf,.dcm,.heic,.webp" hidden><input type="file" id="fcam" accept="image/*" capture="environment" hidden>'+
     '<ul class="flist" id="flist"></ul><div class="progress" id="prog" hidden><div></div><span></span></div></div>':
@@ -1583,7 +1635,7 @@ function studyForm(p,st){
     list.innerHTML=existing.map(function(a){
       return '<li><span class="fname">'+esc(a.name)+'</span><small>'+fmtBytes(a.size)+'</small>'+(isAdmin()?'<button type="button" class="link bad" data-ex="'+a.id+'">Quitar</button>':'<span></span>')+'</li>';
     }).join('')+pending.map(function(x,i){
-      return '<li class="new"><span class="fname">'+esc(x.name)+'</span><small>'+fmtBytes(x.size)+' · nuevo</small><button type="button" class="link bad" data-new="'+i+'" aria-label="Sacar '+esc(x.name)+' de la lista">✕</button></li>';
+      return '<li class="new"><span class="fname">'+esc(x.name)+'</span><small>'+fmtBytes(x.size)+' · nuevo</small><button type="button" class="link bad" data-new="'+i+'" aria-label="Sacar '+esc(x.name)+' de la lista">'+ico('x')+'</button></li>';
     }).join('');
   };
   var add=async function(fl){
@@ -1798,7 +1850,7 @@ function restoreConfirm(label,copyCounts,curCounts,doRestore){
   openForm({title:'Restaurar copia',danger:empty,submit:'Restaurar',
     body:'<p>Vas a reemplazar los datos actuales ('+esc(countsText(curCounts))+') por esta copia ('+esc(countsText(copyCounts))+').</p>'+
       '<p><small>Copia: '+esc(label)+'. Antes se guarda una copia de los datos de ahora. Los usuarios no cambian.</small></p>'+
-      (empty?'<p class="warnbox"><b>⚠️ Esta copia está vacía, restaurarla borra todo</b></p><label class="fld check"><input type="checkbox" name="understand" required><span>Entiendo que se borran todos los datos actuales</span></label>':''),
+      (empty?'<p class="warnbox"><b>'+ico('alert')+' Esta copia está vacía, restaurarla borra todo</b></p><label class="fld check"><input type="checkbox" name="understand" required><span>Entiendo que se borran todos los datos actuales</span></label>':''),
     onSubmit:function(){return doRestore(empty);}});
 }
 async function restoreFileForm(data,label){
@@ -1820,7 +1872,8 @@ async function refreshView(){
 }
 function findRec(kind,id){return ((ui.detail&&ui.detail[kind])||[]).find(function(x){return String(x.id)===String(id);});}
 var actions={
-  nav:function(id,b){return go(b.dataset.v);},
+  nav:function(id,b){setMore(false);return go(b.dataset.v);},
+  more:function(){setMore(!document.body.dataset.more);},
   filter:function(id,b){ui.filter=b.dataset.v;dropHiddenSelection();render();},
   // Clientes
   'select-client':function(id){ui.csel=Number(id);ui.cdetail=null;window.scrollTo(0,0);return refreshView();},
@@ -2171,6 +2224,32 @@ async function checkSession(){
   }catch(e){/* sin conexión: no se molesta al usuario */}
 }
 document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')checkSession();});
+document.addEventListener('keydown',function(e){if(e.key==='Escape'&&document.body.dataset.more){setMore(false);var b=$('#tabbar [data-action="more"]');if(b)b.focus();}});
+document.addEventListener('click',function(e){if(document.body.dataset.more&&e.target.closest('#side button:not([data-action="nav"])'))setMore(false);});
+
+/* Tablas en celular: cada celda lleva como etiqueta el título de su columna (data-label), así la fila se puede
+   mostrar como tarjeta apilada sin scroll horizontal. En pantallas medianas, si la tabla igual no entra, se avisa
+   que hay más columnas. Se aplica a todo lo que se dibuje (vistas, ventanas, filtros) con un MutationObserver. */
+function labelTables(root){
+  root.querySelectorAll('table.tbl').forEach(function(t){
+    var hs=Array.prototype.map.call(t.querySelectorAll('thead th'),function(th){return th.textContent.trim();});
+    t.querySelectorAll('tbody tr').forEach(function(tr){
+      Array.prototype.forEach.call(tr.children,function(td,i){if(hs[i]&&td.colSpan===1&&!td.hasAttribute('data-label'))td.setAttribute('data-label',hs[i]);});
+    });
+    var w=t.parentElement;
+    if(w&&w.classList.contains('tbl-wrap')){
+      var over=t.scrollWidth>w.clientWidth+2;
+      w.classList.toggle('is-scroll',over);
+      var hint=w.previousElementSibling&&w.previousElementSibling.classList.contains('scrollhint')?w.previousElementSibling:null;
+      if(over&&!hint)w.insertAdjacentHTML('beforebegin','<p class="scrollhint">Deslizá la tabla hacia la izquierda para ver más columnas</p>');
+      if(!over&&hint)hint.remove();
+    }
+  });
+}
+var labelQueued=false;
+function queueLabels(){if(labelQueued)return;labelQueued=true;requestAnimationFrame(function(){labelQueued=false;labelTables(document);});}
+new MutationObserver(queueLabels).observe(document.body,{childList:true,subtree:true});
+window.addEventListener('resize',queueLabels);
 window.addEventListener('focus',checkSession);
 boot();
 })();
