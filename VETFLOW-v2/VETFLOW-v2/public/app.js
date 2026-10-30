@@ -1603,7 +1603,7 @@ function serviceForm(s){
 function studyForm(p,st){
   var e=!!st,pending=[],existing=e?(st.attachments||[]).slice():[];
   var zone=S.attachments?
-    '<div class="attach"><div class="drop" id="drop"><p>Arrastrá archivos acá, o</p><div class="dropbtns"><button type="button" class="btn" id="pick">Adjuntar archivos</button><button type="button" class="btn" id="shoot">📷 Sacar foto</button></div>'+
+    '<div class="attach"><div class="drop" id="drop"><p>Arrastrá archivos acá, o</p><div class="dropbtns"><button type="button" class="btn" id="pick">Adjuntar archivos</button><button type="button" class="btn" id="shoot">'+ico('camera')+' Sacar foto</button></div>'+
     '<small>PDF, JPG, PNG, WEBP, HEIC o DICOM (.dcm) · hasta 10 MB cada uno · máximo 5 por estudio</small></div>'+
     '<input type="file" id="fin" multiple accept="image/*,application/pdf,.pdf,.dcm,.heic,.webp" hidden><input type="file" id="fcam" accept="image/*" capture="environment" hidden>'+
     '<ul class="flist" id="flist"></ul><div class="progress" id="prog" hidden><div></div><span></span></div></div>':
@@ -1635,7 +1635,7 @@ function studyForm(p,st){
     list.innerHTML=existing.map(function(a){
       return '<li><span class="fname">'+esc(a.name)+'</span><small>'+fmtBytes(a.size)+'</small>'+(isAdmin()?'<button type="button" class="link bad" data-ex="'+a.id+'">Quitar</button>':'<span></span>')+'</li>';
     }).join('')+pending.map(function(x,i){
-      return '<li class="new"><span class="fname">'+esc(x.name)+'</span><small>'+fmtBytes(x.size)+' · nuevo</small><button type="button" class="link bad" data-new="'+i+'" aria-label="Sacar '+esc(x.name)+' de la lista">✕</button></li>';
+      return '<li class="new"><span class="fname">'+esc(x.name)+'</span><small>'+fmtBytes(x.size)+' · nuevo</small><button type="button" class="link bad" data-new="'+i+'" aria-label="Sacar '+esc(x.name)+' de la lista">'+ico('x')+'</button></li>';
     }).join('');
   };
   var add=async function(fl){
