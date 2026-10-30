@@ -240,7 +240,9 @@ textarea{resize:vertical}
 .cal-week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:.5rem;align-items:start}
 .cal-day{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:.6rem;min-height:130px;display:flex;flex-direction:column;gap:.4rem}
 .cal-day.today{border-color:var(--brand);border-width:2px}
-.cal-day-head{font-size:.82rem;color:var(--muted);display:flex;justify-content:space-between;align-items:baseline}
+/* "Lun 26" juntos a la izquierda y el + a la derecha */
+.cal-day-head{font-size:.82rem;color:var(--muted);display:flex;gap:.35rem;align-items:center}
+.cal-day-head .cal-add{margin-left:auto}
 .cal-day-head b{color:var(--ink);font-family:var(--f-head);font-size:1rem}
 .cal-add{background:none;border:0;color:var(--brand-dark);font-weight:700;font-size:1.1rem;line-height:1;padding:0 .2rem}
 .appt{border-radius:7px;padding:.32rem .5rem;font-size:.82rem;color:#fff;text-align:left;width:100%;border:0;cursor:pointer;line-height:1.3}
@@ -463,6 +465,27 @@ dialog.scan{width:min(560px,calc(100% - 1rem))}
 body[data-stale] #app,body[data-stale] dialog{pointer-events:none;opacity:.55}
 .drugtag{margin-top:.3rem}
 
+/* Calendario, vista Día: columna de horas alineada y cada turno con la barra de color de su tipo.
+   El color del tipo queda en el borde (no de fondo) para que el texto se lea en tinta sobre blanco. */
+.cal-dayview{max-width:760px}
+.dv-hours{margin:0 0 .9rem;color:var(--muted)}
+.dv-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.55rem}
+.dv-row{display:grid;grid-template-columns:3.6rem minmax(0,1fr);gap:.75rem;align-items:stretch}
+.dv-time{display:flex;flex-direction:column;padding-top:.6rem;line-height:1.2}
+.dv-time b{font-family:var(--f-head);font-size:1.1rem}
+.dv-time small{font-size:.85rem}
+.dv-appt{display:flex;flex-direction:column;align-items:flex-start;gap:.2rem;width:100%;text-align:left;background:var(--panel);border:1px solid var(--line);border-left:5px solid var(--appt-otro);border-radius:10px;padding:.65rem .9rem;min-width:0}
+.dv-appt:hover{border-color:var(--line-strong)}
+.dv-appt.consulta{border-left-color:var(--appt-consulta)}.dv-appt.vacuna{border-left-color:var(--appt-vacuna)}.dv-appt.cirugia{border-left-color:var(--appt-cirugia)}.dv-appt.otro{border-left-color:var(--appt-otro)}
+.dv-what{display:flex;flex-wrap:wrap;gap:.2rem .6rem;align-items:baseline}
+.dv-what b{font-size:1.02rem;overflow-wrap:anywhere}
+.dv-type{font-size:.85rem;color:var(--muted)}
+.dv-who{color:var(--ink);overflow-wrap:anywhere}
+.dv-phone{color:var(--muted);font-size:.92rem}
+.dv-appt .chip{margin-top:.15rem}
+.dv-empty{background:var(--panel);border:1px dashed var(--line-strong);border-radius:10px;padding:1.25rem;display:flex;flex-wrap:wrap;gap:.75rem;align-items:center;justify-content:space-between}
+.dv-empty p{margin:0;color:var(--muted)}
+
 .reqmark{color:var(--bad)}
 .fld .hint{font-weight:400}
 .fld [aria-invalid="true"]{border-color:var(--bad);outline-color:var(--bad)}
@@ -501,6 +524,9 @@ body[data-stale] #app,body[data-stale] dialog{pointer-events:none;opacity:.55}
   .side-foot .who{flex-basis:100%;margin-bottom:0}
 
   #toast{bottom:calc(4.6rem + env(safe-area-inset-bottom,0px))}
+  /* En la lista de una columna el alto según la duración (pensado para la grilla) solo deja bloques vacíos */
+  .cal-week .appt[style]{min-height:0!important}
+  .filerow .btn{flex:1 1 100%}
   .pac,.pac-list{min-height:0}
   .farm,.pac-detail{padding-bottom:1.5rem}
 }

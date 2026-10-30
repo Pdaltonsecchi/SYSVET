@@ -75,7 +75,12 @@ var prodById=function(id){return id?S.products.find(function(x){return x.id===id
 var svcSpecies=function(s){var pr=prodById(s.productId);return s.species||(pr&&pr.species)||'';};
 var APPT_TYPES=[['consulta','Consulta'],['vacuna','Vacuna'],['cirugia','Cirugía'],['otro','Otro']];
 var APPT_LABEL={consulta:'Consulta',vacuna:'Vacuna',cirugia:'Cirugía',otro:'Otro'};
-var APPT_VIEWS=[['week','Semana'],['2weeks','2 semanas'],['3weeks','3 semanas'],['month','Mes']];
+var APPT_VIEWS=[['day','Día'],['week','Semana'],['2weeks','2 semanas'],['month','Mes']];
+// Botón para volver al período actual: su texto dice a qué vuelve según la vista.
+var CAL_NOW={day:['Hoy','Ir a hoy'],week:['Semana','Ir a esta semana'],'2weeks':['Semanas','Ir a estas dos semanas'],month:['Mes','Ir a este mes']};
+// Horario de atención de un día como lista de franjas [desde, hasta]; acepta el formato viejo de una sola franja.
+var dayRanges=function(d){var v=(S.settings.hours||{})[d];if(!v||!v.length)return [];return typeof v[0]==='string'?[v]:v;};
+var rangesText=function(L){return L.map(function(r){return r[0]+' a '+r[1];}).join(' y ');};
 
 /* ============================================================
    Estado
@@ -172,9 +177,9 @@ async function loadView(){
 // En "mes" el rango se agranda hasta completar semanas enteras, para que la grilla no quede cortada.
 function calRange(){
   var a=ui.cal.anchor;
+  if(ui.cal.view==='day')return [a,a];
   if(ui.cal.view==='week')return [mondayOf(a), shiftDays(6, mondayOf(a))];
   if(ui.cal.view==='2weeks')return [mondayOf(a), shiftDays(13, mondayOf(a))];
-  if(ui.cal.view==='3weeks')return [mondayOf(a), shiftDays(20, mondayOf(a))];
   var first=a.slice(0,8)+'01';
   var y=Number(a.slice(0,4)),m=Number(a.slice(5,7));
   var lastDay=new Date(y,m,0).getDate();
@@ -194,12 +199,12 @@ async function reloadCal(){
 }
 function calShift(dir){
   if(ui.cal.view==='month'){ui.cal.anchor=shiftMonths(dir,ui.cal.anchor);return;}
-  var span=ui.cal.view==='week'?7:ui.cal.view==='2weeks'?14:21;
+  var span=ui.cal.view==='day'?1:ui.cal.view==='week'?7:14;
   ui.cal.anchor=shiftDays(dir*span,ui.cal.anchor);
 }
 function calTitle(){
-  if(ui.cal.view==='month'){
-    var t=parse(ui.cal.anchor).toLocaleDateString('es-AR',{month:'long',year:'numeric'});
+  if(ui.cal.view==='month'||ui.cal.view==='day'){
+    var t=parse(ui.cal.anchor).toLocaleDateString('es-AR',ui.cal.view==='day'?{weekday:'long',day:'numeric',month:'long',year:'numeric'}:{month:'long',year:'numeric'});
     return t.charAt(0).toUpperCase()+t.slice(1);
   }
   var r=calRange();
@@ -948,6 +953,20 @@ function calMonthGrid(){
   }
   return '<div class="cal-month">'+cells+'</div>';
 }
+// Vista Día: agenda del día en orden, con el horario de atención arriba y los turnos que caen fuera de él marcados.
+function calDayAgenda(){
+  var iso=ui.cal.anchor,list=dayAppts(iso),open=dayRanges(parse(iso).getDay());
+  var inHours=function(a){var s=toMin(a.time),e=s+Number(a.duration||0);return open.some(function(r){return s>=toMin(r[0])&&e<=toMin(r[1]);});};
+  var rows=list.map(function(a){
+    return '<li class="dv-row"><span class="dv-time"><b>'+a.time.slice(0,5)+'</b><small>'+esc(a.endTime||'')+'</small></span>'+
+      '<button class="dv-appt '+a.type+'" data-action="appt-view" data-id="'+a.id+'">'+
+      '<span class="dv-what"><b>'+esc(a.title||APPT_LABEL[a.type]||'')+'</b><span class="dv-type">'+(APPT_LABEL[a.type]||'')+'</span></span>'+
+      '<span class="dv-who">'+esc(a.patientName)+' ('+esc(ownerLast(a))+')'+'</span>'+(a.patientPhone?'<span class="dv-phone">'+esc(a.patientPhone)+'</span>':'')+
+      (open.length&&!inHours(a)?'<span class="chip warn">Fuera de horario</span>':'')+'</button></li>';
+  }).join('');
+  return '<div class="cal-dayview"><p class="dv-hours">'+(open.length?'Horario de atención: '+rangesText(open)+'.':'Este día el negocio figura cerrado.')+'</p>'+
+    (rows?'<ol class="dv-list">'+rows+'</ol>':'<div class="dv-empty"><p>No hay turnos para este día.</p><button class="btn" data-action="cal-add-day" data-v="'+iso+'">Agregar turno este día</button></div>')+'</div>';
+}
 // E1: "+N más" abre un listado con todos los turnos de ese día.
 function dayListDialog(iso){
   var list=dayAppts(iso);
@@ -966,16 +985,17 @@ function dayListDialog(iso){
 function viewCalendario(){
   if(!ui.appts)return '<section class="farm"><div class="head"><h1>Calendario</h1></div><p class="empty">Cargando…</p></section>';
   var body;
-  // Mes y 3 semanas: días de alto fijo con turnos compactos y "+N más". 1 y 2 semanas: todos los días miden lo que el día con más turnos.
-  if(ui.cal.view==='month'||ui.cal.view==='3weeks')body=calMonthGrid();
+  // Día: agenda en lista. Mes: días de alto fijo con turnos compactos y "+N más". 1 y 2 semanas: todos los días miden lo que el día con más turnos.
+  if(ui.cal.view==='day')body=calDayAgenda();
+  else if(ui.cal.view==='month')body=calMonthGrid();
   else{
-    // E5: semana, 2 y 3 semanas se muestran como grilla de una fila por semana (7 columnas), sin scroll horizontal.
+    // E5: semana y 2 semanas se muestran como grilla de una fila por semana (7 columnas), sin scroll horizontal.
     var r=calRange(),cells='',d=r[0];
     while(d<=r[1]){cells+=calDayColumn(d);d=shiftDays(1,d);}
     body='<div class="cal-week fit">'+cells+'</div>';
   }
   return '<section class="farm"><div class="head"><h1>Calendario</h1><button class="btn primary" data-action="new-appt">Agregar turno</button></div>'+
-    '<div class="cal-head"><div class="cal-nav"><button data-action="cal-prev" aria-label="Anterior">‹</button><button class="btn" data-action="cal-today">Hoy</button><button data-action="cal-next" aria-label="Siguiente">›</button></div>'+
+    '<div class="cal-head"><div class="cal-nav"><button data-action="cal-prev" aria-label="Anterior">‹</button><button class="btn" data-action="cal-today" aria-label="'+CAL_NOW[ui.cal.view][1]+'">'+CAL_NOW[ui.cal.view][0]+'</button><button data-action="cal-next" aria-label="Siguiente">›</button></div>'+
     '<div class="cal-title">'+calTitle()+'</div>'+segHTML('cal-view',APPT_VIEWS,ui.cal.view)+'</div>'+
     '<div class="cal-legend"><span><i class="consulta"></i>Consulta</span><span><i class="vacuna"></i>Vacuna</span>'+
     '<span><i class="cirugia"></i>Cirugía</span><span><i class="otro"></i>Otro</span></div>'+body+'</section>';
