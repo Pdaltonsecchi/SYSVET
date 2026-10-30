@@ -62,7 +62,7 @@ var CASH_IN_CATS=['Servicios','Venta de productos','Aporte de capital','Otros'];
 var CASH_OUT_CATS=['Compra de stock','Alquiler y servicios','Sueldos','Retiro de caja','Impuestos','Otros'];
 var ADJUST_REASONS=['Rotura','Vencimiento','Error de carga','Uso interno','Otro'];
 var PAY=['Efectivo','Transferencia','Tarjeta de débito','Tarjeta de crédito'];
-// Formas de pago habilitadas en la configuración del servidor (para cobrar, registrar egresos y cargar mercadería).
+// Formas de pago habilitadas en Configuración (para cobrar, registrar egresos y cargar mercadería).
 var payMethods=function(){var m=S.settings&&S.settings.methods;return m&&m.length?m:PAY;};
 var WEEKDAYS_LONG=['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
 var VAC_SUGG=['Sextuple','Quíntuple','Antirrábica','Tos de las perreras','Triple felina','Leucemia felina','Desparasitación'];
@@ -75,7 +75,12 @@ var prodById=function(id){return id?S.products.find(function(x){return x.id===id
 var svcSpecies=function(s){var pr=prodById(s.productId);return s.species||(pr&&pr.species)||'';};
 var APPT_TYPES=[['consulta','Consulta'],['vacuna','Vacuna'],['cirugia','Cirugía'],['otro','Otro']];
 var APPT_LABEL={consulta:'Consulta',vacuna:'Vacuna',cirugia:'Cirugía',otro:'Otro'};
-var APPT_VIEWS=[['week','Semana'],['2weeks','2 semanas'],['3weeks','3 semanas'],['month','Mes']];
+var APPT_VIEWS=[['day','Día'],['week','Semana'],['2weeks','2 semanas'],['month','Mes']];
+// Botón para volver al período actual: su texto dice a qué vuelve según la vista.
+var CAL_NOW={day:['Hoy','Ir a hoy'],week:['Semana','Ir a esta semana'],'2weeks':['Semanas','Ir a estas dos semanas'],month:['Mes','Ir a este mes']};
+// Horario de atención de un día como lista de franjas [desde, hasta]; acepta el formato viejo de una sola franja.
+var dayRanges=function(d){var v=(S.settings.hours||{})[d];if(!v||!v.length)return [];return typeof v[0]==='string'?[v]:v;};
+var rangesText=function(L){return L.map(function(r){return r[0]+' a '+r[1];}).join(' y ');};
 
 /* ============================================================
    Estado
@@ -172,9 +177,9 @@ async function loadView(){
 // En "mes" el rango se agranda hasta completar semanas enteras, para que la grilla no quede cortada.
 function calRange(){
   var a=ui.cal.anchor;
+  if(ui.cal.view==='day')return [a,a];
   if(ui.cal.view==='week')return [mondayOf(a), shiftDays(6, mondayOf(a))];
   if(ui.cal.view==='2weeks')return [mondayOf(a), shiftDays(13, mondayOf(a))];
-  if(ui.cal.view==='3weeks')return [mondayOf(a), shiftDays(20, mondayOf(a))];
   var first=a.slice(0,8)+'01';
   var y=Number(a.slice(0,4)),m=Number(a.slice(5,7));
   var lastDay=new Date(y,m,0).getDate();
@@ -194,12 +199,12 @@ async function reloadCal(){
 }
 function calShift(dir){
   if(ui.cal.view==='month'){ui.cal.anchor=shiftMonths(dir,ui.cal.anchor);return;}
-  var span=ui.cal.view==='week'?7:ui.cal.view==='2weeks'?14:21;
+  var span=ui.cal.view==='day'?1:ui.cal.view==='week'?7:14;
   ui.cal.anchor=shiftDays(dir*span,ui.cal.anchor);
 }
 function calTitle(){
-  if(ui.cal.view==='month'){
-    var t=parse(ui.cal.anchor).toLocaleDateString('es-AR',{month:'long',year:'numeric'});
+  if(ui.cal.view==='month'||ui.cal.view==='day'){
+    var t=parse(ui.cal.anchor).toLocaleDateString('es-AR',ui.cal.view==='day'?{weekday:'long',day:'numeric',month:'long',year:'numeric'}:{month:'long',year:'numeric'});
     return t.charAt(0).toUpperCase()+t.slice(1);
   }
   var r=calRange();
@@ -333,7 +338,7 @@ function navItems(){
   // v2: Calendario y Proveedores son visibles para admin y ayudante (agendar turnos y
   // consultar a quién comprarle es tarea del día a día, no solo del administrador).
   var a=[['pacientes','Pacientes'],['clientes','Clientes'],['calendario','Calendario'],['farmacia','Farmacia y caja'],['proveedores','Proveedores']];
-  if(isAdmin())a.push(['reportes','Reportes'],['papelera','Papelera'],['copias','Copias de seguridad'],['usuarios','Usuarios']);
+  if(isAdmin())a.push(['reportes','Reportes'],['papelera','Papelera'],['copias','Copias de seguridad'],['usuarios','Usuarios'],['configuracion','Configuración']);
   return a;
 }
 // Celular: barra inferior con las tareas del día (ficha, agenda, caja, dueños) y "Más" para el resto.
@@ -872,7 +877,7 @@ function viewBackups(){
       '<div><button class="link" data-action="restore" data-id="'+b.id+'">Restaurar</button><button class="link bad" data-action="del-backup" data-id="'+b.id+'">Eliminar</button></div></div>';
   }).join(''):'<p class="empty">Todavía no hay copias guardadas.</p>';
   return '<section class="farm"><div class="head"><h1>Copias de seguridad</h1></div>'+
-    '<p class="warnbox">La base de datos gratuita no incluye copias propias. Por eso el sistema guarda una copia por día dentro de la misma base (te sirve si borrás algo por error), pero <b>si se perdiera la base, esas copias también se pierden</b>. Descargá un archivo a tu computadora o a un pendrive, por lo menos una vez por semana.'+
+    '<p class="warnbox">El sistema guarda solo una copia por día dentro de la misma base de datos (te sirve si borrás algo por error), pero <b>si se perdiera la base, esas copias también se pierden</b>. Descargá un archivo a tu computadora o a un pendrive, por lo menos una vez por semana.'+
     (d===null?' Todavía no descargaste ninguno desde esta computadora.':' La última descarga desde esta computadora fue hace '+plural(d,'día','días')+'.')+'</p>'+
     '<div class="cashbox" style="margin-top:1rem"><div class="panel"><h3>Copia automática diaria</h3><p>'+(lastAuto?'Última copia automática: '+fmtTs(lastAuto.createdAt)+'.':'Todavía no se hizo ninguna.')+' Se hace sola una vez por día y se conservan las últimas 14.</p></div>'+
     '<div class="panel"><h3>Archivo y copias manuales</h3><div class="filerow"><button class="btn primary" data-action="backup-download">Descargar copia a mi computadora</button><button class="btn" data-action="backup-now">Crear copia ahora</button><button class="btn" data-action="pick-file">Cargar desde archivo</button><input id="bfile" type="file" accept=".json,application/json" hidden></div></div></div>'+
@@ -948,6 +953,20 @@ function calMonthGrid(){
   }
   return '<div class="cal-month">'+cells+'</div>';
 }
+// Vista Día: agenda del día en orden, con el horario de atención arriba y los turnos que caen fuera de él marcados.
+function calDayAgenda(){
+  var iso=ui.cal.anchor,list=dayAppts(iso),open=dayRanges(parse(iso).getDay());
+  var inHours=function(a){var s=toMin(a.time),e=s+Number(a.duration||0);return open.some(function(r){return s>=toMin(r[0])&&e<=toMin(r[1]);});};
+  var rows=list.map(function(a){
+    return '<li class="dv-row"><span class="dv-time"><b>'+a.time.slice(0,5)+'</b><small>'+esc(a.endTime||'')+'</small></span>'+
+      '<button class="dv-appt '+a.type+'" data-action="appt-view" data-id="'+a.id+'">'+
+      '<span class="dv-what"><b>'+esc(a.title||APPT_LABEL[a.type]||'')+'</b><span class="dv-type">'+(APPT_LABEL[a.type]||'')+'</span></span>'+
+      '<span class="dv-who">'+esc(a.patientName)+' ('+esc(ownerLast(a))+')'+'</span>'+(a.patientPhone?'<span class="dv-phone">'+esc(a.patientPhone)+'</span>':'')+
+      (open.length&&!inHours(a)?'<span class="chip warn">Fuera de horario</span>':'')+'</button></li>';
+  }).join('');
+  return '<div class="cal-dayview"><p class="dv-hours">'+(open.length?'Horario de atención: '+rangesText(open)+'.':'Este día el negocio figura cerrado.')+'</p>'+
+    (rows?'<ol class="dv-list">'+rows+'</ol>':'<div class="dv-empty"><p>No hay turnos para este día.</p><button class="btn" data-action="cal-add-day" data-v="'+iso+'">Agregar turno este día</button></div>')+'</div>';
+}
 // E1: "+N más" abre un listado con todos los turnos de ese día.
 function dayListDialog(iso){
   var list=dayAppts(iso);
@@ -966,31 +985,116 @@ function dayListDialog(iso){
 function viewCalendario(){
   if(!ui.appts)return '<section class="farm"><div class="head"><h1>Calendario</h1></div><p class="empty">Cargando…</p></section>';
   var body;
-  // Mes y 3 semanas: días de alto fijo con turnos compactos y "+N más". 1 y 2 semanas: todos los días miden lo que el día con más turnos.
-  if(ui.cal.view==='month'||ui.cal.view==='3weeks')body=calMonthGrid();
+  // Día: agenda en lista. Mes: días de alto fijo con turnos compactos y "+N más". 1 y 2 semanas: todos los días miden lo que el día con más turnos.
+  if(ui.cal.view==='day')body=calDayAgenda();
+  else if(ui.cal.view==='month')body=calMonthGrid();
   else{
-    // E5: semana, 2 y 3 semanas se muestran como grilla de una fila por semana (7 columnas), sin scroll horizontal.
+    // E5: semana y 2 semanas se muestran como grilla de una fila por semana (7 columnas), sin scroll horizontal.
     var r=calRange(),cells='',d=r[0];
     while(d<=r[1]){cells+=calDayColumn(d);d=shiftDays(1,d);}
     body='<div class="cal-week fit">'+cells+'</div>';
   }
   return '<section class="farm"><div class="head"><h1>Calendario</h1><button class="btn primary" data-action="new-appt">Agregar turno</button></div>'+
-    '<div class="cal-head"><div class="cal-nav"><button data-action="cal-prev" aria-label="Anterior">‹</button><button class="btn" data-action="cal-today">Hoy</button><button data-action="cal-next" aria-label="Siguiente">›</button></div>'+
+    '<div class="cal-head"><div class="cal-nav"><button data-action="cal-prev" aria-label="Anterior">‹</button><button class="btn" data-action="cal-today" aria-label="'+CAL_NOW[ui.cal.view][1]+'">'+CAL_NOW[ui.cal.view][0]+'</button><button data-action="cal-next" aria-label="Siguiente">›</button></div>'+
     '<div class="cal-title">'+calTitle()+'</div>'+segHTML('cal-view',APPT_VIEWS,ui.cal.view)+'</div>'+
     '<div class="cal-legend"><span><i class="consulta"></i>Consulta</span><span><i class="vacuna"></i>Vacuna</span>'+
     '<span><i class="cirugia"></i>Cirugía</span><span><i class="otro"></i>Otro</span></div>'+body+'</section>';
 }
 
+/* ============================================================
+   Configuración (solo el administrador)
+   Nombre de la veterinaria, horario de atención (varias franjas por día) y medios de pago habilitados.
+   El horario lo usa la agenda para avisar turnos fuera de horario; los medios de pago, el cobro y la caja.
+   El resto de la configuración guardada (ticket, gastos fijos, informe) se manda tal cual al guardar.
+   ============================================================ */
+var WEEK_ORDER=[1,2,3,4,5,6,0];
+// Horas cada 30 minutos en formato de 24 h (una lista se lee completa en cualquier navegador; el selector de hora
+// nativo muestra AM/PM según el idioma del equipo y se recorta). Si lo guardado no cae en la grilla, se agrega.
+function timeSelect(cls,value,label){
+  var opts=[];for(var m=0;m<1440;m+=30)opts.push(pad(Math.floor(m/60))+':'+pad(m%60));
+  if(value&&opts.indexOf(value)<0){opts.push(value);opts.sort();}
+  return '<select class="'+cls+'" aria-label="'+label+'">'+opts.map(function(t){return '<option'+(t===value?' selected':'')+'>'+t+'</option>';}).join('')+'</select>';
+}
+function hourRangeHTML(d,r){
+  var day=WEEKDAYS_LONG[d];
+  return '<div class="hrange">'+timeSelect('hfrom',r[0],day+', desde')+
+    '<span aria-hidden="true">a</span>'+timeSelect('hto',r[1],day+', hasta')+
+    '<button type="button" class="link bad hdel" data-action="hr-del" aria-label="Quitar este horario del '+day.toLowerCase()+'">'+ico('x')+'</button></div>';
+}
+function hourDayHTML(d){
+  var L=dayRanges(d),open=L.length>0;
+  return '<div class="hday'+(open?'':' closed')+'" data-day="'+d+'">'+
+    '<label class="hname"><input type="checkbox" class="hopen"'+(open?' checked':'')+'><b>'+WEEKDAYS_LONG[d]+'</b></label>'+
+    '<div class="hbody"><span class="hclosed">Cerrado</span><div class="hranges">'+L.map(function(r){return hourRangeHTML(d,r);}).join('')+'</div>'+
+    '<button type="button" class="link hadd" data-action="hr-add">'+ico('plus')+' Agregar horario</button></div></div>';
+}
+function viewConfig(){
+  var st=S.settings,on=payMethods();
+  return '<section class="farm cfg-page"><div class="head"><h1>Configuración</h1><button class="btn primary" data-action="config-save">Guardar cambios</button></div>'+
+    '<form id="cfgform" class="cfg" novalidate>'+
+    '<section class="panel"><h2>Veterinaria</h2><div class="fields">'+fld('Nombre de la veterinaria','shopName',{value:st.shopName||S.clinic,req:true,maxlength:100,full:true})+'</div>'+
+      '<p class="cfg-hint">Se ve en el menú, en la pestaña del navegador y en las impresiones.</p></section>'+
+    '<section class="panel"><h2>Horario de atención</h2><p class="cfg-hint">Un día puede tener más de un horario, por ejemplo de 08:00 a 12:00 y de 16:00 a 19:00. Al anotar un turno fuera de estos horarios, la agenda te avisa antes de guardarlo.</p>'+
+      '<div class="hours" id="cfghours">'+WEEK_ORDER.map(hourDayHTML).join('')+'</div></section>'+
+    '<section class="panel"><h2>Medios de pago</h2><p class="cfg-hint">Los que marques son los que aparecen al cobrar y al registrar ingresos o egresos.</p>'+
+      '<div class="checkgrid" id="cfgpay">'+PAY.map(function(m){return '<label class="check"><input type="checkbox" name="methods" value="'+esc(m)+'"'+(on.indexOf(m)>=0?' checked':'')+'> '+esc(m)+'</label>';}).join('')+'</div></section>'+
+    '<p class="err" role="alert" id="cfgerr"></p><div class="actions"><button type="button" class="btn primary" data-action="config-save">Guardar cambios</button></div></form></section>';
+}
+// Lee el horario del formulario y lo valida igual que el servidor (franjas completas, en orden y sin superponerse).
+function readHours(f){
+  var out={},bad=null;
+  f.querySelectorAll('.hday').forEach(function(row){
+    var d=Number(row.dataset.day);
+    if(!row.querySelector('.hopen').checked){out[d]=null;return;}
+    var L=[];
+    row.querySelectorAll('.hrange').forEach(function(r){
+      var a=r.querySelector('.hfrom'),b=r.querySelector('.hto');
+      var wrong=!a.value||!b.value||toMin(b.value)<=toMin(a.value);
+      a.setAttribute('aria-invalid',String(wrong));b.setAttribute('aria-invalid',String(wrong));
+      if(wrong){bad=bad||(!a.value||!b.value?'Completá las horas del '+WEEKDAYS_LONG[d].toLowerCase()+'.':'En el '+WEEKDAYS_LONG[d].toLowerCase()+', el cierre tiene que ser después de la apertura.');return;}
+      L.push([a.value,b.value]);
+    });
+    L.sort(function(x,y){return toMin(x[0])-toMin(y[0]);});
+    for(var i=1;i<L.length;i++)if(toMin(L[i][0])<toMin(L[i-1][1]))bad=bad||'Los horarios del '+WEEKDAYS_LONG[d].toLowerCase()+' se superponen.';
+    out[d]=L.length?L:null;
+  });
+  return {hours:out,error:bad};
+}
+// Nueva franja: si ya hay una, empieza una hora después de la última; si no, de 09:00 a 12:00.
+function addHourRange(row){
+  var d=Number(row.dataset.day),last=row.querySelector('.hrange:last-child .hto');
+  var hm=function(m){m=Math.min(m,1410);return pad(Math.floor(m/60))+':'+pad(m%60);};
+  var from=last&&last.value?toMin(last.value)+60:540;
+  row.querySelector('.hranges').insertAdjacentHTML('beforeend',hourRangeHTML(d,[hm(from),hm(from+180)]));
+  row.querySelector('.hopen').checked=true;row.classList.remove('closed');
+  var inputs=row.querySelectorAll('.hrange:last-child input');if(inputs[0])inputs[0].focus();
+}
+async function saveConfig(){
+  var f=$('#cfgform'),err=$('#cfgerr');err.textContent='';
+  var name=f.querySelector('[name="shopName"]');
+  name.setAttribute('aria-invalid',String(!name.value.trim()));
+  var h=readHours(f);
+  var methods=Array.prototype.map.call(f.querySelectorAll('[name="methods"]:checked'),function(x){return x.value;});
+  var msg=!name.value.trim()?'Escribí el nombre de la veterinaria.':h.error||(!methods.length?'Dejá habilitado al menos un medio de pago.':'');
+  if(msg){err.textContent=msg;throw new Error(msg);}
+  var body=Object.assign({},S.settings,{shopName:name.value.trim(),hours:h.hours,methods:methods});
+  delete body.emailReady;
+  var r;
+  try{r=await api('/settings',{method:'PUT',body:body});}
+  catch(e){err.textContent=e.message;throw e;}
+  S.settings=Object.assign({},S.settings,r);S.clinic=r.shopName||S.clinic;document.title=S.clinic;$('#shopname').textContent=S.clinic;
+  render();toast('Configuración guardada');
+}
 
 function render(){
   if(!S.user)return;
-  var adminOnly={reportes:1,copias:1,usuarios:1,papelera:1};
+  var adminOnly={reportes:1,copias:1,usuarios:1,papelera:1,configuracion:1};
   if(adminOnly[ui.view]&&!isAdmin())ui.view='pacientes';
   if(ui.view==='farmacia'&&!isAdmin()&&ui.tab==='caja')ui.tab='stock';
   renderNav();renderAlerts();renderUserBox();
   var v=ui.view;
   main.innerHTML=v==='pacientes'?viewPacientes():v==='clientes'?viewClientes():v==='calendario'?viewCalendario():v==='farmacia'?viewFarmacia():v==='proveedores'?viewProveedores():
-    v==='reportes'?viewReportes():v==='papelera'?viewTrash():v==='copias'?viewBackups():v==='usuarios'?viewUsers():viewPacientes();
+    v==='reportes'?viewReportes():v==='papelera'?viewTrash():v==='copias'?viewBackups():v==='usuarios'?viewUsers():v==='configuracion'?viewConfig():viewPacientes();
   if(v==='pacientes')loadThumbs();
 }
 
@@ -1646,12 +1750,13 @@ function supplierDetail(id){
 
 // v2: turnos del calendario.
 var APPT_DEFAULT_MIN={consulta:20,vacuna:10,cirugia:120,otro:30};
-// Aviso NO bloqueante si el turno queda fuera del horario de atención de ese día (horario guardado en la configuración del servidor).
+// Aviso NO bloqueante si el turno queda fuera del horario de atención de ese día (Configuración → Horario de atención).
+// Un día puede tener varias franjas: el turno tiene que entrar completo en alguna.
 async function confirmHours(body){
-  var h=(S.settings.hours||{})[parse(body.date).getDay()];
+  var L=dayRanges(parse(body.date).getDay());
   var s0=toMin(body.time),e0=s0+Number(body.duration);
-  if(h&&s0>=toMin(h[0])&&e0<=toMin(h[1]))return true;
-  var ch=await choiceDialog('Fuera de horario','<p>'+(h?'Ese turno queda fuera del horario de atención de ese día ('+h[0]+' a '+h[1]+' hs).':'Ese día el negocio figura cerrado.')+' ¿Agendar igual?</p>',
+  if(L.some(function(r){return s0>=toMin(r[0])&&e0<=toMin(r[1]);}))return true;
+  var ch=await choiceDialog('Fuera de horario','<p>'+(L.length?'Ese turno queda fuera del horario de atención de ese día ('+rangesText(L)+' hs).':'Ese día el negocio figura cerrado.')+' ¿Agendar igual?</p>',
     [{label:'Cambiar la hora',value:'no',cls:'ghost'},{label:'Agendar igual',value:'ok',cls:'primary'}]);
   return ch==='ok';
 }
@@ -2006,6 +2111,16 @@ var actions={
       var r=await api('/trash/purge-expired',{body:{}});await reload();toast(plural(r.purged,'elemento eliminado','elementos eliminados'));
     });
   },
+  'config-save':async function(id,btn){
+    var label=btn.textContent;btn.classList.add('busy');btn.textContent='Guardando…';
+    try{await saveConfig();}finally{btn.classList.remove('busy');btn.textContent=label;}
+  },
+  // Horario: agregar o quitar franjas sin redibujar (lo escrito en el formulario no se pierde).
+  'hr-add':function(id,b){addHourRange(b.closest('.hday'));},
+  'hr-del':function(id,b){
+    var row=b.closest('.hday');b.closest('.hrange').remove();
+    if(!row.querySelector('.hrange')){row.querySelector('.hopen').checked=false;row.classList.add('closed');}
+  },
   'new-user':function(){userForm();},
   'edit-user':function(id){userForm((ui.users||[]).find(function(x){return String(x.id)===String(id);}));},
   'change-pass':function(){passwordForm();},
@@ -2090,6 +2205,12 @@ document.addEventListener('input',function(e){
   if(e.target.id==='sq'){ui.sq=e.target.value;$('#srows').innerHTML=supplierRows();}
 });
 document.addEventListener('change',function(e){
+  // Configuración: abrir o cerrar un día del horario.
+  if(e.target.classList&&e.target.classList.contains('hopen')){
+    var row=e.target.closest('.hday');row.classList.toggle('closed',!e.target.checked);
+    if(e.target.checked&&!row.querySelector('.hrange'))addHourRange(row);
+    return;
+  }
   var rid=e.target.id;
   if(rid==='cfrom'||rid==='cto'||rid==='rfrom'||rid==='rto'){
     var isCash=rid[0]==='c';

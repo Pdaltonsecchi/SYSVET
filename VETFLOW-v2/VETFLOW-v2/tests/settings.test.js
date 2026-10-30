@@ -76,6 +76,18 @@ test('validaciones con los mensajes exactos', async () => {
   assert.equal(r.data.report.recipients, 'a@x.com, b@y.com, c@z.com');
 });
 
+test('horario con varias franjas por día', async () => {
+  // Lunes partido, martes en formato viejo (una sola franja), domingo cerrado.
+  let r = await owner.call('PUT', '/settings', base({ hours: { 1: [['16:00', '19:00'], ['08:00', '12:00']], 2: ['09:00', '18:00'], 0: [] } }));
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.deepEqual(r.data.hours[1], [['08:00', '12:00'], ['16:00', '19:00']], 'las franjas se ordenan');
+  assert.deepEqual(r.data.hours[2], [['09:00', '18:00']], 'el formato viejo se convierte');
+  assert.equal(r.data.hours[0], null);
+  r = await owner.call('PUT', '/settings', base({ hours: { 1: [['08:00', '12:00'], ['11:00', '13:00']] } }));
+  assert.equal(r.status, 400);
+  assert.equal(r.data.error, 'Los horarios del lunes se superponen.');
+});
+
 test('cron externo: exige el secreto', async () => {
   const c = client();
   assert.equal((await c.call('POST', '/cron/weekly-report', {})).status, 403);

@@ -154,7 +154,8 @@ Permisos: el ayudante puede ver y subir adjuntos; solo el administrador puede bo
 
 ## Configuración e informe semanal por email
 
-- La pantalla **Configuración** se quitó de la interfaz. Los valores (nombre del negocio, horario, formas de pago, gastos fijos, informe semanal) siguen guardados en la base y se usan como hasta ahora; para cambiarlos hay que usar `PUT /api/settings` como administrador.
+- En **Configuración** (último ítem del menú, solo el administrador) se cambia el nombre de la veterinaria, el horario de atención y los medios de pago. Un día puede tener varios horarios (por ejemplo de 08:00 a 12:00 y de 16:00 a 19:00): la agenda avisa al anotar un turno fuera de ellos. Los medios de pago marcados son los que aparecen al cobrar y en la caja.
+- El resto de la configuración guardada (ticket, gastos fijos, informe semanal) no tiene pantalla: se conserva al guardar y se cambia con `PUT /api/settings` como administrador.
 - Para el informe por email, definí en Render `EMAIL_PROVIDER` (`resend` o `brevo`), `EMAIL_API_KEY` y `EMAIL_FROM` (por ejemplo `SYSVET <avisos@tudominio.com>`, un remitente verificado). Sin esas variables el informe queda desactivado y el sistema arranca igual.
 - En el plan gratuito de Render el servidor se duerme: conviene un cron externo que haga `POST /api/cron/weekly-report` con el encabezado `X-Cron-Secret` igual a `CRON_SECRET`.
-- Pruebas: `DATABASE_URL=postgres://... npm test` (usar una base de prueba, nunca la real).
+- Pruebas: `DATABASE_URL=postgres://... npm test` (usar una base de prueba, nunca la real). La prueba de pantalla necesita Playwright y se saltea si no está.
