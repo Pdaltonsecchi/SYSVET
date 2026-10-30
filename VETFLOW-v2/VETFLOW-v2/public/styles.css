@@ -488,6 +488,41 @@ body[data-stale] #app,body[data-stale] dialog{pointer-events:none;opacity:.55}
 .dv-empty{background:var(--panel);border:1px dashed var(--line-strong);border-radius:10px;padding:1.25rem;display:flex;flex-wrap:wrap;gap:.75rem;align-items:center;justify-content:space-between}
 .dv-empty p{margin:0;color:var(--muted)}
 
+/* Configuración */
+.cfg{display:flex;flex-direction:column;gap:1rem;max-width:760px}
+.cfg .panel{margin:0;padding:1.1rem 1.2rem}
+.cfg .panel h2{font-size:1.15rem;margin-bottom:.3rem}
+.cfg .panel .cfg-hint{margin:.15rem 0 .85rem;max-width:62ch}
+.cfg .fields+.cfg-hint{margin:.5rem 0 0}
+/* Horario: una fila por día; el nombre con su casilla a la izquierda y las franjas a la derecha */
+.hours{display:flex;flex-direction:column}
+.hday{display:grid;grid-template-columns:9.5rem minmax(0,1fr);gap:.4rem 1rem;align-items:start;padding:.7rem 0;border-top:1px solid var(--line)}
+.hday:first-child{border-top:0;padding-top:.2rem}
+.hname{display:flex;align-items:center;gap:.55rem;min-height:2.75rem;cursor:pointer}
+.hname input{width:1.15rem;height:1.15rem;margin:0;flex:none;accent-color:var(--brand)}
+.hbody{display:flex;flex-direction:column;align-items:flex-start;gap:.4rem;min-width:0}
+.hranges{display:flex;flex-direction:column;gap:.4rem}
+.hrange{display:flex;align-items:center;gap:.5rem}
+.hrange select{width:6.5rem;min-width:0;font-variant-numeric:tabular-nums}
+.hrange span{color:var(--muted)}
+.hclosed{display:none;color:var(--muted);min-height:2.6rem;align-items:center}
+.hday.closed .hranges,.hday.closed .hadd{display:none}
+.hday.closed .hclosed{display:flex}
+.hday.closed .hname b{color:var(--muted);font-weight:600}
+.hadd .ico{width:1em;height:1em}
+.hdel .ico{width:1.1rem;height:1.1rem}
+/* Medios de pago: cada opción es una tarjetita con la casilla a la izquierda; la marcada se resalta */
+.checkgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:.5rem}
+.checkgrid .check{display:flex;align-items:center;gap:.6rem;padding:.6rem .75rem;border:1px solid var(--line-strong);border-radius:10px;background:var(--panel);font-weight:500;line-height:1.25;cursor:pointer}
+.checkgrid .check:has(input:checked){background:var(--brand-soft);border-color:var(--brand)}
+.checkgrid .check:focus-within{outline:2px solid var(--brand);outline-offset:2px}
+.checkgrid .check input{width:1.1rem;height:1.1rem;flex:none;margin:0;padding:0;accent-color:var(--brand);cursor:pointer}
+@media (max-width:600px){
+  .hday{grid-template-columns:1fr}
+  .hbody{padding-left:1.7rem}
+  .hrange select{flex:1 1 0;width:auto}
+  .checkgrid{grid-template-columns:1fr}
+}
 .reqmark{color:var(--bad)}
 .fld .hint{font-weight:400}
 .fld [aria-invalid="true"]{border-color:var(--bad);outline-color:var(--bad)}
@@ -569,7 +604,7 @@ body[data-stale] #app,body[data-stale] dialog{pointer-events:none;opacity:.55}
   .link{min-height:2.75rem;padding:.45rem .6rem;display:inline-flex;align-items:center}
   .namebtn{min-height:0;padding:0;display:inline}
   .ownerlink{min-height:2.75rem;padding:0;display:inline-flex;align-items:center}
-  .cal-add,.attx,.l-del,.si-del{min-width:2.75rem;min-height:2.75rem;display:inline-grid;place-items:center}
+  .cal-add,.attx,.l-del,.si-del,.hdel{min-width:2.75rem;min-height:2.75rem;display:inline-grid;place-items:center}
   .cal-chip,.cal-more{min-height:2.75rem;font-size:.85rem}
   .appt{min-height:2.75rem}
   .pitem{min-height:3.25rem}

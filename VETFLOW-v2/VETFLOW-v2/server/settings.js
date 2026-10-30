@@ -6,8 +6,14 @@ const report = require('./report');
 
 /* ---------- Configuración del negocio (una sola fila en `settings`, clave 'app') ---------- */
 const toMin = (t) => Number(String(t).slice(0, 2)) * 60 + Number(String(t).slice(3, 5));
-// Horario comercial por día de la semana (0 = domingo). null = cerrado.
-const DEFAULT_HOURS = { 0: null, 1: ['09:00', '19:00'], 2: ['09:00', '19:00'], 3: ['09:00', '19:00'], 4: ['09:00', '19:00'], 5: ['09:00', '19:00'], 6: ['09:00', '19:00'] };
+// Horario comercial por día de la semana (0 = domingo): lista de franjas [apertura, cierre], o null = cerrado.
+// Un día puede tener varias franjas (ej.: 08:00–12:00 y 16:00–19:00). El formato viejo, una sola franja
+// ['09:00', '19:00'], se sigue aceptando y se convierte a [['09:00', '19:00']].
+const DEFAULT_HOURS = { 0: null, 1: [['09:00', '19:00']], 2: [['09:00', '19:00']], 3: [['09:00', '19:00']], 4: [['09:00', '19:00']], 5: [['09:00', '19:00']], 6: [['09:00', '19:00']] };
+const MAX_RANGES = 6;
+const DAY_NAMES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+// Lista de franjas de un día, aceptando el formato viejo de una sola franja.
+const rangesOf = (v) => (Array.isArray(v) && v.length === 2 && typeof v[0] === 'string' ? [v] : v);
 
 const DEFAULT_SETTINGS = {
   shopName: '',
@@ -40,6 +46,7 @@ async function getSettings(q) {
     saved = {};
   }
   const value = Object.assign({}, DEFAULT_SETTINGS, saved, { report: Object.assign({}, DEFAULT_SETTINGS.report, saved.report || {}) });
+  value.hours = normHours(value.hours);
   if (!value.shopName) value.shopName = process.env.CLINIC_NAME || 'SYSVET';
   cache = { at: Date.now(), value };
   return value;
@@ -49,16 +56,36 @@ async function getSettings(q) {
 function checkHours(h) {
   const out = {};
   for (let d = 0; d < 7; d++) {
-    const v = h && h[d];
-    if (!v) {
+    const v = rangesOf(h && h[d]);
+    if (!v || (Array.isArray(v) && !v.length)) {
       out[d] = null;
       continue;
     }
-    if (!Array.isArray(v) || v.length !== 2) throw U.bad('El horario comercial no es válido.');
-    const a = U.reqTime(v[0], 'Apertura').slice(0, 5);
-    const b = U.reqTime(v[1], 'Cierre').slice(0, 5);
-    if (toMin(b) <= toMin(a)) throw U.bad('En el horario comercial, el cierre tiene que ser después de la apertura.');
-    out[d] = [a, b];
+    if (!Array.isArray(v) || v.length > MAX_RANGES || v.some((r) => !Array.isArray(r) || r.length !== 2)) throw U.bad('El horario comercial no es válido.');
+    const ranges = v
+      .map((r) => {
+        const a = U.reqTime(r[0], 'Apertura').slice(0, 5);
+        const b = U.reqTime(r[1], 'Cierre').slice(0, 5);
+        if (toMin(b) <= toMin(a)) throw U.bad('En el horario comercial, el cierre tiene que ser después de la apertura.');
+        return [a, b];
+      })
+      .sort((x, y) => toMin(x[0]) - toMin(y[0]));
+    for (let i = 1; i < ranges.length; i++) {
+      if (toMin(ranges[i][0]) < toMin(ranges[i - 1][1])) throw U.bad('Los horarios del ' + DAY_NAMES[d] + ' se superponen.');
+    }
+    out[d] = ranges;
+  }
+  return out;
+}
+// Lo guardado antes de las franjas múltiples se lee igual; si algo no es válido, ese día queda cerrado.
+function normHours(h) {
+  const out = {};
+  for (let d = 0; d < 7; d++) {
+    try {
+      out[d] = checkHours({ [d]: h && h[d] })[d];
+    } catch (e) {
+      out[d] = null;
+    }
   }
   return out;
 }
