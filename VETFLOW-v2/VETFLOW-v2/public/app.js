@@ -336,10 +336,22 @@ function navItems(){
   if(isAdmin())a.push(['reportes','Reportes'],['papelera','Papelera'],['copias','Copias de seguridad'],['usuarios','Usuarios'],['configuracion','Configuración']);
   return a;
 }
+// Celular: barra inferior con las tareas del día (ficha, agenda, caja, dueños) y "Más" para el resto.
+var TAB_PRI=[['pacientes','Pacientes','paw'],['calendario','Calendario','calendar'],['farmacia','Farmacia','pill'],['clientes','Clientes','users']];
+var isPri=function(v){return TAB_PRI.some(function(t){return t[0]===v;});};
 function renderNav(){
   $('#nav').innerHTML=navItems().map(function(i){
-    return '<button class="navb" data-action="nav" data-v="'+i[0]+'" aria-current="'+(ui.view===i[0]?'page':'false')+'">'+i[1]+'</button>';
+    return '<button class="navb'+(isPri(i[0])?' pri':'')+'" data-action="nav" data-v="'+i[0]+'" aria-current="'+(ui.view===i[0]?'page':'false')+'">'+i[1]+'</button>';
   }).join('');
+  var open=!!document.body.dataset.more;
+  $('#tabbar').innerHTML=TAB_PRI.map(function(t){
+    return '<button class="tabb" data-action="nav" data-v="'+t[0]+'" aria-current="'+(ui.view===t[0]?'page':'false')+'">'+ico(t[2])+'<span>'+t[1]+'</span></button>';
+  }).join('')+'<button class="tabb" data-action="more" aria-controls="side" aria-expanded="'+open+'"'+(!isPri(ui.view)?' aria-current="page"':'')+'>'+ico('menu')+'<span>Más</span></button>';
+}
+function setMore(open){
+  if(open)document.body.dataset.more='1';else delete document.body.dataset.more;
+  var b=$('#tabbar [data-action="more"]');if(b)b.setAttribute('aria-expanded',String(open));
+  if(open){var f=$('#side .navb:not(.pri)')||$('#side button');if(f)f.focus();}
 }
 function renderUserBox(){
   var u=S.user;
@@ -397,6 +409,8 @@ function renderAlerts(){
   }
   if(!h)h='<div class="al"><span class="dot ok"></span><span>Todo al día</span></div>';
   $('#alerts').innerHTML='<h3>Para revisar</h3>'+h;
+  // En celular los avisos viven dentro de "Más": un punto en el botón indica que hay algo para revisar.
+  var mb=$('#tabbar [data-action="more"]');if(mb)mb.classList.toggle('has-alerts',!!$('#alerts button.al'));
 }
 
 /* ============================================================
@@ -1858,7 +1872,8 @@ async function refreshView(){
 }
 function findRec(kind,id){return ((ui.detail&&ui.detail[kind])||[]).find(function(x){return String(x.id)===String(id);});}
 var actions={
-  nav:function(id,b){return go(b.dataset.v);},
+  nav:function(id,b){setMore(false);return go(b.dataset.v);},
+  more:function(){setMore(!document.body.dataset.more);},
   filter:function(id,b){ui.filter=b.dataset.v;dropHiddenSelection();render();},
   // Clientes
   'select-client':function(id){ui.csel=Number(id);ui.cdetail=null;window.scrollTo(0,0);return refreshView();},
@@ -2209,6 +2224,32 @@ async function checkSession(){
   }catch(e){/* sin conexión: no se molesta al usuario */}
 }
 document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')checkSession();});
+document.addEventListener('keydown',function(e){if(e.key==='Escape'&&document.body.dataset.more){setMore(false);var b=$('#tabbar [data-action="more"]');if(b)b.focus();}});
+document.addEventListener('click',function(e){if(document.body.dataset.more&&e.target.closest('#side button:not([data-action="nav"])'))setMore(false);});
+
+/* Tablas en celular: cada celda lleva como etiqueta el título de su columna (data-label), así la fila se puede
+   mostrar como tarjeta apilada sin scroll horizontal. En pantallas medianas, si la tabla igual no entra, se avisa
+   que hay más columnas. Se aplica a todo lo que se dibuje (vistas, ventanas, filtros) con un MutationObserver. */
+function labelTables(root){
+  root.querySelectorAll('table.tbl').forEach(function(t){
+    var hs=Array.prototype.map.call(t.querySelectorAll('thead th'),function(th){return th.textContent.trim();});
+    t.querySelectorAll('tbody tr').forEach(function(tr){
+      Array.prototype.forEach.call(tr.children,function(td,i){if(hs[i]&&td.colSpan===1&&!td.hasAttribute('data-label'))td.setAttribute('data-label',hs[i]);});
+    });
+    var w=t.parentElement;
+    if(w&&w.classList.contains('tbl-wrap')){
+      var over=t.scrollWidth>w.clientWidth+2;
+      w.classList.toggle('is-scroll',over);
+      var hint=w.previousElementSibling&&w.previousElementSibling.classList.contains('scrollhint')?w.previousElementSibling:null;
+      if(over&&!hint)w.insertAdjacentHTML('beforebegin','<p class="scrollhint">Deslizá la tabla hacia la izquierda para ver más columnas</p>');
+      if(!over&&hint)hint.remove();
+    }
+  });
+}
+var labelQueued=false;
+function queueLabels(){if(labelQueued)return;labelQueued=true;requestAnimationFrame(function(){labelQueued=false;labelTables(document);});}
+new MutationObserver(queueLabels).observe(document.body,{childList:true,subtree:true});
+window.addEventListener('resize',queueLabels);
 window.addEventListener('focus',checkSession);
 boot();
 })();
