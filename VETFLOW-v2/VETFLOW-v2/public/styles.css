@@ -35,6 +35,8 @@ button{font:inherit;color:inherit;cursor:pointer}
 button:disabled{opacity:.6;cursor:default}
 :focus-visible{outline:3px solid var(--brand);outline-offset:2px}
 small{color:var(--muted)}
+/* Íconos SVG inline: toman el color del texto (currentColor) */
+.ico{width:1.15em;height:1.15em;flex:none;display:inline-block;vertical-align:-.2em}
 
 /* estados de la página */
 body[data-state="loading"] #login, body[data-state="loading"] #app{display:none}
@@ -48,7 +50,8 @@ body[data-state="error"] #login, body[data-state="error"] #app{display:none}
 .login{min-height:100vh;display:grid;place-items:center;padding:1rem;padding-top:calc(1rem + env(safe-area-inset-top,0px));padding-bottom:calc(1rem + env(safe-area-inset-bottom,0px))}
 .loginbox{width:min(400px,100%);background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1.6rem;display:flex;flex-direction:column;gap:1rem}
 .loginbox .brand2{display:flex;align-items:center;gap:.6rem;font-family:var(--f-head);font-size:1.2rem;font-weight:700}
-.loginbox .brand2 span{font-size:1.7rem}
+.loginbox .brand2 span{display:grid;place-items:center;width:2.4rem;height:2.4rem;border-radius:10px;background:var(--brand);color:var(--brand-ink)}
+.loginbox .brand2 .ico{width:1.5rem;height:1.5rem}
 .err{margin:0;color:var(--bad);font-size:.92rem;min-height:1.2em}
 
 .app{display:grid;grid-template-columns:232px 1fr;min-height:100vh}
@@ -56,9 +59,10 @@ body[data-state="error"] #login, body[data-state="error"] #app{display:none}
   position:sticky;top:0;align-self:start;height:100vh;overflow:auto;
   padding-top:calc(1.25rem + env(safe-area-inset-top,0px))}
 .brand{display:flex;align-items:center;gap:.7rem}
-.brand .mark{font-size:1.6rem;width:2.5rem;height:2.5rem;border-radius:10px;background:var(--brand);display:grid;place-items:center}
+.brand .mark{width:2.5rem;height:2.5rem;border-radius:10px;background:var(--brand);color:var(--brand-ink);display:grid;place-items:center}
+.brand .mark .ico{width:1.55rem;height:1.55rem}
 .brand b{font-family:var(--f-head);font-size:1.15rem;display:block;line-height:1.1}
-.brand small{color:var(--side-muted)}
+.brand small,.side small{color:var(--side-muted)}
 .nav{display:flex;flex-direction:column;gap:.25rem}
 .navb{text-align:left;padding:.65rem .8rem;border-radius:8px;background:transparent;border:0;font-weight:600;color:var(--side-ink)}
 .navb:hover{background:var(--side-hover)}
@@ -111,8 +115,10 @@ textarea{resize:vertical}
 .pi-main{flex:1;min-width:0;display:flex;flex-direction:column}
 .pi-main b{font-weight:600}
 .pi-main small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.avatar{flex:none;width:2.6rem;height:2.6rem;border-radius:50%;background:var(--brand-soft);display:grid;place-items:center;font-size:1.4rem}
-.avatar.big{width:4.5rem;height:4.5rem;font-size:2.4rem}
+/* Avatar de mascota o cliente: ícono de línea sobre verde suave (antes emoji). Tamaño grande: .avatar--lg */
+.avatar{flex:none;width:2.6rem;height:2.6rem;border-radius:50%;background:var(--brand-soft);color:var(--brand-dark);display:grid;place-items:center}
+.avatar .ico{width:58%;height:58%}
+.avatar--lg{width:3.75rem;height:3.75rem}
 .pac-detail{padding:1.5rem clamp(1rem,3vw,2.25rem) 3rem;min-width:0}
 .empty{color:var(--muted);padding:1.5rem 0;max-width:46ch}
 .back{display:none;margin-bottom:1rem}
@@ -174,7 +180,9 @@ textarea{resize:vertical}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1rem 1.15rem}
 .panel h3{margin-bottom:.35rem}
 .panel p{margin:.4rem 0 0;color:var(--muted);font-size:.92rem}
-.big{font-family:var(--f-head);font-size:2.1rem;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1}
+/* Número de resumen (caja). Antes ".big", que también usaba el avatar grande y se pisaban. */
+.stat-num{font-family:var(--f-head);font-size:2.1rem;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1;overflow-wrap:anywhere}
+.stat-num .ico{width:.8em;height:.8em;vertical-align:-.05em}
 .cashbox{display:grid;grid-template-columns:1.1fr 1fr;gap:1rem;margin-bottom:1rem}
 .filters{display:flex;gap:.9rem;flex-wrap:wrap}
 .bk-list{display:flex;flex-direction:column}
@@ -294,6 +302,8 @@ dialog::backdrop{background:rgba(55,65,81,.5)}
 @media (prefers-reduced-motion:reduce){.btn.busy::before,.link.busy::before{animation-duration:2s}}
 
 .negtxt{color:var(--bad);font-weight:600}
+.negtxt .ico,.drugtag .ico{width:1em;height:1em;vertical-align:-.12em}
+.drugtag{gap:.3rem}
 .rng{display:inline-flex;gap:.6rem;align-items:center;flex-wrap:wrap;font-size:.88rem;color:var(--muted)}
 .rng label{display:inline-flex;gap:.35rem;align-items:center}
 .wbox{display:grid;grid-template-columns:auto minmax(0,1fr);gap:.4rem 1.2rem;align-items:center}
@@ -345,8 +355,9 @@ dialog::backdrop{background:rgba(55,65,81,.5)}
 .att{display:inline-flex;align-items:flex-start;gap:.1rem}
 .attb{display:flex;flex-direction:column;align-items:center;gap:.2rem;width:5.2rem;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:.3rem}
 .attb:hover{border-color:var(--brand)}
-.attb img,.attb .aicon{width:4.4rem;height:3.4rem;object-fit:cover;border-radius:5px;background:var(--brand-soft);display:grid;place-items:center;font-size:1.7rem}
-.aname{font-size:.78rem;line-height:1.2;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
+.attb img,.attb .aicon{width:4.4rem;height:3.4rem;object-fit:cover;border-radius:5px;background:var(--brand-soft);color:var(--brand-dark);display:grid;place-items:center}
+.attb .aicon .ico{width:1.75rem;height:1.75rem}
+.aname{font-size:.8rem;line-height:1.2;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
 .attx{padding:0 .1rem;line-height:1}
 dialog:has(.preview){width:min(900px,calc(100% - 1rem))}
 .bigimg{max-width:100%;max-height:70vh;display:block;margin:.5rem auto;border-radius:8px}
@@ -357,7 +368,8 @@ dialog:has(.preview){width:min(900px,calc(100% - 1rem))}
 
 /* Stock: menú de acciones ⋮ y columnas secundarias */
 .rowmenu{display:inline-block;position:relative}
-.rowmenu summary{list-style:none;cursor:pointer;padding:.2rem .55rem;border-radius:6px;font-weight:700;font-size:1.1rem;line-height:1;display:inline-block;color:var(--muted)}
+.rowmenu summary{list-style:none;cursor:pointer;padding:.3rem;border-radius:6px;line-height:1;display:inline-grid;place-items:center;color:var(--muted)}
+.rowmenu summary .ico{width:1.25rem;height:1.25rem}
 .rowmenu summary::-webkit-details-marker{display:none}
 .rowmenu summary:hover,.rowmenu[open] summary{background:var(--brand-soft);color:var(--ink)}
 .rowmenu .menu{position:fixed;z-index:40;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(55,65,81,.22);padding:.3rem;display:flex;flex-direction:column;min-width:10.5rem}

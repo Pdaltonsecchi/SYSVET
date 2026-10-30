@@ -30,6 +30,30 @@ var fmtTs=function(v){var d=new Date(v);if(isNaN(d.getTime()))return '';return d
 // v2: lunes de la semana que contiene "iso" (semana de lunes a domingo).
 var mondayOf=function(iso){var d=parse(iso);var wd=d.getDay();wd=wd===0?7:wd;return shiftDays(-(wd-1),iso);};
 
+// Íconos de interfaz: SVG inline con currentColor (toman el color del texto), en línea con la pata de la marca.
+// Reemplazan a los emojis decorativos; los emojis que cargue el usuario en sus datos se muestran tal cual.
+var ICONS={
+  paw:'<g fill="currentColor" stroke="none"><ellipse cx="6.2" cy="10.4" rx="2" ry="2.6"/><ellipse cx="9.6" cy="5.8" rx="2" ry="2.7"/><ellipse cx="14.4" cy="5.8" rx="2" ry="2.7"/><ellipse cx="17.8" cy="10.4" rx="2" ry="2.6"/><path d="M12 11.4c-2.6 0-5.4 3.6-5.4 6 0 1.6 1.2 2.4 2.6 2.4 1.1 0 1.8-.6 2.8-.6s1.7.6 2.8.6c1.4 0 2.6-.8 2.6-2.4 0-2.4-2.8-6-5.4-6z"/></g>',
+  dog:'<path d="M8 5h8a3 3 0 0 1 3 3v5.5a7 7 0 0 1-14 0V8a3 3 0 0 1 3-3z"/><path d="M8 5 3.8 7.4l1.2 6M16 5l4.2 2.4-1.2 6"/><path d="M10.6 16.2h2.8L12 17.6z" fill="currentColor"/><path d="M9.5 11.5h.01M14.5 11.5h.01" stroke-width="2.4"/>',
+  cat:'<path d="M4.5 3.5 8.2 7.6h7.6l3.7-4.1V13a7.5 7.5 0 0 1-15 0z"/><path d="M9.5 12h.01M14.5 12h.01" stroke-width="2.4"/><path d="M11 15.2h2L12 16.4zM3 14.5l4 .5M3.5 17.5l3.7-1M21 14.5l-4 .5M20.5 17.5l-3.7-1"/>',
+  user:'<circle cx="12" cy="8" r="4"/><path d="M4 20.5a8 8 0 0 1 16 0"/>',
+  file:'<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
+  image:'<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="m3.5 16 5-5 4 4 3-3 5 5"/><path d="M15.5 9h.01" stroke-width="2.4"/>',
+  xray:'<rect x="3.5" y="3.5" width="17" height="17" rx="2"/><path d="M12 6.5v11M8 9.5c1.5-.8 2.8-.8 4 0 1.2-.8 2.5-.8 4 0M8 12.5c1.5-.8 2.8-.8 4 0 1.2-.8 2.5-.8 4 0M8.5 15.5c1.2-.6 2.4-.6 3.5 0 1.1-.6 2.3-.6 3.5 0"/>',
+  camera:'<path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/>',
+  lock:'<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  alert:'<path d="M10.3 4.2 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z"/><path d="M12 10v4"/><path d="M12 17.5h.01" stroke-width="2.4"/>',
+  x:'<path d="M6 6l12 12M18 6 6 18"/>',
+  more:'<path d="M12 5h.01M12 12h.01M12 19h.01" stroke-width="3"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  calendar:'<rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+  pill:'<path d="M10.6 3.9a5 5 0 0 1 7.1 7.1l-6.7 6.7a5 5 0 0 1-7.1-7.1z"/><path d="m7.3 7.3 7 7"/>',
+  users:'<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.2a6.5 6.5 0 0 1 3.5 5.8"/>',
+  menu:'<path d="M4 7h16M4 12h16M4 17h16"/>'
+};
+var ico=function(n,cls){return '<svg class="ico'+(cls?' '+cls:'')+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'+ICONS[n]+'</svg>';};
+var petIco=function(sp){return ico(sp==='Gato'?'cat':'dog');};
+
 // F1: teléfono con números, espacios, + , - y paréntesis (el servidor exige además 6 dígitos como mínimo).
 var PHONE_PAT='[0-9 +\\(\\)\\-]{6,50}';
 var PROD_CATS=['Medicamentos','Vacunas','Higiene','Pulguicidas','Antiparasitarios','Otros'];
@@ -378,7 +402,7 @@ function renderAlerts(){
 /* ============================================================
    Pacientes
    ============================================================ */
-var emo=function(p){return p.species==='Gato'?'🐱':'🐶';};
+var emo=function(p){return petIco(p.species);};
 
 // F7: edad con la fecha de nacimiento: "5 años (10/05/2021)"; en menores de 2 años, años y meses.
 function ageText(b){
@@ -473,9 +497,9 @@ function attsHTML(st){
   var L=st.attachments||[];
   if(!L.length)return '';
   return '<div class="atts">'+L.map(function(a){
-    var thumb=isImg(a.mime)&&S.attachments?'<img data-att="'+a.id+'" alt="" loading="lazy">':'<span class="aicon" aria-hidden="true">'+(a.mime==='application/pdf'?'📄':a.mime==='application/dicom'?'🩻':'🖼️')+'</span>';
+    var thumb=isImg(a.mime)&&S.attachments?'<img data-att="'+a.id+'" alt="" loading="lazy">':'<span class="aicon" aria-hidden="true">'+ico(a.mime==='application/pdf'?'file':a.mime==='application/dicom'?'xray':'image')+'</span>';
     return '<span class="att"><button class="attb" data-action="att-open" data-id="'+a.id+'" data-mime="'+esc(a.mime)+'" title="'+(a.mime==='application/dicom'||a.mime==='image/heic'?'Descargar':'Ver')+' '+esc(a.name)+'">'+thumb+'<span class="aname">'+esc(a.name)+'</span></button>'+
-      (isAdmin()?'<button class="link bad attx" data-action="att-del" data-id="'+a.id+'" aria-label="Quitar archivo '+esc(a.name)+'">✕</button>':'')+'</span>';
+      (isAdmin()?'<button class="link bad attx" data-action="att-del" data-id="'+a.id+'" aria-label="Quitar archivo '+esc(a.name)+'">'+ico('x')+'</button>':'')+'</span>';
   }).join('')+'</div>';
 }
 // Miniaturas: se piden con una URL firmada (vence a los 10 minutos); se guarda para no repetir el pedido.
@@ -593,14 +617,14 @@ function stockHTML(){
     // Una droga de vacuna no se vende suelta: se descuenta al aplicar la vacuna.
     var vac=vaccineOfDrug(x.id);
     var sellBtn=vac?'<button class="link" disabled title="Droga de la vacuna “'+esc(vac.name)+'”: se descuenta al aplicarla, no se vende suelta">Vender</button>':'<button class="link" data-action="sell" data-id="'+x.id+'">Vender</button>';
-    var acts=sellBtn+(admin?'<details class="rowmenu"><summary aria-label="Más acciones de '+esc(x.name)+'" title="Más acciones">⋮</summary><div class="menu">'+
+    var acts=sellBtn+(admin?'<details class="rowmenu"><summary aria-label="Más acciones de '+esc(x.name)+'" title="Más acciones">'+ico('more')+'</summary><div class="menu">'+
       '<button class="link" data-action="stock-adjust" data-id="'+x.id+'">Ajustar stock</button><button class="link" data-action="stock-history" data-id="'+x.id+'">Historial</button><button class="link" data-action="edit-product" data-id="'+x.id+'">Editar</button><button class="link bad" data-action="del-product" data-id="'+x.id+'">Eliminar</button></div></details>':'');
     // Etiqueta siempre visible (sin pasar el mouse): esta droga se descuenta al aplicar la vacuna y no se vende suelta.
-    var vacNote=vac?'<br><span class="chip info drugtag" title="Se descuenta al aplicar la vacuna “'+esc(vac.name)+'”; no se vende suelta">🔒 Droga de vacuna</span>':'';
+    var vacNote=vac?'<br><span class="chip info drugtag" title="Se descuenta al aplicar la vacuna “'+esc(vac.name)+'”; no se vende suelta">'+ico('lock')+' Droga de vacuna</span>':'';
     var units=Math.max(x.stock,0),val=x.cost!=null?units*x.cost:null;
     if(admin){totCost+=val||0;totSale+=units*x.price;}
     var margin=x.cost!=null&&x.price>0?Math.round((x.price-x.cost)/x.price*1000)/10:null;
-    var mCell=margin==null?'—':'<span class="'+(x.price<x.cost?'negtxt':'')+'"'+(x.price<x.cost?' title="El precio de venta es menor que el costo"':'')+'>'+(x.price<x.cost?'⚠ ':'')+String(margin).replace('.',',')+'%</span>';
+    var mCell=margin==null?'—':'<span class="'+(x.price<x.cost?'negtxt':'')+'"'+(x.price<x.cost?' title="El precio de venta es menor que el costo"':'')+'>'+(x.price<x.cost?ico('alert')+' ':'')+String(margin).replace('.',',')+'%</span>';
     var costCells=admin?'<td class="num col2">'+(x.cost!=null?money(x.cost):'—')+'</td><td class="num col2">'+mCell+'</td><td class="num col2">'+(val!=null?money(val):'—')+'</td>':'';
     return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small>'+(x.barcode?'<br><small class="bc" title="Código de barras">▮ '+esc(x.barcode)+'</small>':'')+vacNote+'</td><td>'+stockCell+'</td><td class="num">'+x.min+'</td><td>'+chip+'</td><td class="num">'+money(x.price)+'</td>'+costCells+'<td class="act">'+acts+'</td></tr>';
   }).join('');
@@ -608,8 +632,8 @@ function stockHTML(){
   var empty=S.products.length?'No hay productos en esta categoría.':'Todavía no cargaste productos. '+(admin?'Empezá con “Nuevo producto”.':'Pedile al administrador que los cargue.');
   var foot=admin&&L.length?'<tfoot><tr><td colspan="'+cols+'"><b>Stock valorizado:</b> '+money(totCost)+' a costo / '+money(totSale)+' a precio de venta</td></tr></tfoot>':'';
   return '<div class="toolbar">'+segHTML('cat',[['all','Todos']].concat(PROD_CATS.map(function(c){return [c,c];})),ui.cat)+
-    '<span class="scanbtns"><button class="btn" data-action="scan-sell" title="Leer el código de barras de un producto para venderlo">📷 Vender con escáner</button>'+
-      (admin?'<button class="btn" data-action="scan-stock" title="Leer el código de barras para ingresar stock o cargar un producto nuevo">📷 Ingresar con escáner</button>':'')+'</span>'+
+    '<span class="scanbtns"><button class="btn" data-action="scan-sell" title="Leer el código de barras de un producto para venderlo">'+ico('camera')+' Vender con escáner</button>'+
+      (admin?'<button class="btn" data-action="scan-stock" title="Leer el código de barras para ingresar stock o cargar un producto nuevo">'+ico('camera')+' Ingresar con escáner</button>':'')+'</span>'+
     (admin?'<button class="btn primary" data-action="new-product">Nuevo producto</button>':'')+'</div>'+
     '<input id="stq" type="search" placeholder="Buscar producto (o leer un código con un lector USB y Enter)" value="'+esc(ui.stq)+'" aria-label="Buscar producto" style="margin-bottom:1rem">'+
     '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Stock</th><th class="num">Mínimo</th><th>Estado</th><th class="num">Precio de venta</th>'+(admin?'<th class="num col2">Costo unit.</th><th class="num col2">Margen</th><th class="num col2">Valor en stock</th>':'')+'<th></th></tr></thead><tbody>'+
@@ -626,7 +650,7 @@ function cajaHTML(){
   }).join('');
   var mes=new Date().toLocaleDateString('es-AR',{month:'long'});
   var pm=PAY.map(function(m){return '<div class="bk"><span>'+m+'</span><b>'+money(sm.month.byMethod[m]||0)+'</b></div>';}).join('');
-  return '<div class="cashbox"><div class="panel"><h3>Efectivo que debería haber en caja</h3><div class="big'+(sm.drawer<0?' neg':'')+'">'+(sm.drawer<0?'<span aria-hidden="true">⚠️ </span>':'')+money(sm.drawer)+'</div>'+(sm.drawer<0?'<p class="negnote">La caja da negativa: revisá si algún egreso en efectivo se pagó con otro fondo.</p>':'')+''+
+  return '<div class="cashbox"><div class="panel"><h3>Efectivo que debería haber en caja</h3><div class="stat-num'+(sm.drawer<0?' neg':'')+'">'+(sm.drawer<0?ico('alert')+' ':'')+money(sm.drawer)+'</div>'+(sm.drawer<0?'<p class="negnote">La caja da negativa: revisá si algún egreso en efectivo se pagó con otro fondo.</p>':'')+''+
     '<p>Ingresos menos egresos en efectivo, desde el primer registro. Hoy entró '+money(sm.todayCash.in)+' y salió '+money(sm.todayCash.out)+' en efectivo. Si sacás plata de la caja, registrala como egreso en efectivo (categoría “Retiro de caja”).</p></div>'+
     '<div class="panel"><h3>Ingresos de '+mes+' por forma de pago</h3><div class="bk-list">'+pm+'</div></div></div>'+
     // Acciones (exportar / registrar) separadas de los filtros; los filtros van en un panel colapsable.
@@ -656,7 +680,7 @@ function preciosHTML(){
       (s.items||[]).forEach(function(it){var pr=prodById(it.productId);if(pr&&pr.cost!=null){costSum+=pr.cost*it.qty;costKnown=true;}});
       var below=costKnown&&s.price<costSum;
       var noDrug=s.category==='Vacunas'&&!linked;
-      return '<tr><td><b>'+esc(s.name)+'</b>'+(noDrug?'<br><small class="negtxt">⚠ Sin droga asignada: no se puede aplicar. Editala y elegí la droga del stock.</small>':'')+(below?'<br><small class="negtxt">⚠ El precio ('+money(s.price)+') es menor que el costo de los productos que descuenta ('+money(costSum)+')</small>':'')+(linked?'<br><small>Descuenta: '+esc(linked.name)+'</small>':'')+((s.items||[]).length?'<br><small>Descuenta al cobrar: '+s.items.map(function(it){var pr=prodById(it.productId);return (pr?esc(pr.name):'producto eliminado')+' ×'+it.qty;}).join(', ')+'</small>':'')+'</td><td class="num">'+money(s.price)+'</td><td class="act">'+
+      return '<tr><td><b>'+esc(s.name)+'</b>'+(noDrug?'<br><small class="negtxt">'+ico('alert')+' Sin droga asignada: no se puede aplicar. Editala y elegí la droga del stock.</small>':'')+(below?'<br><small class="negtxt">'+ico('alert')+' El precio ('+money(s.price)+') es menor que el costo de los productos que descuenta ('+money(costSum)+')</small>':'')+(linked?'<br><small>Descuenta: '+esc(linked.name)+'</small>':'')+((s.items||[]).length?'<br><small>Descuenta al cobrar: '+s.items.map(function(it){var pr=prodById(it.productId);return (pr?esc(pr.name):'producto eliminado')+' ×'+it.qty;}).join(', ')+'</small>':'')+'</td><td class="num">'+money(s.price)+'</td><td class="act">'+
         (admin?'<button class="link" data-action="edit-service" data-id="'+s.id+'">Editar</button><button class="link bad" data-action="del-service" data-id="'+s.id+'">Eliminar</button>':'')+'</td></tr>';
     }).join('')+'</tbody></table></div></div>';
   }).join('');
@@ -723,7 +747,7 @@ function clientListHTML(){
   var L=filteredClients();
   if(!L.length)return '<li class="empty">'+(S.clients.length?'No hay clientes con esa búsqueda.':'Todavía no hay clientes. Se crean al cargar una mascota o con “Nuevo cliente”.')+'</li>';
   return L.map(function(c){
-    return '<li><button class="pitem" data-action="select-client" data-id="'+c.id+'" aria-current="'+(c.id===ui.csel)+'"><span class="avatar" aria-hidden="true">👤</span>'+
+    return '<li><button class="pitem" data-action="select-client" data-id="'+c.id+'" aria-current="'+(c.id===ui.csel)+'"><span class="avatar" aria-hidden="true">'+ico('user')+'</span>'+
       '<span class="pi-main"><b>'+esc(c.name)+'</b><small>'+plural(c.pets.length,'mascota','mascotas')+(c.phone?' · '+esc(c.phone):'')+'</small></span></button></li>';
   }).join('');
 }
@@ -733,14 +757,14 @@ function clientDetailHTML(c){
   contact.push(c.phone?'Tel. <a href="'+(tel?'tel:'+tel:'#')+'">'+esc(c.phone)+'</a>':'<span class="mut">Sin teléfono</span>');
   contact.push(c.email?'<a href="mailto:'+esc(c.email)+'">'+esc(c.email)+'</a>':'<span class="mut">Sin email</span>');
   var pets=c.pets.length?'<div class="petlist">'+c.pets.map(function(p){
-    return '<button class="petrow" data-action="open-patient" data-id="'+p.id+'" title="Abrir la historia clínica de '+esc(p.name)+'"><span class="avatar" aria-hidden="true">'+(p.species==='Gato'?'🐱':'🐶')+'</span>'+
+    return '<button class="petrow" data-action="open-patient" data-id="'+p.id+'" title="Abrir la historia clínica de '+esc(p.name)+'"><span class="avatar" aria-hidden="true">'+petIco(p.species)+'</span>'+
       '<span class="pi-main"><b>'+esc(p.name)+'</b><small>'+(p.hc?'HC N° '+String(p.hc).padStart(4,'0')+' · ':'')+esc(p.breed||p.species)+'</small></span><span class="chev" aria-hidden="true">›</span></button>';
   }).join('')+'</div>':'<p class="empty">Este cliente todavía no tiene mascotas asignadas.</p>';
   var pay=c.payments.length?'<div class="tbl-wrap"><table class="tbl slim"><thead><tr><th>Fecha</th><th>Mascota</th><th>Concepto</th><th>Forma de pago</th><th class="num">Monto</th></tr></thead><tbody>'+c.payments.map(function(x){
     return '<tr><td>'+fmtDate(x.date)+'</td><td><button class="link" data-action="open-patient" data-id="'+x.patientId+'">'+esc(x.patient)+'</button></td><td>'+esc(x.concept)+'</td><td>'+esc(x.method||'—')+'</td><td class="num">'+money(x.amount)+'</td></tr>';
   }).join('')+'</tbody><tfoot><tr><td colspan="5"><b>Total pagado por todas sus mascotas:</b> '+money(c.totalPaid)+'</td></tr></tfoot></table></div>':'<p class="empty">Todavía no se cobró nada a las mascotas de este cliente.</p>';
   return '<button class="btn back" data-action="back-client">Volver a la lista</button>'+
-    '<header class="phead"><div class="avatar big" aria-hidden="true">👤</div><div class="info"><h2>'+esc(c.name)+'</h2>'+
+    '<header class="phead"><div class="avatar avatar--lg" aria-hidden="true">'+ico('user')+'</div><div class="info"><h2>'+esc(c.name)+'</h2>'+
     '<p class="meta">'+contact.join(' · ')+'</p><p class="meta">'+(c.address?esc(c.address):'<span class="mut">Sin dirección</span>')+'</p></div>'+
     '<div class="pactions"><button class="btn primary" data-action="add-pet">Agregar mascota</button><button class="btn" data-action="edit-client">Editar datos</button>'+
     (isAdmin()?'<button class="btn danger-o" data-action="del-client">Eliminar</button>':'')+'</div></header>'+
@@ -1010,7 +1034,7 @@ function render(){
    ============================================================ */
 // Opciones de cliente (dueño) para una mascota: uno existente o uno nuevo, que se carga en el mismo formulario.
 function clientOpts(){
-  return [['','Elegí un cliente…']].concat(S.clients.map(function(c){return [c.id,c.name+(c.phone?' · '+c.phone:'')];})).concat([['new','➕ Nuevo cliente…']]);
+  return [['','Elegí un cliente…']].concat(S.clients.map(function(c){return [c.id,c.name+(c.phone?' · '+c.phone:'')];})).concat([['new','+ Nuevo cliente…']]);
 }
 function patientForm(p,presetClient){
   var isNew=!p;p=p||{species:'Perro',sex:'Macho',neutered:false};
@@ -1226,7 +1250,7 @@ function chargeForm(p){
     (prods.length?'<optgroup label="Productos">'+prods.map(function(x){return '<option value="p'+x.id+'">'+esc(x.name)+' — '+money(x.price)+' (stock: '+x.stock+')</option>';}).join('')+'</optgroup>':'');
   var lineHTML='<div class="cline"><select class="l-item" aria-label="Servicio o producto">'+itemOpts+'</select>'+
     '<input class="l-qty" type="number" min="1" step="1" value="1" aria-label="Cantidad" disabled><input class="l-price" type="number" min="0" step="0.01" aria-label="Precio unitario">'+
-    '<span class="l-sub num"></span><button type="button" class="link bad l-del" aria-label="Quitar línea">✕</button></div>';
+    '<span class="l-sub num"></span><button type="button" class="link bad l-del" aria-label="Quitar línea">'+ico('x')+'</button></div>';
   var f=openForm({title:'Cobrar a '+esc(p.name),
     body:'<div class="cline head"><span>Servicio o producto</span><span>Cant.</span><span>Precio</span><span>Subtotal</span><span></span></div><div id="lines"></div>'+
       '<button type="button" class="btn" id="addline">+ Agregar línea</button>'+
@@ -1437,7 +1461,7 @@ function productForm(x,preset){
   // Botón de cámara junto al campo del código de barras.
   var bcIn=pf.querySelector('[name="barcode"]'),row=document.createElement('div');row.className='withbtn';
   bcIn.parentNode.insertBefore(row,bcIn);row.appendChild(bcIn);
-  var sb=document.createElement('button');sb.type='button';sb.className='btn';sb.textContent='📷 Escanear';row.appendChild(sb);
+  var sb=document.createElement('button');sb.type='button';sb.className='btn';sb.innerHTML=ico('camera')+' Escanear';row.appendChild(sb);
   sb.addEventListener('click',async function(){
     var code=await openScanner('Escanear el código del producto');
     if(!code)return;
@@ -1513,7 +1537,7 @@ function serviceForm(s){
   var allOpts=[['','Elegí un producto…']].concat(S.products.map(function(x){return [x.id,x.name+' (stock: '+x.stock+')'];}));
   var itemRow=function(it){
     return '<div class="sline"><select class="si-prod" aria-label="Producto">'+allOpts.map(function(o){return '<option value="'+o[0]+'"'+(String(o[0])===String(it.productId||'')?' selected':'')+'>'+esc(o[1])+'</option>';}).join('')+'</select>'+
-      '<input class="si-qty" type="number" min="1" step="1" value="'+(it.qty||1)+'" aria-label="Cantidad"><button type="button" class="link bad si-del" aria-label="Quitar producto">✕</button></div>';
+      '<input class="si-qty" type="number" min="1" step="1" value="'+(it.qty||1)+'" aria-label="Cantidad"><button type="button" class="link bad si-del" aria-label="Quitar producto">'+ico('x')+'</button></div>';
   };
   var sf=openForm({title:isNew?'Nuevo precio':'Editar precio',
     body:'<div class="fields">'+fld('Servicio','name',{value:s.name,req:true,full:true,ph:'Ej.: Consulta general'})+fld('Categoría','category',{opts:SERV_CATS,value:s.category})+fld('Precio','price',{type:'number',min:0,step:'0.01',value:s.price,req:true})+
@@ -1798,7 +1822,7 @@ function restoreConfirm(label,copyCounts,curCounts,doRestore){
   openForm({title:'Restaurar copia',danger:empty,submit:'Restaurar',
     body:'<p>Vas a reemplazar los datos actuales ('+esc(countsText(curCounts))+') por esta copia ('+esc(countsText(copyCounts))+').</p>'+
       '<p><small>Copia: '+esc(label)+'. Antes se guarda una copia de los datos de ahora. Los usuarios no cambian.</small></p>'+
-      (empty?'<p class="warnbox"><b>⚠️ Esta copia está vacía, restaurarla borra todo</b></p><label class="fld check"><input type="checkbox" name="understand" required><span>Entiendo que se borran todos los datos actuales</span></label>':''),
+      (empty?'<p class="warnbox"><b>'+ico('alert')+' Esta copia está vacía, restaurarla borra todo</b></p><label class="fld check"><input type="checkbox" name="understand" required><span>Entiendo que se borran todos los datos actuales</span></label>':''),
     onSubmit:function(){return doRestore(empty);}});
 }
 async function restoreFileForm(data,label){
