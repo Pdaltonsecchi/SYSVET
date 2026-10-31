@@ -114,10 +114,39 @@ async function api(path,opts){
   if(!res.ok){
     var err=new Error((data&&data.error)||'Ocurrió un error inesperado ('+res.status+')');
     err.status=res.status;
+    // Sesión vencida con un formulario abierto: se pide la contraseña encima del formulario y se reintenta,
+    // así no se pierde lo cargado. Sin formulario abierto, se vuelve a la pantalla de ingreso como siempre.
+    if(res.status===401&&path!=='/login'&&S.user&&dlg.open&&!opts.retried&&(await reauth()))return api(path,Object.assign({},opts,{retried:true}));
     if(res.status===401&&path!=='/login'&&S.user){S.user=null;showLogin('Tu sesión venció. Volvé a ingresar.');}
     throw err;
   }
   return data;
+}
+// Ventana para volver a ingresar sin cerrar el formulario abierto. Devuelve true si se ingresó con el mismo usuario.
+var reauthing=null;
+function reauth(){
+  if(reauthing)return reauthing;
+  reauthing=new Promise(function(resolve){
+    var d=document.createElement('dialog'),ok=false;
+    d.innerHTML='<form class="dform"><h2>Tu sesión venció</h2><p>Volvé a escribir tu contraseña para guardar. Lo que estabas cargando sigue ahí.</p>'+
+      '<label class="fld"><span>Email</span><input type="email" value="'+esc(S.user.email||'')+'" readonly autocomplete="username"></label>'+
+      '<label class="fld"><span>Contraseña</span><input type="password" name="password" required autocomplete="current-password"></label>'+
+      '<p class="err" role="alert"></p><div class="actions"><button type="button" class="btn ghost" data-x="no">Cancelar</button><button type="submit" class="btn primary">Ingresar y guardar</button></div></form>';
+    document.body.appendChild(d);
+    var f=d.querySelector('form'),err=d.querySelector('.err');
+    f.addEventListener('submit',async function(e){
+      e.preventDefault();var btn=f.querySelector('[type="submit"]');btn.disabled=true;err.textContent='';
+      try{
+        var r=await api('/login',{body:{email:S.user.email,password:f.querySelector('[name="password"]').value}});
+        if(r.user&&r.user.id===S.user.id){ok=true;d.close();}else err.textContent='Ese no es el usuario que tenía la sesión abierta.';
+      }catch(ex){err.textContent=ex.message;}
+      btn.disabled=false;
+    });
+    d.querySelector('[data-x="no"]').addEventListener('click',function(){d.close();});
+    d.addEventListener('close',function(){d.remove();reauthing=null;resolve(ok);});
+    d.showModal();
+  });
+  return reauthing;
 }
 
 function setState(s){document.body.dataset.state=s;}
