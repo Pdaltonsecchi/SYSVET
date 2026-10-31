@@ -633,7 +633,10 @@ body[data-stale] #app,body[data-stale] dialog{pointer-events:none;opacity:.55}
   .stk button{width:2.75rem;height:2.75rem}
   .rowmenu summary{min-width:2.75rem;min-height:2.75rem}
   .link{min-height:2.75rem;padding:.45rem .6rem;display:inline-flex;align-items:center}
-  .namebtn{min-height:0;padding:0;display:inline}
+  .namebtn{padding:0;text-align:left}
+  /* Campos de texto, fecha, hora y listas, y los enlaces de contacto (teléfono, email) a 44 px */
+  input:not([type=checkbox]):not([type=radio]):not([type=file]),select{min-height:2.75rem}
+  .meta a{display:inline-flex;align-items:center;min-height:2.75rem}
   .ownerlink{min-height:2.75rem;padding:0;display:inline-flex;align-items:center}
   .cal-add,.attx,.l-del,.si-del,.hdel{min-width:2.75rem;min-height:2.75rem;display:inline-grid;place-items:center}
   .cal-chip,.cal-more{min-height:2.75rem;font-size:.85rem}
