@@ -125,6 +125,8 @@ Si algún día cambian los archivos, subilos al repositorio de GitHub y Render v
 - Probarlo en una computadora: copiar `.env.example` como `.env`, cargar las variables, usar `DATABASE_SSL=false` si la base es local y ejecutar `npm start`.
 - Las sesiones son cookies firmadas (HttpOnly, SameSite=Strict, Secure en producción). Las contraseñas usan scrypt.
 - Los movimientos de stock y de caja son registros individuales; el stock de cada producto se actualiza en la misma transacción.
+- **Cierre de caja:** en *Farmacia y caja → Ingresos y egresos*, al final del día tocá **Cerrar caja**, escribí el efectivo contado y el sistema muestra si cuadra, falta o sobra. Si querés, registra la diferencia como ingreso o egreso en efectivo para que la caja quede igual a lo contado. Los cierres quedan en un historial y viajan en las copias de seguridad.
+- Los montos y pesos se pueden escribir con coma o con punto: `1500,75`, `1.500,75` y `1500.75` valen lo mismo.
 
 ---
 

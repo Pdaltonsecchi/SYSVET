@@ -230,11 +230,11 @@ async function downloadFile(path,name){
 }
 // Rango "Desde – Hasta" (inputs de fecha): HTML común a Caja y Reportes.
 var rangeHTML=function(idFrom,idTo,from,to){
-  return '<span class="rng"><label>Desde <input type="date" id="'+idFrom+'" value="'+esc(from)+'" max="'+todayIso()+'" style="width:auto"></label> <label>Hasta <input type="date" id="'+idTo+'" value="'+esc(to)+'" style="width:auto"></label></span>';
+  return '<span class="rng"><label>Desde <input type="date" id="'+idFrom+'" value="'+esc(from)+'" max="'+todayIso()+'" class="w-auto"></label> <label>Hasta <input type="date" id="'+idTo+'" value="'+esc(to)+'" class="w-auto"></label></span>';
 };
 async function loadCash(){
-  var r=await Promise.all([api('/cash?'+cashQuery()),api('/cash/summary')]);
-  ui.cash=r[0];S.summary=r[1];
+  var r=await Promise.all([api('/cash?'+cashQuery()),api('/cash/summary'),api('/cash/closings')]);
+  ui.cash=r[0];S.summary=r[1];ui.closings=r[2];
 }
 async function loadReports(){
   var rq=ui.rfrom&&ui.rto?'from='+ui.rfrom+'&to='+ui.rto:'days='+ui.rep;
@@ -734,7 +734,8 @@ function cajaHTML(){
   var mes=new Date().toLocaleDateString('es-AR',{month:'long'});
   var pm=PAY.map(function(m){return '<div class="bk"><span>'+m+'</span><b>'+money(sm.month.byMethod[m]||0)+'</b></div>';}).join('');
   return '<div class="cashbox"><div class="panel"><h3>Efectivo que debería haber en caja</h3><div class="stat-num'+(sm.drawer<0?' neg':'')+'">'+(sm.drawer<0?ico('alert')+' ':'')+money(sm.drawer)+'</div>'+(sm.drawer<0?'<p class="negnote">La caja da negativa: revisá si algún egreso en efectivo se pagó con otro fondo.</p>':'')+''+
-    '<p>Ingresos menos egresos en efectivo, desde el primer registro. Hoy entró '+money(sm.todayCash.in)+' y salió '+money(sm.todayCash.out)+' en efectivo. Si sacás plata de la caja, registrala como egreso en efectivo (categoría “Retiro de caja”).</p></div>'+
+    '<p>Ingresos menos egresos en efectivo, desde el primer registro. Hoy entró '+money(sm.todayCash.in)+' y salió '+money(sm.todayCash.out)+' en efectivo. Si sacás plata de la caja, registrala como egreso en efectivo (categoría “Retiro de caja”).</p>'+
+    '<div class="btns"><button class="btn" data-action="cash-close">Cerrar caja</button></div></div>'+
     '<div class="panel"><h3>Ingresos de '+mes+' por forma de pago</h3><div class="bk-list">'+pm+'</div></div></div>'+
     // Acciones (exportar / registrar) separadas de los filtros; los filtros van en un panel colapsable.
     '<div class="cashactions"><button class="btn" data-action="cash-export">Exportar CSV</button><span class="grow"></span><button class="btn" data-action="cash-out">Registrar egreso</button><button class="btn primary" data-action="cash-in">Registrar ingreso</button></div>'+
@@ -745,9 +746,36 @@ function cajaHTML(){
       '<div class="frow"><span class="flabel">Buscar</span><input id="cq" type="search" placeholder="Concepto, categoría o forma de pago" value="'+esc(ui.cq)+'" aria-label="Buscar movimiento"></div>'+
       (nf?'<div class="frow"><button class="link" data-action="cash-clear-filters">Quitar todos los filtros</button></div>':'')+
     '</div></details>'+
-    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Concepto</th><th>Categoría</th><th>Forma de pago</th><th class="num">Monto</th><th></th></tr></thead><tbody>'+
-    (rows||'<tr><td colspan="6" class="empty">No hay movimientos en este período.</td></tr>')+'</tbody></table></div>'+
-    (ui.cash.limited?'<p class="empty">Se muestran los últimos 500 movimientos. Elegí un período más corto para ver el resto.</p>':'');
+    (rows?'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Concepto</th><th>Categoría</th><th>Forma de pago</th><th class="num">Monto</th><th></th></tr></thead><tbody>'+
+    rows+'</tbody></table></div>':'<p class="empty">No hay movimientos en este período.</p>')+
+    (ui.cash.limited?'<p class="empty">Se muestran los últimos 500 movimientos. Elegí un período más corto para ver el resto.</p>':'')+
+    closingsHTML();
+}
+// Historial de cierres de caja: esperado, contado y diferencia (en verde si cuadra, en rojo si falta, en ámbar si sobra).
+function closingsHTML(){
+  var L=(ui.closings&&ui.closings.items)||[];
+  var body=L.length?'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th class="num">Esperado</th><th class="num">Contado</th><th>Diferencia</th><th>Cerró</th><th></th></tr></thead><tbody>'+L.map(function(c){
+    var d=c.difference,chip=d===0?'<span class="chip ok">Cuadra</span>':'<span class="chip '+(d<0?'bad':'warn')+'">'+(d<0?'Faltan ':'Sobran ')+money(Math.abs(d))+'</span>';
+    return '<tr><td>'+fmtTs(c.closedAt)+(c.note?'<br><small>'+esc(c.note)+'</small>':'')+'</td><td class="num">'+money(c.expected)+'</td><td class="num">'+money(c.counted)+'</td><td>'+chip+(c.adjusted?'<br><small>Registrada en caja</small>':'')+'</td><td>'+esc(c.closedBy)+'</td>'+
+      '<td class="act"><button class="link bad" data-action="del-closing" data-id="'+c.id+'">Eliminar</button></td></tr>';
+  }).join('')+'</tbody></table></div>':'<p class="empty">Todavía no cerraste la caja. Al final del día, contá el efectivo y tocá “Cerrar caja”.</p>';
+  return '<section class="repsec"><h2>Cierres de caja</h2>'+body+'</section>';
+}
+function cashCloseForm(){
+  var exp=ui.closings?ui.closings.expected:(S.summary?S.summary.drawer:0);
+  var f=openForm({title:'Cerrar caja',submit:'Cerrar caja',
+    body:'<p>Contá el efectivo que hay en la caja y escribilo. Según los movimientos, debería haber <b>'+money(exp)+'</b>.</p>'+
+      '<div class="fields">'+fld('Efectivo contado','counted',{type:'number',min:0,step:'0.01',req:true,full:true})+fld('Nota (opcional)','note',{type:'textarea',full:true,ph:'Ej.: faltan $500 de un vuelto mal dado'})+
+      fld('Registrar la diferencia como ingreso o egreso en efectivo, para que la caja quede igual a lo contado','adjust',{type:'checkbox',value:true,full:true})+'</div>'+
+      '<p class="preview" id="cc-diff"></p>',
+    onSubmit:async function(d){
+      var r=await api('/cash/closings',{body:{counted:d.counted,note:d.note,adjust:!!d.adjust}});
+      await loadCash();render();toast(r.difference===0?'Caja cerrada: cuadra':'Caja cerrada: '+(r.difference<0?'faltan ':'sobran ')+money(Math.abs(r.difference)));
+    }});
+  var inp=f.querySelector('[name="counted"]'),out=f.querySelector('#cc-diff');
+  var sync=function(){var n=parseDec(inp.value);if(inp.value.trim()===''||isNaN(n)){out.textContent='';return;}var d=Math.round((n-exp)*100)/100;
+    out.textContent=d===0?'Cuadra con lo esperado.':(d<0?'Faltan ':'Sobran ')+money(Math.abs(d))+'.';out.className='preview '+(d===0?'in':'out');};
+  inp.addEventListener('input',sync);
 }
 function preciosHTML(){
   var admin=isAdmin();
@@ -2165,6 +2193,13 @@ var actions={
     });
   },
   'cfg-tab':function(id,b){ui.cfgTab=b.dataset.v;return refreshView();},
+  'cash-close':async function(){if(!ui.closings)ui.closings=await api('/cash/closings');cashCloseForm();},
+  'del-closing':function(id){
+    var c=((ui.closings&&ui.closings.items)||[]).find(function(x){return String(x.id)===String(id);});if(!c)return;
+    confirmForm('Eliminar cierre de caja','Se borra el cierre del '+fmtTs(c.closedAt)+(c.adjusted?' y el ingreso o egreso que registró la diferencia':'')+'.','Eliminar',async function(){
+      await api('/cash/closings/'+id,{method:'DELETE'});await loadCash();render();toast('Cierre eliminado');
+    });
+  },
   'config-save':async function(id,btn){
     var label=btn.textContent;btn.classList.add('busy');btn.textContent='Guardando…';
     try{await saveConfig();}finally{btn.classList.remove('busy');btn.textContent=label;}
