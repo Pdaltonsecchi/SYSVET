@@ -264,6 +264,43 @@ async function go(view){
 /* ============================================================
    Ventanas de formulario
    ============================================================ */
+// Número escrito como en Argentina o como en inglés: "1500,75", "1.500,75", "1500.75" y "1,500.75" dan 1500.75;
+// "1.500" da 1500 (punto de miles). Si es ambiguo o no es un número, devuelve NaN. Igual que parseDec del servidor.
+function parseDec(s){
+  s=String(s==null?'':s).trim().replace(/[\s$]/g,'');
+  if(!/^-?[\d.,]+$/.test(s)||!/\d/.test(s))return NaN;
+  var neg=s[0]==='-';if(neg)s=s.slice(1);
+  var thousands=function(parts){return parts[0]!==''&&parts.slice(1).every(function(g){return g.length===3;});};
+  var hasC=s.indexOf(',')>=0,hasD=s.indexOf('.')>=0;
+  if(hasC&&hasD){
+    var i=Math.max(s.lastIndexOf(','),s.lastIndexOf('.')),dec=s[i],th=dec===','?'.':',',int=s.slice(0,i),frac=s.slice(i+1);
+    if(int.indexOf(dec)>=0||!/^\d+$/.test(frac)||!thousands(int.split(th)))return NaN;
+    s=int.split(th).join('')+'.'+frac;
+  }else if(hasC||hasD){
+    var sep=hasC?',':'.',parts=s.split(sep);
+    if(parts.length>2){if(!thousands(parts))return NaN;s=parts.join('');}
+    else if(sep==='.'&&parts[1].length===3&&/^[1-9]\d{0,2}$/.test(parts[0]))s=parts.join('');
+    else s=(parts[0]||'0')+'.'+parts[1];
+  }
+  var n=Number(s);return neg?-n:n;
+}
+// 1500.75 → "1500,75" para mostrar en un campo editable.
+var decText=function(n){return String(n).replace('.',',');};
+// Valida los campos de montos y pesos de un formulario y deja el valor normalizado ("1500.75") en data.
+function checkDecimals(f,data){
+  var bad=null;
+  f.querySelectorAll('[data-dec]').forEach(function(el){
+    if(bad||el.disabled)return;
+    var v=el.value.trim(),lab=el.closest('label'),name=lab&&lab.querySelector('span')?lab.querySelector('span').textContent.replace(/\s*\(.*$/,'').replace(/\s*\*$/,''):'Número';
+    el.removeAttribute('aria-invalid');
+    if(v===''){if(el.name)data[el.name]='';return;}
+    var n=parseDec(v),min=el.dataset.min!=null?Number(el.dataset.min):null,max=el.dataset.max!=null?Number(el.dataset.max):null;
+    var msg=isNaN(n)?name+': escribí un número, por ejemplo 1500,50.':min!=null&&n<min?name+': tiene que ser '+decText(min)+' o más.':max!=null&&n>max?name+': tiene que ser '+decText(max)+' o menos.':'';
+    if(msg){el.setAttribute('aria-invalid','true');bad={el:el,msg:msg};return;}
+    if(el.name)data[el.name]=String(n);
+  });
+  return bad;
+}
 function fld(label,name,o){
   o=o||{};
   var value=o.value==null?'':o.value,ctl;
@@ -276,6 +313,11 @@ function fld(label,name,o){
     ctl='<textarea name="'+name+'" rows="3" placeholder="'+esc(o.ph||'')+'">'+esc(value)+'</textarea>';
   }else if(o.type==='checkbox'){
     return '<label class="fld check'+(o.full?' full':'')+'"><input type="checkbox" name="'+name+'"'+(value?' checked':'')+'><span>'+label+'</span></label>';
+  }else if(o.type==='number'&&o.step&&String(o.step).indexOf('.')>=0){
+    // Montos y pesos: campo de texto que acepta coma o punto ("1500,75", "1.500,75", "1500.75"). El tipo "number"
+    // del navegador descartaba la coma y "1500,75" se guardaba como 150075. Se valida y normaliza al enviar.
+    ctl='<input name="'+name+'" type="text" inputmode="decimal" data-dec="1"'+(o.min!=null?' data-min="'+o.min+'"':'')+(o.max!=null?' data-max="'+o.max+'"':'')+
+      ' value="'+esc(value===''?'':decText(value))+'"'+(o.req?' required':'')+' placeholder="'+esc(o.ph||'')+'" autocomplete="off">';
   }else{
     ctl='<input name="'+name+'" type="'+(o.type||'text')+'" value="'+esc(value)+'"'+(o.req?' required':'')+' placeholder="'+esc(o.ph||'')+'"'+
       (o.maxlength?' maxlength="'+o.maxlength+'"':'')+(o.inputmode?' inputmode="'+o.inputmode+'"':'')+(o.step?' step="'+o.step+'"':'')+(o.minlength?' minlength="'+o.minlength+'"':'')+(o.pattern?' pattern="'+o.pattern+'" title="'+esc(o.title||'')+'"':'')+(o.min!=null?' min="'+o.min+'"':'')+(o.max!=null?' max="'+o.max+'"':'')+(o.list?' list="'+o.list+'"':'')+
@@ -299,6 +341,8 @@ function openForm(o){
     if(f.dataset.busy)return; // F10: nunca se envía dos veces
     var btn=f.querySelector('[type="submit"]'),errEl=f.querySelector('.err'),data={},label=btn.innerHTML;
     new FormData(f).forEach(function(v,k){data[k]=v;});
+    var decErr=checkDecimals(f,data);
+    if(decErr){errEl.textContent=decErr.msg;decErr.el.focus();return;}
     errEl.textContent='';f.dataset.busy='1';btn.disabled=true;btn.classList.add('busy');btn.textContent='Guardando…';
     try{var r=await o.onSubmit(data,f);if(r!==false)dlg.close();}
     catch(err){errEl.textContent=err.message||'Ocurrió un error';}
@@ -1222,7 +1266,7 @@ function vaccineForm(p,v){
       nm.readOnly=!!s;
       if(s){
         nm.value=s.name;lastAuto=s.name;
-        f.querySelector('[name="chargeAmount"]').value=s.price;
+        f.querySelector('[name="chargeAmount"]').value=decText(s.price);
         sync();
       }else if(nm.value===lastAuto){nm.value='';lastAuto='';}
     });
@@ -1327,7 +1371,7 @@ function chargeForm(p){
     (svcs.length?'<optgroup label="Servicios">'+svcs.map(function(x){return '<option value="s'+x.id+'">'+esc(x.name)+' — '+money(x.price)+'</option>';}).join('')+'</optgroup>':'')+
     (prods.length?'<optgroup label="Productos">'+prods.map(function(x){return '<option value="p'+x.id+'">'+esc(x.name)+' — '+money(x.price)+' (stock: '+x.stock+')</option>';}).join('')+'</optgroup>':'');
   var lineHTML='<div class="cline"><select class="l-item" aria-label="Servicio o producto">'+itemOpts+'</select>'+
-    '<input class="l-qty" type="number" min="1" step="1" value="1" aria-label="Cantidad" disabled><input class="l-price" type="number" min="0" step="0.01" aria-label="Precio unitario">'+
+    '<input class="l-qty" type="number" min="1" step="1" value="1" aria-label="Cantidad" disabled><input class="l-price" type="text" inputmode="decimal" data-dec="1" data-min="0" aria-label="Precio unitario" autocomplete="off">'+
     '<span class="l-sub num"></span><button type="button" class="link bad l-del" aria-label="Quitar línea">'+ico('x')+'</button></div>';
   var f=openForm({title:'Cobrar a '+esc(p.name),
     body:'<div class="cline head"><span>Servicio o producto</span><span>Cant.</span><span>Precio</span><span>Subtotal</span><span></span></div><div id="lines"></div>'+
@@ -1341,7 +1385,7 @@ function chargeForm(p){
       var items=[];
       f.querySelectorAll('.cline:not(.head)').forEach(function(r){
         var v=r.querySelector('.l-item').value;if(!v)return;
-        items.push({type:v[0]==='s'?'service':'product',id:Number(v.slice(1)),qty:r.querySelector('.l-qty').value,price:r.querySelector('.l-price').value});
+        items.push({type:v[0]==='s'?'service':'product',id:Number(v.slice(1)),qty:r.querySelector('.l-qty').value,price:String(parseDec(r.querySelector('.l-price').value))});
       });
       if(!items.length)throw new Error('Agregá al menos un servicio o producto');
       var r=await api('/patients/'+p.id+'/charges',{body:{items:items,date:d.date,method:d.method,cash:!!d.cash,discount:d.dtype!=='none'&&d.dvalue!==''?{type:d.dtype,value:d.dvalue}:null}});
@@ -1351,10 +1395,10 @@ function chargeForm(p){
   var recalc=function(){
     var sub=0;
     linesEl.querySelectorAll('.cline').forEach(function(r){
-      var ok=!!r.querySelector('.l-item').value,q=Number(r.querySelector('.l-qty').value)||0,pr=Number(r.querySelector('.l-price').value)||0;
+      var ok=!!r.querySelector('.l-item').value,q=Number(r.querySelector('.l-qty').value)||0,pr=parseDec(r.querySelector('.l-price').value)||0;
       var t=ok?Math.round(q*pr*100)/100:0;sub+=t;r.querySelector('.l-sub').textContent=ok?money(t):'';
     });
-    var dt=f.querySelector('[name="dtype"]').value,dv=Number(f.querySelector('[name="dvalue"]').value)||0;
+    var dt=f.querySelector('[name="dtype"]').value,dv=parseDec(f.querySelector('[name="dvalue"]').value)||0;
     var disc=dt==='percent'?Math.round(sub*Math.min(dv,100))/100:dt==='amount'?Math.min(dv,sub):0;
     f.querySelector('#c-sub').textContent=money(sub);f.querySelector('#c-disc').textContent=disc?'− '+money(disc):'—';f.querySelector('#c-tot').textContent=money(Math.round((sub-disc)*100)/100);
     f.querySelector('[name="dvalue"]').disabled=dt==='none';
@@ -1365,8 +1409,8 @@ function chargeForm(p){
   f.addEventListener('change',function(e){
     if(e.target.classList.contains('l-item')){
       var r=e.target.closest('.cline'),v=e.target.value,q=r.querySelector('.l-qty');
-      if(v[0]==='s'){var sv=S.services.find(function(x){return x.id===Number(v.slice(1));});r.querySelector('.l-price').value=sv.price;q.value=1;q.disabled=true;q.removeAttribute('max');}
-      else if(v[0]==='p'){var pr=prodById(Number(v.slice(1)));r.querySelector('.l-price').value=pr.price;q.disabled=false;q.max=pr.stock;}
+      if(v[0]==='s'){var sv=S.services.find(function(x){return x.id===Number(v.slice(1));});r.querySelector('.l-price').value=decText(sv.price);q.value=1;q.disabled=true;q.removeAttribute('max');}
+      else if(v[0]==='p'){var pr=prodById(Number(v.slice(1)));r.querySelector('.l-price').value=decText(pr.price);q.disabled=false;q.max=pr.stock;}
       else{r.querySelector('.l-price').value='';q.disabled=true;}
     }
     recalc();
@@ -1401,7 +1445,7 @@ function bindTotalPreview(f,qtyName,priceName){
   f.querySelector('.fields').insertAdjacentElement('afterend',box);
   var q=f.querySelector('[name="'+qtyName+'"]'),u=f.querySelector('[name="'+priceName+'"]');
   var sync=function(){
-    var n=Number(q.value),pr=Number(u.value);
+    var n=Number(q.value),pr=u.dataset.dec?parseDec(u.value):Number(u.value);
     box.textContent=n>0&&pr>0?'Total: '+n+' × '+money(pr)+' = '+money(Math.round(n*pr*100)/100):'';
   };
   q.addEventListener('input',sync);u.addEventListener('input',sync);sync();
