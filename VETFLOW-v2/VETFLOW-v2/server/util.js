@@ -110,8 +110,38 @@ function reqTime(v, label) {
   if (typeof v !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(v)) throw bad('Hora inválida: ' + label);
   return v.length === 5 ? v + ':00' : v;
 }
+/**
+ * Número escrito como en Argentina o como en inglés: "1500,75", "1.500,75", "1500.75" y "1,500.75" dan 1500.75;
+ * "1.500" da 1500 (punto de miles). Si no se puede interpretar sin ambigüedad, devuelve NaN.
+ */
+function parseDec(s) {
+  s = String(s).trim().replace(/[\s$]/g, '');
+  if (!/^-?[\d.,]+$/.test(s) || !/\d/.test(s)) return NaN;
+  const neg = s[0] === '-';
+  if (neg) s = s.slice(1);
+  const thousands = (parts) => parts[0] !== '' && parts.slice(1).every((g) => g.length === 3);
+  const hasC = s.includes(','), hasD = s.includes('.');
+  if (hasC && hasD) {
+    // El último separador es el decimal; el otro, el de miles.
+    const i = Math.max(s.lastIndexOf(','), s.lastIndexOf('.'));
+    const dec = s[i], th = dec === ',' ? '.' : ',';
+    const int = s.slice(0, i), frac = s.slice(i + 1);
+    if (int.includes(dec) || !/^\d+$/.test(frac) || !thousands(int.split(th))) return NaN;
+    s = int.split(th).join('') + '.' + frac;
+  } else if (hasC || hasD) {
+    const sep = hasC ? ',' : '.';
+    const parts = s.split(sep);
+    if (parts.length > 2) {
+      if (!thousands(parts)) return NaN;
+      s = parts.join('');
+    } else if (sep === '.' && parts[1].length === 3 && /^[1-9]\d{0,2}$/.test(parts[0])) s = parts.join('');
+    else s = (parts[0] || '0') + '.' + parts[1];
+  }
+  const n = Number(s);
+  return neg ? -n : n;
+}
 function reqNum(v, label, min, max) {
-  const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
+  const n = typeof v === 'string' && v.trim() !== '' ? parseDec(v) : v;
   if (typeof n !== 'number' || !isFinite(n)) throw bad('Número inválido: ' + label);
   if (min != null && n < min) throw bad(label + ' no puede ser menor a ' + min);
   if (max != null && n > max) throw bad(label + ' es demasiado grande');
@@ -228,6 +258,6 @@ module.exports = {
   HttpError, bad, HANDLED,
   METHODS, SPECIES_OPTS, PROD_CATS, SERV_CATS, CASH_IN_CATS, CASH_OUT_CATS, ADJUST_REASONS, APPT_TYPES, APPT_DURATIONS, APPT_LABELS,
   TZ, todayAR, addDays, monthStart, monthEnd, round2,
-  reqStr, optStr, optPhone, optBarcode, reqDate, optDate, pastDate, optPastDate, reqTime, reqNum, reqInt, money, moneyPos, oneOf, optSpecies, idParam, checkEmail,
+  reqStr, optStr, optPhone, optBarcode, reqDate, optDate, pastDate, optPastDate, reqTime, parseDec, reqNum, reqInt, money, moneyPos, oneOf, optSpecies, idParam, checkEmail,
   sendJson, readBody, readRaw, parseCookies, clientIp,
 };

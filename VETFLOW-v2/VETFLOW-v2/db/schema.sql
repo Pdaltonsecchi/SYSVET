@@ -407,3 +407,19 @@ CREATE TABLE IF NOT EXISTS report_log (
   ok BOOLEAN NOT NULL,
   error TEXT NOT NULL DEFAULT ''
 );
+
+-- Cierres de caja: al final del día se cuenta el efectivo y se compara con lo que debería haber.
+-- "expected" es el efectivo esperado en ese momento; "difference" = contado − esperado. Si se registró la
+-- diferencia como ajuste, "adjustment_id" apunta al movimiento de caja creado (y se borra junto con el cierre).
+CREATE TABLE IF NOT EXISTS cash_closings (
+  id SERIAL PRIMARY KEY,
+  closed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  on_date DATE NOT NULL,
+  expected NUMERIC(12,2) NOT NULL,
+  counted NUMERIC(12,2) NOT NULL,
+  difference NUMERIC(12,2) NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  closed_by TEXT NOT NULL DEFAULT '',
+  adjustment_id INTEGER REFERENCES cash_movements(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS cash_closings_date_idx ON cash_closings(on_date);

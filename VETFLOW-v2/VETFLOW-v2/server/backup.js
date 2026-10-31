@@ -25,6 +25,7 @@ const TABLES = [
   ['appointments', ['id', 'patient_id', 'title', 'description', 'appointment_date', 'appointment_time', 'appointment_type', 'duration_min']],
   ['cash_movements', ['id', 'on_date', 'kind', 'concept', 'category', 'method', 'amount', 'stock_movement_id', 'supplier_id']],
   ['charges', ['id', 'patient_id', 'on_date', 'concept', 'amount', 'method', 'cash_id', 'line_type', 'deleted_at', 'cash_was']],
+  ['cash_closings', ['id', 'closed_at', 'on_date', 'expected', 'counted', 'difference', 'note', 'closed_by', 'adjustment_id']],
 ];
 
 const KEEP_AUTO = 14;
@@ -33,7 +34,7 @@ const KEEP_MANUAL = 20;
 // v2: tablas y columnas que no existían en la v1. Un backup exportado antes de la v2 no las
 // tiene: se tratan como "sin datos" (tabla vacía) o con este valor por defecto, en vez de
 // rechazar la restauración de una copia vieja.
-const NEW_TABLES = new Set(['suppliers', 'complementary_studies', 'appointments', 'service_items', 'weights', 'study_attachments', 'clients']);
+const NEW_TABLES = new Set(['suppliers', 'complementary_studies', 'appointments', 'service_items', 'weights', 'study_attachments', 'clients', 'cash_closings']);
 const COL_DEFAULTS = {
   stock_movements: { unit_price: 0, voided: false, note: '' },
   charges: { line_type: 'service', cash_was: false },

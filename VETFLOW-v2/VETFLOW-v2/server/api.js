@@ -1348,6 +1348,66 @@ add('DELETE', '/api/cash/:id', { admin: true }, async (ctx) => {
   return db.tx(async (c) => ({ ok: true, stockDelta: await deleteCash(c, id, ctx.user.id) }));
 });
 
+/* ---------- Cierre de caja ----------
+   Al final del día se cuenta el efectivo y se compara con lo que debería haber (ingresos menos egresos en
+   efectivo hasta hoy). Opcionalmente, la diferencia se registra como ingreso o egreso en efectivo para que la
+   caja quede igual a lo contado. */
+const mapClosing = (r) => ({
+  id: r.id,
+  closedAt: r.closed_at,
+  date: r.on_date,
+  expected: Number(r.expected),
+  counted: Number(r.counted),
+  difference: Number(r.difference),
+  note: r.note,
+  closedBy: r.closed_by,
+  adjusted: r.adjustment_id != null,
+});
+async function drawerNow(c) {
+  const r = await c.query(
+    "SELECT COALESCE(SUM(CASE WHEN kind = 'in' THEN amount ELSE -amount END), 0) AS total FROM cash_movements WHERE method = 'Efectivo' AND on_date <= $1",
+    [U.todayAR()]
+  );
+  return U.round2(Number(r.rows[0].total));
+}
+add('GET', '/api/cash/closings', { admin: true }, async () => {
+  const r = await db.query('SELECT * FROM cash_closings ORDER BY closed_at DESC, id DESC LIMIT 60');
+  return { items: r.rows.map(mapClosing), expected: await drawerNow(db) };
+});
+add('POST', '/api/cash/closings', { admin: true }, async (ctx) => {
+  const b = ctx.body;
+  const counted = U.money(b.counted, 'Efectivo contado');
+  const note = U.optStr(b.note, 300);
+  return db.tx(async (c) => {
+    const today = U.todayAR();
+    const expected = await drawerNow(c);
+    const difference = U.round2(counted - expected);
+    let adjustmentId = null;
+    if (b.adjust === true && difference !== 0) {
+      const m = await c.query(
+        'INSERT INTO cash_movements (on_date, kind, concept, category, method, amount, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+        [today, difference > 0 ? 'in' : 'out', (difference > 0 ? 'Sobrante' : 'Faltante') + ' del cierre de caja', 'Otros', 'Efectivo', Math.abs(difference), ctx.user.id]
+      );
+      adjustmentId = m.rows[0].id;
+    }
+    const r = await c.query(
+      'INSERT INTO cash_closings (on_date, expected, counted, difference, note, closed_by, adjustment_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+      [today, expected, counted, difference, note, ctx.user.name, adjustmentId]
+    );
+    return mapClosing(r.rows[0]);
+  });
+});
+// Borrar un cierre (por ejemplo, si se contó mal) borra también el ajuste de caja que generó.
+add('DELETE', '/api/cash/closings/:id', { admin: true }, async (ctx) => {
+  const id = U.idParam(ctx.params.id);
+  await db.tx(async (c) => {
+    const r = await c.query('DELETE FROM cash_closings WHERE id = $1 RETURNING adjustment_id', [id]);
+    if (!r.rows[0]) throw new HttpError(404, 'No se encontró el cierre de caja');
+    if (r.rows[0].adjustment_id) await c.query('DELETE FROM cash_movements WHERE id = $1', [r.rows[0].adjustment_id]);
+  });
+  return { ok: true };
+});
+
 /* ============================================================
    Reportes (solo administradores)
    ============================================================ */

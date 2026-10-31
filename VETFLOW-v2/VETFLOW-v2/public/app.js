@@ -114,10 +114,39 @@ async function api(path,opts){
   if(!res.ok){
     var err=new Error((data&&data.error)||'Ocurrió un error inesperado ('+res.status+')');
     err.status=res.status;
+    // Sesión vencida con un formulario abierto: se pide la contraseña encima del formulario y se reintenta,
+    // así no se pierde lo cargado. Sin formulario abierto, se vuelve a la pantalla de ingreso como siempre.
+    if(res.status===401&&path!=='/login'&&S.user&&dlg.open&&!opts.retried&&(await reauth()))return api(path,Object.assign({},opts,{retried:true}));
     if(res.status===401&&path!=='/login'&&S.user){S.user=null;showLogin('Tu sesión venció. Volvé a ingresar.');}
     throw err;
   }
   return data;
+}
+// Ventana para volver a ingresar sin cerrar el formulario abierto. Devuelve true si se ingresó con el mismo usuario.
+var reauthing=null;
+function reauth(){
+  if(reauthing)return reauthing;
+  reauthing=new Promise(function(resolve){
+    var d=document.createElement('dialog'),ok=false;
+    d.innerHTML='<form class="dform"><h2>Tu sesión venció</h2><p>Volvé a escribir tu contraseña para guardar. Lo que estabas cargando sigue ahí.</p>'+
+      '<label class="fld"><span>Email</span><input type="email" value="'+esc(S.user.email||'')+'" readonly autocomplete="username"></label>'+
+      '<label class="fld"><span>Contraseña</span><input type="password" name="password" required autocomplete="current-password"></label>'+
+      '<p class="err" role="alert"></p><div class="actions"><button type="button" class="btn ghost" data-x="no">Cancelar</button><button type="submit" class="btn primary">Ingresar y guardar</button></div></form>';
+    document.body.appendChild(d);
+    var f=d.querySelector('form'),err=d.querySelector('.err');
+    f.addEventListener('submit',async function(e){
+      e.preventDefault();var btn=f.querySelector('[type="submit"]');btn.disabled=true;err.textContent='';
+      try{
+        var r=await api('/login',{body:{email:S.user.email,password:f.querySelector('[name="password"]').value}});
+        if(r.user&&r.user.id===S.user.id){ok=true;d.close();}else err.textContent='Ese no es el usuario que tenía la sesión abierta.';
+      }catch(ex){err.textContent=ex.message;}
+      btn.disabled=false;
+    });
+    d.querySelector('[data-x="no"]').addEventListener('click',function(){d.close();});
+    d.addEventListener('close',function(){d.remove();reauthing=null;resolve(ok);});
+    d.showModal();
+  });
+  return reauthing;
 }
 
 function setState(s){document.body.dataset.state=s;}
@@ -230,11 +259,11 @@ async function downloadFile(path,name){
 }
 // Rango "Desde – Hasta" (inputs de fecha): HTML común a Caja y Reportes.
 var rangeHTML=function(idFrom,idTo,from,to){
-  return '<span class="rng"><label>Desde <input type="date" id="'+idFrom+'" value="'+esc(from)+'" max="'+todayIso()+'" style="width:auto"></label> <label>Hasta <input type="date" id="'+idTo+'" value="'+esc(to)+'" style="width:auto"></label></span>';
+  return '<span class="rng"><label>Desde <input type="date" id="'+idFrom+'" value="'+esc(from)+'" max="'+todayIso()+'" class="w-auto"></label> <label>Hasta <input type="date" id="'+idTo+'" value="'+esc(to)+'" class="w-auto"></label></span>';
 };
 async function loadCash(){
-  var r=await Promise.all([api('/cash?'+cashQuery()),api('/cash/summary')]);
-  ui.cash=r[0];S.summary=r[1];
+  var r=await Promise.all([api('/cash?'+cashQuery()),api('/cash/summary'),api('/cash/closings')]);
+  ui.cash=r[0];S.summary=r[1];ui.closings=r[2];
 }
 async function loadReports(){
   var rq=ui.rfrom&&ui.rto?'from='+ui.rfrom+'&to='+ui.rto:'days='+ui.rep;
@@ -264,6 +293,43 @@ async function go(view){
 /* ============================================================
    Ventanas de formulario
    ============================================================ */
+// Número escrito como en Argentina o como en inglés: "1500,75", "1.500,75", "1500.75" y "1,500.75" dan 1500.75;
+// "1.500" da 1500 (punto de miles). Si es ambiguo o no es un número, devuelve NaN. Igual que parseDec del servidor.
+function parseDec(s){
+  s=String(s==null?'':s).trim().replace(/[\s$]/g,'');
+  if(!/^-?[\d.,]+$/.test(s)||!/\d/.test(s))return NaN;
+  var neg=s[0]==='-';if(neg)s=s.slice(1);
+  var thousands=function(parts){return parts[0]!==''&&parts.slice(1).every(function(g){return g.length===3;});};
+  var hasC=s.indexOf(',')>=0,hasD=s.indexOf('.')>=0;
+  if(hasC&&hasD){
+    var i=Math.max(s.lastIndexOf(','),s.lastIndexOf('.')),dec=s[i],th=dec===','?'.':',',int=s.slice(0,i),frac=s.slice(i+1);
+    if(int.indexOf(dec)>=0||!/^\d+$/.test(frac)||!thousands(int.split(th)))return NaN;
+    s=int.split(th).join('')+'.'+frac;
+  }else if(hasC||hasD){
+    var sep=hasC?',':'.',parts=s.split(sep);
+    if(parts.length>2){if(!thousands(parts))return NaN;s=parts.join('');}
+    else if(sep==='.'&&parts[1].length===3&&/^[1-9]\d{0,2}$/.test(parts[0]))s=parts.join('');
+    else s=(parts[0]||'0')+'.'+parts[1];
+  }
+  var n=Number(s);return neg?-n:n;
+}
+// 1500.75 → "1500,75" para mostrar en un campo editable.
+var decText=function(n){return String(n).replace('.',',');};
+// Valida los campos de montos y pesos de un formulario y deja el valor normalizado ("1500.75") en data.
+function checkDecimals(f,data){
+  var bad=null;
+  f.querySelectorAll('[data-dec]').forEach(function(el){
+    if(bad||el.disabled)return;
+    var v=el.value.trim(),lab=el.closest('label'),name=lab&&lab.querySelector('span')?lab.querySelector('span').textContent.replace(/\s*\(.*$/,'').replace(/\s*\*$/,''):'Número';
+    el.removeAttribute('aria-invalid');
+    if(v===''){if(el.name)data[el.name]='';return;}
+    var n=parseDec(v),min=el.dataset.min!=null?Number(el.dataset.min):null,max=el.dataset.max!=null?Number(el.dataset.max):null;
+    var msg=isNaN(n)?name+': escribí un número, por ejemplo 1500,50.':min!=null&&n<min?name+': tiene que ser '+decText(min)+' o más.':max!=null&&n>max?name+': tiene que ser '+decText(max)+' o menos.':'';
+    if(msg){el.setAttribute('aria-invalid','true');bad={el:el,msg:msg};return;}
+    if(el.name)data[el.name]=String(n);
+  });
+  return bad;
+}
 function fld(label,name,o){
   o=o||{};
   var value=o.value==null?'':o.value,ctl;
@@ -276,6 +342,11 @@ function fld(label,name,o){
     ctl='<textarea name="'+name+'" rows="3" placeholder="'+esc(o.ph||'')+'">'+esc(value)+'</textarea>';
   }else if(o.type==='checkbox'){
     return '<label class="fld check'+(o.full?' full':'')+'"><input type="checkbox" name="'+name+'"'+(value?' checked':'')+'><span>'+label+'</span></label>';
+  }else if(o.type==='number'&&o.step&&String(o.step).indexOf('.')>=0){
+    // Montos y pesos: campo de texto que acepta coma o punto ("1500,75", "1.500,75", "1500.75"). El tipo "number"
+    // del navegador descartaba la coma y "1500,75" se guardaba como 150075. Se valida y normaliza al enviar.
+    ctl='<input name="'+name+'" type="text" inputmode="decimal" data-dec="1"'+(o.min!=null?' data-min="'+o.min+'"':'')+(o.max!=null?' data-max="'+o.max+'"':'')+
+      ' value="'+esc(value===''?'':decText(value))+'"'+(o.req?' required':'')+' placeholder="'+esc(o.ph||'')+'" autocomplete="off">';
   }else{
     ctl='<input name="'+name+'" type="'+(o.type||'text')+'" value="'+esc(value)+'"'+(o.req?' required':'')+' placeholder="'+esc(o.ph||'')+'"'+
       (o.maxlength?' maxlength="'+o.maxlength+'"':'')+(o.inputmode?' inputmode="'+o.inputmode+'"':'')+(o.step?' step="'+o.step+'"':'')+(o.minlength?' minlength="'+o.minlength+'"':'')+(o.pattern?' pattern="'+o.pattern+'" title="'+esc(o.title||'')+'"':'')+(o.min!=null?' min="'+o.min+'"':'')+(o.max!=null?' max="'+o.max+'"':'')+(o.list?' list="'+o.list+'"':'')+
@@ -299,6 +370,8 @@ function openForm(o){
     if(f.dataset.busy)return; // F10: nunca se envía dos veces
     var btn=f.querySelector('[type="submit"]'),errEl=f.querySelector('.err'),data={},label=btn.innerHTML;
     new FormData(f).forEach(function(v,k){data[k]=v;});
+    var decErr=checkDecimals(f,data);
+    if(decErr){errEl.textContent=decErr.msg;decErr.el.focus();return;}
     errEl.textContent='';f.dataset.busy='1';btn.disabled=true;btn.classList.add('busy');btn.textContent='Guardando…';
     try{var r=await o.onSubmit(data,f);if(r!==false)dlg.close();}
     catch(err){errEl.textContent=err.message||'Ocurrió un error';}
@@ -674,9 +747,9 @@ function stockHTML(){
     '<span class="scanbtns"><button class="btn" data-action="scan-sell" title="Leer el código de barras de un producto para venderlo">'+ico('camera')+' Vender con escáner</button>'+
       (admin?'<button class="btn" data-action="scan-stock" title="Leer el código de barras para ingresar stock o cargar un producto nuevo">'+ico('camera')+' Ingresar con escáner</button>':'')+'</span>'+
     (admin?'<button class="btn primary" data-action="new-product">Nuevo producto</button>':'')+'</div>'+
-    '<input id="stq" type="search" placeholder="Buscar producto (o leer un código con un lector USB y Enter)" value="'+esc(ui.stq)+'" aria-label="Buscar producto" style="margin-bottom:1rem">'+
-    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Stock</th><th class="num">Mínimo</th><th>Estado</th><th class="num">Precio de venta</th>'+(admin?'<th class="num col2">Costo unit.</th><th class="num col2">Margen</th><th class="num col2">Valor en stock</th>':'')+'<th></th></tr></thead><tbody>'+
-    (rows||'<tr><td colspan="'+cols+'" class="empty">'+empty+'</td></tr>')+'</tbody>'+foot+'</table></div>';
+    '<input id="stq" type="search" placeholder="Buscar producto (o leer un código con un lector USB y Enter)" value="'+esc(ui.stq)+'" aria-label="Buscar producto" class="mb-1">'+
+    (rows?'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Stock</th><th class="num">Mínimo</th><th>Estado</th><th class="num">Precio de venta</th>'+(admin?'<th class="num col2">Costo unit.</th><th class="num col2">Margen</th><th class="num col2">Valor en stock</th>':'')+'<th></th></tr></thead><tbody>'+
+    rows+'</tbody>'+foot+'</table></div>':'<p class="empty">'+empty+'</p>');
 }
 function cajaHTML(){
   if(!ui.cash||!S.summary)return '<p class="empty">Cargando…</p>';
@@ -690,7 +763,8 @@ function cajaHTML(){
   var mes=new Date().toLocaleDateString('es-AR',{month:'long'});
   var pm=PAY.map(function(m){return '<div class="bk"><span>'+m+'</span><b>'+money(sm.month.byMethod[m]||0)+'</b></div>';}).join('');
   return '<div class="cashbox"><div class="panel"><h3>Efectivo que debería haber en caja</h3><div class="stat-num'+(sm.drawer<0?' neg':'')+'">'+(sm.drawer<0?ico('alert')+' ':'')+money(sm.drawer)+'</div>'+(sm.drawer<0?'<p class="negnote">La caja da negativa: revisá si algún egreso en efectivo se pagó con otro fondo.</p>':'')+''+
-    '<p>Ingresos menos egresos en efectivo, desde el primer registro. Hoy entró '+money(sm.todayCash.in)+' y salió '+money(sm.todayCash.out)+' en efectivo. Si sacás plata de la caja, registrala como egreso en efectivo (categoría “Retiro de caja”).</p></div>'+
+    '<p>Ingresos menos egresos en efectivo, desde el primer registro. Hoy entró '+money(sm.todayCash.in)+' y salió '+money(sm.todayCash.out)+' en efectivo. Si sacás plata de la caja, registrala como egreso en efectivo (categoría “Retiro de caja”).</p>'+
+    '<div class="btns"><button class="btn" data-action="cash-close">Cerrar caja</button></div></div>'+
     '<div class="panel"><h3>Ingresos de '+mes+' por forma de pago</h3><div class="bk-list">'+pm+'</div></div></div>'+
     // Acciones (exportar / registrar) separadas de los filtros; los filtros van en un panel colapsable.
     '<div class="cashactions"><button class="btn" data-action="cash-export">Exportar CSV</button><span class="grow"></span><button class="btn" data-action="cash-out">Registrar egreso</button><button class="btn primary" data-action="cash-in">Registrar ingreso</button></div>'+
@@ -701,9 +775,36 @@ function cajaHTML(){
       '<div class="frow"><span class="flabel">Buscar</span><input id="cq" type="search" placeholder="Concepto, categoría o forma de pago" value="'+esc(ui.cq)+'" aria-label="Buscar movimiento"></div>'+
       (nf?'<div class="frow"><button class="link" data-action="cash-clear-filters">Quitar todos los filtros</button></div>':'')+
     '</div></details>'+
-    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Concepto</th><th>Categoría</th><th>Forma de pago</th><th class="num">Monto</th><th></th></tr></thead><tbody>'+
-    (rows||'<tr><td colspan="6" class="empty">No hay movimientos en este período.</td></tr>')+'</tbody></table></div>'+
-    (ui.cash.limited?'<p class="empty">Se muestran los últimos 500 movimientos. Elegí un período más corto para ver el resto.</p>':'');
+    (rows?'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Concepto</th><th>Categoría</th><th>Forma de pago</th><th class="num">Monto</th><th></th></tr></thead><tbody>'+
+    rows+'</tbody></table></div>':'<p class="empty">No hay movimientos en este período.</p>')+
+    (ui.cash.limited?'<p class="empty">Se muestran los últimos 500 movimientos. Elegí un período más corto para ver el resto.</p>':'')+
+    closingsHTML();
+}
+// Historial de cierres de caja: esperado, contado y diferencia (en verde si cuadra, en rojo si falta, en ámbar si sobra).
+function closingsHTML(){
+  var L=(ui.closings&&ui.closings.items)||[];
+  var body=L.length?'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th class="num">Esperado</th><th class="num">Contado</th><th>Diferencia</th><th>Cerró</th><th></th></tr></thead><tbody>'+L.map(function(c){
+    var d=c.difference,chip=d===0?'<span class="chip ok">Cuadra</span>':'<span class="chip '+(d<0?'bad':'warn')+'">'+(d<0?'Faltan ':'Sobran ')+money(Math.abs(d))+'</span>';
+    return '<tr><td>'+fmtTs(c.closedAt)+(c.note?'<br><small>'+esc(c.note)+'</small>':'')+'</td><td class="num">'+money(c.expected)+'</td><td class="num">'+money(c.counted)+'</td><td>'+chip+(c.adjusted?'<br><small>Registrada en caja</small>':'')+'</td><td>'+esc(c.closedBy)+'</td>'+
+      '<td class="act"><button class="link bad" data-action="del-closing" data-id="'+c.id+'">Eliminar</button></td></tr>';
+  }).join('')+'</tbody></table></div>':'<p class="empty">Todavía no cerraste la caja. Al final del día, contá el efectivo y tocá “Cerrar caja”.</p>';
+  return '<section class="repsec"><h2>Cierres de caja</h2>'+body+'</section>';
+}
+function cashCloseForm(){
+  var exp=ui.closings?ui.closings.expected:(S.summary?S.summary.drawer:0);
+  var f=openForm({title:'Cerrar caja',submit:'Cerrar caja',
+    body:'<p>Contá el efectivo que hay en la caja y escribilo. Según los movimientos, debería haber <b>'+money(exp)+'</b>.</p>'+
+      '<div class="fields">'+fld('Efectivo contado','counted',{type:'number',min:0,step:'0.01',req:true,full:true})+fld('Nota (opcional)','note',{type:'textarea',full:true,ph:'Ej.: faltan $500 de un vuelto mal dado'})+
+      fld('Registrar la diferencia como ingreso o egreso en efectivo, para que la caja quede igual a lo contado','adjust',{type:'checkbox',value:true,full:true})+'</div>'+
+      '<p class="preview" id="cc-diff"></p>',
+    onSubmit:async function(d){
+      var r=await api('/cash/closings',{body:{counted:d.counted,note:d.note,adjust:!!d.adjust}});
+      await loadCash();render();toast(r.difference===0?'Caja cerrada: cuadra':'Caja cerrada: '+(r.difference<0?'faltan ':'sobran ')+money(Math.abs(r.difference)));
+    }});
+  var inp=f.querySelector('[name="counted"]'),out=f.querySelector('#cc-diff');
+  var sync=function(){var n=parseDec(inp.value);if(inp.value.trim()===''||isNaN(n)){out.textContent='';return;}var d=Math.round((n-exp)*100)/100;
+    out.textContent=d===0?'Cuadra con lo esperado.':(d<0?'Faltan ':'Sobran ')+money(Math.abs(d))+'.';out.className='preview '+(d===0?'in':'out');};
+  inp.addEventListener('input',sync);
 }
 function preciosHTML(){
   var admin=isAdmin();
@@ -752,7 +853,7 @@ function viewReportes(){
   }).join('');
   var maxN=ui.rservices.length?ui.rservices[0].n:1;
   var svRows=ui.rservices.map(function(x){
-    return '<tr><td><b>'+esc(x.name)+'</b></td><td><div class="bars"><div class="bar" style="width:'+Math.max(4,Math.round(x.n/maxN*140))+'px"></div><span>'+x.n+'</span></div></td><td class="num">'+money(x.total)+'</td></tr>';
+    return '<tr><td><b>'+esc(x.name)+'</b></td><td><div class="bars"><div class="bar" data-w="'+Math.max(4,Math.round(x.n/maxN*140))+'px"></div><span>'+x.n+'</span></div></td><td class="num">'+money(x.total)+'</td></tr>';
   }).join('');
   var maxU=ui.rproducts.length&&ui.rproducts[0].units?ui.rproducts[0].units:1;
   var prRows=ui.rproducts.map(function(x){
@@ -761,14 +862,14 @@ function viewReportes(){
     else if(x.units===0)st='<span class="chip none">Sin movimiento</span>';
     else if(left<=15)st='<span class="chip warn">Alcanza para '+plural(left,'día','días')+'</span>';
     else st='Alcanza para ~'+left+' días';
-    return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small></td><td><div class="bars"><div class="bar" style="width:'+Math.max(4,Math.round(x.units/maxU*140))+'px"></div><span>'+x.units+'</span></div></td><td class="num">'+x.stock+'</td><td>'+st+'</td></tr>';
+    return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small></td><td><div class="bars"><div class="bar" data-w="'+Math.max(4,Math.round(x.units/maxU*140))+'px"></div><span>'+x.units+'</span></div></td><td class="num">'+x.stock+'</td><td>'+st+'</td></tr>';
   }).join('');
   return '<section class="farm"><div class="head"><h1>Reportes</h1></div>'+
-    '<div class="repsec"><h2>Ingresos por mes</h2><div class="legend"><span><i class="sw-in"></i>Ingresos</span><span><i class="sw-out"></i>Egresos</span></div>'+chartSVG(ui.rmonthly)+
-    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Mes</th><th class="num">Efectivo</th><th class="num">Transferencias</th><th class="num">Tarjetas</th><th class="num">Total ingresos</th><th class="num">Egresos</th><th class="num">Balance</th></tr></thead><tbody>'+mrows+'</tbody></table></div></div>'+
+    '<div class="repsec"><h2>Ingresos por mes</h2>'+(mrows?'<div class="legend"><span><i class="sw-in"></i>Ingresos</span><span><i class="sw-out"></i>Egresos</span></div>'+chartSVG(ui.rmonthly)+
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Mes</th><th class="num">Efectivo</th><th class="num">Transferencias</th><th class="num">Tarjetas</th><th class="num">Total ingresos</th><th class="num">Egresos</th><th class="num">Balance</th></tr></thead><tbody>'+mrows+'</tbody></table></div>':'<p class="empty">Todavía no hay ingresos ni egresos para mostrar.</p>')+'</div>'+
     '<div class="repsec"><div class="toolbar"><h2>Servicios y productos</h2>'+segHTML('rep',[['30','Últimos 30 días'],['90','Últimos 3 meses'],['365','Último año']],ui.rfrom&&ui.rto?'':ui.rep)+rangeHTML('rfrom','rto',ui.rfrom,ui.rto)+'<button class="btn" data-action="rep-export">Exportar CSV de movimientos</button></div>'+
-    '<div class="grp"><h3>Servicios más vendidos</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Servicio</th><th>Veces cobrado</th><th class="num">Total cobrado</th></tr></thead><tbody>'+(svRows||'<tr><td colspan="3" class="empty">No hay servicios cobrados en este período.</td></tr>')+'</tbody></table></div></div>'+
-    '<div class="grp"><h3>Productos que más rotan</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Unidades vendidas o usadas</th><th class="num">Stock actual</th><th>Cuánto dura el stock</th></tr></thead><tbody>'+(prRows||'<tr><td colspan="4" class="empty">Todavía no cargaste productos.</td></tr>')+'</tbody></table></div></div></div></section>';
+    '<div class="grp"><h3>Servicios más vendidos</h3>'+(svRows?'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Servicio</th><th>Veces cobrado</th><th class="num">Total cobrado</th></tr></thead><tbody>'+svRows+'</tbody></table></div>':'<p class="empty">No hay servicios cobrados en este período.</p>')+'</div>'+
+    '<div class="grp"><h3>Productos que más rotan</h3>'+(prRows?'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Unidades vendidas o usadas</th><th class="num">Stock actual</th><th>Cuánto dura el stock</th></tr></thead><tbody>'+prRows+'</tbody></table></div>':'<p class="empty">Todavía no hay productos vendidos ni usados en este período.</p>')+'</div></div></section>';
 }
 
 /* ============================================================
@@ -852,8 +953,8 @@ function trashBody(){
       '<button class="link bad" data-action="trash-purge" data-kind="'+x.kind+'" data-id="'+x.id+'">Eliminar definitivamente</button></td></tr>';
   }).join('');
   return '<div class="cfg-tabacts">'+'<p class="empty">Lo que se borra de la historia clínica queda acá '+t.days+' días y se puede restaurar. Pasado ese plazo solo se puede eliminar definitivamente. Si lo borrado había devuelto stock, al restaurarlo se vuelve a descontar (si no alcanza el stock, se restaura igual y te avisamos).</p>'+(t.expiredCount?'<button class="btn danger-o" data-action="trash-purge-expired">Eliminar definitivamente los vencidos ('+t.expiredCount+')</button>':'')+'</div>'+
-    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Tipo</th><th>Elemento</th><th>Paciente</th><th>Borrado</th><th>Plazo</th><th></th></tr></thead><tbody>'+
-    (rows||'<tr><td colspan="6" class="empty">La papelera está vacía.</td></tr>')+'</tbody></table></div>';
+    (rows?'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Tipo</th><th>Elemento</th><th>Paciente</th><th>Borrado</th><th>Plazo</th><th></th></tr></thead><tbody>'+
+    rows+'</tbody></table></div>':'<p class="empty">La papelera está vacía.</p>');
 }
 
 /* ============================================================
@@ -866,7 +967,7 @@ function attachmentsPanel(){
   if(u&&u.configured){
     var pct=Math.min(100,Math.round(u.bytes/u.limit*100));
     meter='<p><b>Adjuntos: '+fmtBytes(u.bytes)+' de '+fmtBytes(u.limit)+'</b> <small>('+plural(u.count,'archivo','archivos')+')</small></p>'+
-      '<div class="meter'+(pct>=80?' hot':'')+'" role="img" aria-label="'+pct+'% del espacio usado"><i style="width:'+Math.max(pct,u.bytes?1:0)+'%"></i></div>'+
+      '<div class="meter'+(pct>=80?' hot':'')+'" role="img" aria-label="'+pct+'% del espacio usado"><i data-w="'+Math.max(pct,u.bytes?1:0)+'%"></i></div>'+
       (pct>=80?'<p class="warnbox">Queda poco espacio para adjuntos. Revisá los archivos pesados o ampliá el plan de Supabase.</p>':'');
   }else meter='<p class="empty">Los adjuntos todavía no están activados en el servidor.</p>';
   return '<section class="sec"><h3>Archivos adjuntos de los estudios</h3>'+meter+
@@ -883,7 +984,7 @@ function backupsBody(){
   }).join(''):'<p class="empty">Todavía no hay copias guardadas.</p>';
   return '<p class="warnbox">El sistema guarda solo una copia por día dentro de la misma base de datos (te sirve si borrás algo por error), pero <b>si se perdiera la base, esas copias también se pierden</b>. Descargá un archivo a tu computadora o a un pendrive, por lo menos una vez por semana.'+
     (d===null?' Todavía no descargaste ninguno desde esta computadora.':' La última descarga desde esta computadora fue hace '+plural(d,'día','días')+'.')+'</p>'+
-    '<div class="cashbox" style="margin-top:1rem"><div class="panel"><h3>Copia automática diaria</h3><p>'+(lastAuto?'Última copia automática: '+fmtTs(lastAuto.createdAt)+'.':'Todavía no se hizo ninguna.')+' Se hace sola una vez por día y se conservan las últimas 14.</p></div>'+
+    '<div class="cashbox mt-1"><div class="panel"><h3>Copia automática diaria</h3><p>'+(lastAuto?'Última copia automática: '+fmtTs(lastAuto.createdAt)+'.':'Todavía no se hizo ninguna.')+' Se hace sola una vez por día y se conservan las últimas 14.</p></div>'+
     '<div class="panel"><h3>Archivo y copias manuales</h3><div class="filerow"><button class="btn primary" data-action="backup-download">Descargar copia a mi computadora</button><button class="btn" data-action="backup-now">Crear copia ahora</button><button class="btn" data-action="pick-file">Cargar desde archivo</button><input id="bfile" type="file" accept=".json,application/json" hidden></div></div></div>'+
     attachmentsPanel()+
     '<section class="sec"><h3>Copias guardadas en el sistema</h3><div class="bk-list">'+rows+'</div></section>';
@@ -918,8 +1019,8 @@ function viewProveedores(){
   if(!ui.suppliers)return '<section class="farm"><div class="head"><h1>Proveedores</h1></div><p class="empty">Cargando…</p></section>';
   var admin=isAdmin();
   return '<section class="farm"><div class="head"><h1>Proveedores</h1>'+(admin?'<button class="btn primary" data-action="new-supplier">Agregar proveedor</button>':'')+'</div>'+
-    '<input id="sq" type="search" placeholder="Buscar por nombre, teléfono, email o descripción" value="'+esc(ui.sq)+'" aria-label="Buscar proveedor" style="margin-bottom:1rem">'+
-    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Proveedor</th><th>Teléfono</th><th>Email</th>'+(admin?'<th></th>':'')+'</tr></thead><tbody id="srows">'+supplierRows()+'</tbody></table></div></section>';
+    '<input id="sq" type="search" placeholder="Buscar por nombre, teléfono, email o descripción" value="'+esc(ui.sq)+'" aria-label="Buscar proveedor" class="mb-1">'+
+    (ui.suppliers.length?'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Proveedor</th><th>Teléfono</th><th>Email</th>'+(admin?'<th></th>':'')+'</tr></thead><tbody id="srows">'+supplierRows()+'</tbody></table></div>':'<p class="empty">Todavía no cargaste proveedores.'+(admin?' Empezá con “Agregar proveedor”.':'')+'</p>')+'</section>';
 }
 
 /* ============================================================
@@ -935,7 +1036,7 @@ function calDayColumn(iso){
   var d=parse(iso),isToday=iso===todayIso();
   // E3: en la vista Semana el alto del bloque refleja la duración del turno.
   var blocks=list.map(function(a){
-    var h=ui.cal.view==='week'?' style="min-height:'+Math.round(Math.min(Math.max(38,a.duration*0.9),180))+'px"':'';
+    var h=ui.cal.view==='week'?' data-mh="'+Math.round(Math.min(Math.max(38,a.duration*0.9),180))+'px"':'';
     return '<button class="appt '+a.type+'"'+h+' data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'<small>'+esc(a.title)+'</small></button>';
   }).join('');
   return '<div class="cal-day'+(isToday?' today':'')+'"><div class="cal-day-head"><span>'+WEEKDAYS[(d.getDay()+6)%7]+'</span><b>'+d.getDate()+'</b>'+
@@ -997,6 +1098,8 @@ function viewCalendario(){
     while(d<=r[1]){cells+=calDayColumn(d);d=shiftDays(1,d);}
     body='<div class="cal-week fit">'+cells+'</div>';
   }
+  // Sin turnos en el rango visible: se dice en una línea, arriba de la grilla (la vista Día ya trae su propio mensaje).
+  if(ui.cal.view!=='day'&&!ui.appts.length)body='<p class="empty cal-empty">No hay turnos en estas fechas. Tocá + en un día o “Agregar turno”.</p>'+body;
   return '<section class="farm"><div class="head"><h1>Calendario</h1><button class="btn primary" data-action="new-appt">Agregar turno</button></div>'+
     '<div class="cal-head"><div class="cal-nav"><button data-action="cal-prev" aria-label="Anterior">‹</button><button class="btn" data-action="cal-today" aria-label="'+CAL_NOW[ui.cal.view][1]+'">'+CAL_NOW[ui.cal.view][0]+'</button><button data-action="cal-next" aria-label="Siguiente">›</button></div>'+
     '<div class="cal-title">'+calTitle()+'</div>'+segHTML('cal-view',APPT_VIEWS,ui.cal.view)+'</div>'+
@@ -1222,7 +1325,7 @@ function vaccineForm(p,v){
       nm.readOnly=!!s;
       if(s){
         nm.value=s.name;lastAuto=s.name;
-        f.querySelector('[name="chargeAmount"]').value=s.price;
+        f.querySelector('[name="chargeAmount"]').value=decText(s.price);
         sync();
       }else if(nm.value===lastAuto){nm.value='';lastAuto='';}
     });
@@ -1327,12 +1430,12 @@ function chargeForm(p){
     (svcs.length?'<optgroup label="Servicios">'+svcs.map(function(x){return '<option value="s'+x.id+'">'+esc(x.name)+' — '+money(x.price)+'</option>';}).join('')+'</optgroup>':'')+
     (prods.length?'<optgroup label="Productos">'+prods.map(function(x){return '<option value="p'+x.id+'">'+esc(x.name)+' — '+money(x.price)+' (stock: '+x.stock+')</option>';}).join('')+'</optgroup>':'');
   var lineHTML='<div class="cline"><select class="l-item" aria-label="Servicio o producto">'+itemOpts+'</select>'+
-    '<input class="l-qty" type="number" min="1" step="1" value="1" aria-label="Cantidad" disabled><input class="l-price" type="number" min="0" step="0.01" aria-label="Precio unitario">'+
+    '<input class="l-qty" type="number" min="1" step="1" value="1" aria-label="Cantidad" disabled><input class="l-price" type="text" inputmode="decimal" data-dec="1" data-min="0" aria-label="Precio unitario" autocomplete="off">'+
     '<span class="l-sub num"></span><button type="button" class="link bad l-del" aria-label="Quitar línea">'+ico('x')+'</button></div>';
   var f=openForm({title:'Cobrar a '+esc(p.name),
     body:'<div class="cline head"><span>Servicio o producto</span><span>Cant.</span><span>Precio</span><span>Subtotal</span><span></span></div><div id="lines"></div>'+
       '<button type="button" class="btn" id="addline">+ Agregar línea</button>'+
-      '<div class="fields" style="margin-top:.8rem">'+fld('Descuento','dtype',{opts:[['none','Sin descuento'],['amount','Monto ($)'],['percent','Porcentaje (%)']],value:'none'})+fld('Valor del descuento','dvalue',{type:'number',min:0,step:'0.01'})+
+      '<div class="fields mt-08">'+fld('Descuento','dtype',{opts:[['none','Sin descuento'],['amount','Monto ($)'],['percent','Porcentaje (%)']],value:'none'})+fld('Valor del descuento','dvalue',{type:'number',min:0,step:'0.01'})+
       fld('Fecha','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+fld('Forma de pago','method',{opts:payMethods(),value:payMethods()[0]})+
       fld('Registrar como ingreso en caja','cash',{type:'checkbox',value:true,full:true})+'</div>'+
       '<div class="ctotals"><div><span>Subtotal</span><span id="c-sub"></span></div><div><span>Descuento</span><span id="c-disc"></span></div><div class="grand"><span>Total</span><span id="c-tot"></span></div></div>',
@@ -1341,7 +1444,7 @@ function chargeForm(p){
       var items=[];
       f.querySelectorAll('.cline:not(.head)').forEach(function(r){
         var v=r.querySelector('.l-item').value;if(!v)return;
-        items.push({type:v[0]==='s'?'service':'product',id:Number(v.slice(1)),qty:r.querySelector('.l-qty').value,price:r.querySelector('.l-price').value});
+        items.push({type:v[0]==='s'?'service':'product',id:Number(v.slice(1)),qty:r.querySelector('.l-qty').value,price:String(parseDec(r.querySelector('.l-price').value))});
       });
       if(!items.length)throw new Error('Agregá al menos un servicio o producto');
       var r=await api('/patients/'+p.id+'/charges',{body:{items:items,date:d.date,method:d.method,cash:!!d.cash,discount:d.dtype!=='none'&&d.dvalue!==''?{type:d.dtype,value:d.dvalue}:null}});
@@ -1351,10 +1454,10 @@ function chargeForm(p){
   var recalc=function(){
     var sub=0;
     linesEl.querySelectorAll('.cline').forEach(function(r){
-      var ok=!!r.querySelector('.l-item').value,q=Number(r.querySelector('.l-qty').value)||0,pr=Number(r.querySelector('.l-price').value)||0;
+      var ok=!!r.querySelector('.l-item').value,q=Number(r.querySelector('.l-qty').value)||0,pr=parseDec(r.querySelector('.l-price').value)||0;
       var t=ok?Math.round(q*pr*100)/100:0;sub+=t;r.querySelector('.l-sub').textContent=ok?money(t):'';
     });
-    var dt=f.querySelector('[name="dtype"]').value,dv=Number(f.querySelector('[name="dvalue"]').value)||0;
+    var dt=f.querySelector('[name="dtype"]').value,dv=parseDec(f.querySelector('[name="dvalue"]').value)||0;
     var disc=dt==='percent'?Math.round(sub*Math.min(dv,100))/100:dt==='amount'?Math.min(dv,sub):0;
     f.querySelector('#c-sub').textContent=money(sub);f.querySelector('#c-disc').textContent=disc?'− '+money(disc):'—';f.querySelector('#c-tot').textContent=money(Math.round((sub-disc)*100)/100);
     f.querySelector('[name="dvalue"]').disabled=dt==='none';
@@ -1365,8 +1468,8 @@ function chargeForm(p){
   f.addEventListener('change',function(e){
     if(e.target.classList.contains('l-item')){
       var r=e.target.closest('.cline'),v=e.target.value,q=r.querySelector('.l-qty');
-      if(v[0]==='s'){var sv=S.services.find(function(x){return x.id===Number(v.slice(1));});r.querySelector('.l-price').value=sv.price;q.value=1;q.disabled=true;q.removeAttribute('max');}
-      else if(v[0]==='p'){var pr=prodById(Number(v.slice(1)));r.querySelector('.l-price').value=pr.price;q.disabled=false;q.max=pr.stock;}
+      if(v[0]==='s'){var sv=S.services.find(function(x){return x.id===Number(v.slice(1));});r.querySelector('.l-price').value=decText(sv.price);q.value=1;q.disabled=true;q.removeAttribute('max');}
+      else if(v[0]==='p'){var pr=prodById(Number(v.slice(1)));r.querySelector('.l-price').value=decText(pr.price);q.disabled=false;q.max=pr.stock;}
       else{r.querySelector('.l-price').value='';q.disabled=true;}
     }
     recalc();
@@ -1401,7 +1504,7 @@ function bindTotalPreview(f,qtyName,priceName){
   f.querySelector('.fields').insertAdjacentElement('afterend',box);
   var q=f.querySelector('[name="'+qtyName+'"]'),u=f.querySelector('[name="'+priceName+'"]');
   var sync=function(){
-    var n=Number(q.value),pr=Number(u.value);
+    var n=Number(q.value),pr=u.dataset.dec?parseDec(u.value):Number(u.value);
     box.textContent=n>0&&pr>0?'Total: '+n+' × '+money(pr)+' = '+money(Math.round(n*pr*100)/100):'';
   };
   q.addEventListener('input',sync);u.addEventListener('input',sync);sync();
@@ -1584,8 +1687,8 @@ function movementsDialog(x){
         '<td class="num">'+(m.unitPrice>0?money(m.unitPrice):'—')+'</td><td class="num">'+total+'</td></tr>';
     }).join('');
     var p=dlg.querySelector('p');
-    if(p)p.outerHTML='<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Motivo</th><th class="num">Cantidad</th><th class="num">Precio unitario</th><th class="num">Total</th></tr></thead><tbody>'+
-      (rows||'<tr><td colspan="5" class="empty">Todavía no hay movimientos.</td></tr>')+'</tbody></table></div>';
+    if(p)p.outerHTML=!rows?'<p class="empty">Todavía no hay movimientos.</p>':'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Motivo</th><th class="num">Cantidad</th><th class="num">Precio unitario</th><th class="num">Total</th></tr></thead><tbody>'+
+      rows+'</tbody></table></div>';
   }).catch(function(e){if(dlg.open)toast(e.message);});
 }
 function adjustForm(x){
@@ -1761,6 +1864,14 @@ function supplierDetail(id){
 var APPT_DEFAULT_MIN={consulta:20,vacuna:10,cirugia:120,otro:30};
 // Aviso NO bloqueante si el turno queda fuera del horario de atención de ese día (Configuración → Horario de atención).
 // Un día puede tener varias franjas: el turno tiene que entrar completo en alguna.
+// Aviso NO bloqueante si el turno queda en una fecha y hora que ya pasaron (por ejemplo, para anotar uno atrasado).
+async function confirmPast(body){
+  var now=new Date(),at=parse(body.date);at.setHours(toMin(body.time)/60|0,toMin(body.time)%60);
+  if(at>=now)return true;
+  var ch=await choiceDialog('Fecha pasada','<p>Ese turno es del '+fmtDate(body.date)+' a las '+body.time.slice(0,5)+' hs, que ya pasó. ¿Agendarlo igual?</p>',
+    [{label:'Cambiar la fecha',value:'no',cls:'ghost'},{label:'Agendar igual',value:'ok',cls:'primary'}]);
+  return ch==='ok';
+}
 async function confirmHours(body){
   var L=dayRanges(parse(body.date).getDay());
   var s0=toMin(body.time),e0=s0+Number(body.duration);
@@ -1796,6 +1907,8 @@ function appointmentForm(a,presetDate){
     submit:isNew?'Agregar turno':'Guardar cambios',
     onSubmit:async function(d){
       var body={patientId:Number(d.patientId),title:d.title,description:d.description,date:d.date,time:d.time,type:d.type,duration:Number(d.duration)};
+      // Fecha pasada: se avisa al crear el turno o al moverlo; no al corregir el título de uno que ya pasó.
+      if((isNew||body.date!==a.date||body.time!==String(a.time).slice(0,5))&&!(await confirmPast(body)))return false;
       if(!(await confirmHours(body)))return false;
       if(!(await confirmNoOverlap(body,isNew?null:a.id)))return false;
       if(isNew)await api('/appointments',{body:body});else await api('/appointments/'+a.id,{method:'PUT',body:body});
@@ -1857,7 +1970,7 @@ function userForm(u){
   var isNew=!u;u=u||{role:'staff',active:true};
   openForm({title:isNew?'Nuevo usuario':'Editar usuario',
     body:'<div class="fields">'+fld('Nombre','name',{value:u.name,req:true,full:true})+
-    (isNew?fld('Email (es el usuario para ingresar)','email',{type:'email',req:true,full:true,auto:'off'}):'<p class="full" style="grid-column:1/-1">'+esc(u.email)+'</p>')+
+    (isNew?fld('Email (es el usuario para ingresar)','email',{type:'email',req:true,full:true,auto:'off'}):'<p class="full span-all">'+esc(u.email)+'</p>')+
     fld('Rol','role',{opts:[['staff','Ayudante'],['admin','Administrador']],value:u.role})+
     fld(isNew?'Contraseña (mínimo 8 caracteres)':'Nueva contraseña (dejala vacía para no cambiarla)','password',{type:'password',req:isNew,minlength:8,auto:'new-password'})+
     (isNew?'':fld('Usuario activo','active',{type:'checkbox',value:u.active,full:true}))+'</div>',
@@ -2121,6 +2234,13 @@ var actions={
     });
   },
   'cfg-tab':function(id,b){ui.cfgTab=b.dataset.v;return refreshView();},
+  'cash-close':async function(){if(!ui.closings)ui.closings=await api('/cash/closings');cashCloseForm();},
+  'del-closing':function(id){
+    var c=((ui.closings&&ui.closings.items)||[]).find(function(x){return String(x.id)===String(id);});if(!c)return;
+    confirmForm('Eliminar cierre de caja','Se borra el cierre del '+fmtTs(c.closedAt)+(c.adjusted?' y el ingreso o egreso que registró la diferencia':'')+'.','Eliminar',async function(){
+      await api('/cash/closings/'+id,{method:'DELETE'});await loadCash();render();toast('Cierre eliminado');
+    });
+  },
   'config-save':async function(id,btn){
     var label=btn.textContent;btn.classList.add('busy');btn.textContent='Guardando…';
     try{await saveConfig();}finally{btn.classList.remove('busy');btn.textContent=label;}
@@ -2212,7 +2332,7 @@ document.addEventListener('input',function(e){
   }
   if(e.target.id==='stq'||e.target.id==='cq'){var id=e.target.id;ui[id]=e.target.value;render();var el=$('#'+id);if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length);}}
   if(e.target.id==='cliq'){ui.cliq=e.target.value;$('#clist').innerHTML=clientListHTML();}
-  if(e.target.id==='sq'){ui.sq=e.target.value;$('#srows').innerHTML=supplierRows();}
+  if(e.target.id==='sq'){ui.sq=e.target.value;var sr=$('#srows');if(sr)sr.innerHTML=supplierRows();}
 });
 document.addEventListener('change',function(e){
   // Configuración: abrir o cerrar un día del horario.
@@ -2294,6 +2414,8 @@ document.addEventListener('click',function(e){if(document.body.dataset.more&&e.t
    mostrar como tarjeta apilada sin scroll horizontal. En pantallas medianas, si la tabla igual no entra, se avisa
    que hay más columnas. Se aplica a todo lo que se dibuje (vistas, ventanas, filtros) con un MutationObserver. */
 function labelTables(root){
+  root.querySelectorAll('[data-w]').forEach(function(e){e.style.width=e.dataset.w;});
+  root.querySelectorAll('[data-mh]').forEach(function(e){e.style.minHeight=e.dataset.mh;});
   root.querySelectorAll('table.tbl').forEach(function(t){
     var hs=Array.prototype.map.call(t.querySelectorAll('thead th'),function(th){return th.textContent.trim();});
     t.querySelectorAll('tbody tr').forEach(function(tr){

@@ -541,6 +541,12 @@ body[data-stale] #app,body[data-stale] dialog{pointer-events:none;opacity:.55}
   .hrange select{flex:1 1 0;width:auto}
   .checkgrid{grid-template-columns:1fr}
 }
+/* Utilidades que reemplazan a los estilos en línea (la CSP no permite style="…") */
+.w-auto{width:auto}
+.mb-1{margin-bottom:1rem}
+.mt-1{margin-top:1rem}
+.mt-08{margin-top:.8rem}
+.span-all{grid-column:1/-1}
 .reqmark{color:var(--bad)}
 .fld .hint{font-weight:400}
 .fld [aria-invalid="true"]{border-color:var(--bad);outline-color:var(--bad)}
@@ -587,7 +593,7 @@ body[data-stale] #app,body[data-stale] dialog{pointer-events:none;opacity:.55}
 
   #toast{bottom:calc(4.6rem + env(safe-area-inset-bottom,0px))}
   /* En la lista de una columna el alto según la duración (pensado para la grilla) solo deja bloques vacíos */
-  .cal-week .appt[style]{min-height:0!important}
+  .cal-week .appt[data-mh]{min-height:0!important}
   .filerow .btn{flex:1 1 100%}
   .pac,.pac-list{min-height:0}
   .farm,.pac-detail{padding-bottom:1.5rem}
@@ -627,7 +633,10 @@ body[data-stale] #app,body[data-stale] dialog{pointer-events:none;opacity:.55}
   .stk button{width:2.75rem;height:2.75rem}
   .rowmenu summary{min-width:2.75rem;min-height:2.75rem}
   .link{min-height:2.75rem;padding:.45rem .6rem;display:inline-flex;align-items:center}
-  .namebtn{min-height:0;padding:0;display:inline}
+  .namebtn{padding:0;text-align:left}
+  /* Campos de texto, fecha, hora y listas, y los enlaces de contacto (teléfono, email) a 44 px */
+  input:not([type=checkbox]):not([type=radio]):not([type=file]),select{min-height:2.75rem}
+  .meta a{display:inline-flex;align-items:center;min-height:2.75rem}
   .ownerlink{min-height:2.75rem;padding:0;display:inline-flex;align-items:center}
   .cal-add,.attx,.l-del,.si-del,.hdel{min-width:2.75rem;min-height:2.75rem;display:inline-grid;place-items:center}
   .cal-chip,.cal-more{min-height:2.75rem;font-size:.85rem}
