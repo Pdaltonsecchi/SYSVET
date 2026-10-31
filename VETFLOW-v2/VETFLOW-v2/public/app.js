@@ -1835,6 +1835,14 @@ function supplierDetail(id){
 var APPT_DEFAULT_MIN={consulta:20,vacuna:10,cirugia:120,otro:30};
 // Aviso NO bloqueante si el turno queda fuera del horario de atención de ese día (Configuración → Horario de atención).
 // Un día puede tener varias franjas: el turno tiene que entrar completo en alguna.
+// Aviso NO bloqueante si el turno queda en una fecha y hora que ya pasaron (por ejemplo, para anotar uno atrasado).
+async function confirmPast(body){
+  var now=new Date(),at=parse(body.date);at.setHours(toMin(body.time)/60|0,toMin(body.time)%60);
+  if(at>=now)return true;
+  var ch=await choiceDialog('Fecha pasada','<p>Ese turno es del '+fmtDate(body.date)+' a las '+body.time.slice(0,5)+' hs, que ya pasó. ¿Agendarlo igual?</p>',
+    [{label:'Cambiar la fecha',value:'no',cls:'ghost'},{label:'Agendar igual',value:'ok',cls:'primary'}]);
+  return ch==='ok';
+}
 async function confirmHours(body){
   var L=dayRanges(parse(body.date).getDay());
   var s0=toMin(body.time),e0=s0+Number(body.duration);
@@ -1870,6 +1878,8 @@ function appointmentForm(a,presetDate){
     submit:isNew?'Agregar turno':'Guardar cambios',
     onSubmit:async function(d){
       var body={patientId:Number(d.patientId),title:d.title,description:d.description,date:d.date,time:d.time,type:d.type,duration:Number(d.duration)};
+      // Fecha pasada: se avisa al crear el turno o al moverlo; no al corregir el título de uno que ya pasó.
+      if((isNew||body.date!==a.date||body.time!==String(a.time).slice(0,5))&&!(await confirmPast(body)))return false;
       if(!(await confirmHours(body)))return false;
       if(!(await confirmNoOverlap(body,isNew?null:a.id)))return false;
       if(isNew)await api('/appointments',{body:body});else await api('/appointments/'+a.id,{method:'PUT',body:body});
