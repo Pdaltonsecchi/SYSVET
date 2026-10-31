@@ -54,9 +54,10 @@ function securityHeaders(res) {
   res.setHeader('Referrer-Policy', 'same-origin');
   // La cámara se habilita solo para esta misma página (lector de códigos de barras); micrófono y ubicación siguen bloqueados.
   res.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
+  // Sin 'unsafe-inline' en style-src: la app no usa style="…"; las medidas calculadas se aplican por JavaScript.
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+    "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; " +
       "font-src https://fonts.gstatic.com; img-src 'self' data:" + (STORAGE_ORIGIN ? ' ' + STORAGE_ORIGIN : '') + "; connect-src 'self'; " +
       "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
   );

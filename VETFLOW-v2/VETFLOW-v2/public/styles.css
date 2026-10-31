@@ -541,6 +541,12 @@ body[data-stale] #app,body[data-stale] dialog{pointer-events:none;opacity:.55}
   .hrange select{flex:1 1 0;width:auto}
   .checkgrid{grid-template-columns:1fr}
 }
+/* Utilidades que reemplazan a los estilos en línea (la CSP no permite style="…") */
+.w-auto{width:auto}
+.mb-1{margin-bottom:1rem}
+.mt-1{margin-top:1rem}
+.mt-08{margin-top:.8rem}
+.span-all{grid-column:1/-1}
 .reqmark{color:var(--bad)}
 .fld .hint{font-weight:400}
 .fld [aria-invalid="true"]{border-color:var(--bad);outline-color:var(--bad)}
@@ -587,7 +593,7 @@ body[data-stale] #app,body[data-stale] dialog{pointer-events:none;opacity:.55}
 
   #toast{bottom:calc(4.6rem + env(safe-area-inset-bottom,0px))}
   /* En la lista de una columna el alto según la duración (pensado para la grilla) solo deja bloques vacíos */
-  .cal-week .appt[style]{min-height:0!important}
+  .cal-week .appt[data-mh]{min-height:0!important}
   .filerow .btn{flex:1 1 100%}
   .pac,.pac-list{min-height:0}
   .farm,.pac-detail{padding-bottom:1.5rem}

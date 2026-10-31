@@ -718,9 +718,9 @@ function stockHTML(){
     '<span class="scanbtns"><button class="btn" data-action="scan-sell" title="Leer el código de barras de un producto para venderlo">'+ico('camera')+' Vender con escáner</button>'+
       (admin?'<button class="btn" data-action="scan-stock" title="Leer el código de barras para ingresar stock o cargar un producto nuevo">'+ico('camera')+' Ingresar con escáner</button>':'')+'</span>'+
     (admin?'<button class="btn primary" data-action="new-product">Nuevo producto</button>':'')+'</div>'+
-    '<input id="stq" type="search" placeholder="Buscar producto (o leer un código con un lector USB y Enter)" value="'+esc(ui.stq)+'" aria-label="Buscar producto" style="margin-bottom:1rem">'+
-    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Stock</th><th class="num">Mínimo</th><th>Estado</th><th class="num">Precio de venta</th>'+(admin?'<th class="num col2">Costo unit.</th><th class="num col2">Margen</th><th class="num col2">Valor en stock</th>':'')+'<th></th></tr></thead><tbody>'+
-    (rows||'<tr><td colspan="'+cols+'" class="empty">'+empty+'</td></tr>')+'</tbody>'+foot+'</table></div>';
+    '<input id="stq" type="search" placeholder="Buscar producto (o leer un código con un lector USB y Enter)" value="'+esc(ui.stq)+'" aria-label="Buscar producto" class="mb-1">'+
+    (rows?'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Stock</th><th class="num">Mínimo</th><th>Estado</th><th class="num">Precio de venta</th>'+(admin?'<th class="num col2">Costo unit.</th><th class="num col2">Margen</th><th class="num col2">Valor en stock</th>':'')+'<th></th></tr></thead><tbody>'+
+    rows+'</tbody>'+foot+'</table></div>':'<p class="empty">'+empty+'</p>');
 }
 function cajaHTML(){
   if(!ui.cash||!S.summary)return '<p class="empty">Cargando…</p>';
@@ -824,7 +824,7 @@ function viewReportes(){
   }).join('');
   var maxN=ui.rservices.length?ui.rservices[0].n:1;
   var svRows=ui.rservices.map(function(x){
-    return '<tr><td><b>'+esc(x.name)+'</b></td><td><div class="bars"><div class="bar" style="width:'+Math.max(4,Math.round(x.n/maxN*140))+'px"></div><span>'+x.n+'</span></div></td><td class="num">'+money(x.total)+'</td></tr>';
+    return '<tr><td><b>'+esc(x.name)+'</b></td><td><div class="bars"><div class="bar" data-w="'+Math.max(4,Math.round(x.n/maxN*140))+'px"></div><span>'+x.n+'</span></div></td><td class="num">'+money(x.total)+'</td></tr>';
   }).join('');
   var maxU=ui.rproducts.length&&ui.rproducts[0].units?ui.rproducts[0].units:1;
   var prRows=ui.rproducts.map(function(x){
@@ -833,14 +833,14 @@ function viewReportes(){
     else if(x.units===0)st='<span class="chip none">Sin movimiento</span>';
     else if(left<=15)st='<span class="chip warn">Alcanza para '+plural(left,'día','días')+'</span>';
     else st='Alcanza para ~'+left+' días';
-    return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small></td><td><div class="bars"><div class="bar" style="width:'+Math.max(4,Math.round(x.units/maxU*140))+'px"></div><span>'+x.units+'</span></div></td><td class="num">'+x.stock+'</td><td>'+st+'</td></tr>';
+    return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small></td><td><div class="bars"><div class="bar" data-w="'+Math.max(4,Math.round(x.units/maxU*140))+'px"></div><span>'+x.units+'</span></div></td><td class="num">'+x.stock+'</td><td>'+st+'</td></tr>';
   }).join('');
   return '<section class="farm"><div class="head"><h1>Reportes</h1></div>'+
-    '<div class="repsec"><h2>Ingresos por mes</h2><div class="legend"><span><i class="sw-in"></i>Ingresos</span><span><i class="sw-out"></i>Egresos</span></div>'+chartSVG(ui.rmonthly)+
-    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Mes</th><th class="num">Efectivo</th><th class="num">Transferencias</th><th class="num">Tarjetas</th><th class="num">Total ingresos</th><th class="num">Egresos</th><th class="num">Balance</th></tr></thead><tbody>'+mrows+'</tbody></table></div></div>'+
+    '<div class="repsec"><h2>Ingresos por mes</h2>'+(mrows?'<div class="legend"><span><i class="sw-in"></i>Ingresos</span><span><i class="sw-out"></i>Egresos</span></div>'+chartSVG(ui.rmonthly)+
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Mes</th><th class="num">Efectivo</th><th class="num">Transferencias</th><th class="num">Tarjetas</th><th class="num">Total ingresos</th><th class="num">Egresos</th><th class="num">Balance</th></tr></thead><tbody>'+mrows+'</tbody></table></div>':'<p class="empty">Todavía no hay ingresos ni egresos para mostrar.</p>')+'</div>'+
     '<div class="repsec"><div class="toolbar"><h2>Servicios y productos</h2>'+segHTML('rep',[['30','Últimos 30 días'],['90','Últimos 3 meses'],['365','Último año']],ui.rfrom&&ui.rto?'':ui.rep)+rangeHTML('rfrom','rto',ui.rfrom,ui.rto)+'<button class="btn" data-action="rep-export">Exportar CSV de movimientos</button></div>'+
-    '<div class="grp"><h3>Servicios más vendidos</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Servicio</th><th>Veces cobrado</th><th class="num">Total cobrado</th></tr></thead><tbody>'+(svRows||'<tr><td colspan="3" class="empty">No hay servicios cobrados en este período.</td></tr>')+'</tbody></table></div></div>'+
-    '<div class="grp"><h3>Productos que más rotan</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Unidades vendidas o usadas</th><th class="num">Stock actual</th><th>Cuánto dura el stock</th></tr></thead><tbody>'+(prRows||'<tr><td colspan="4" class="empty">Todavía no cargaste productos.</td></tr>')+'</tbody></table></div></div></div></section>';
+    '<div class="grp"><h3>Servicios más vendidos</h3>'+(svRows?'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Servicio</th><th>Veces cobrado</th><th class="num">Total cobrado</th></tr></thead><tbody>'+svRows+'</tbody></table></div>':'<p class="empty">No hay servicios cobrados en este período.</p>')+'</div>'+
+    '<div class="grp"><h3>Productos que más rotan</h3>'+(prRows?'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Unidades vendidas o usadas</th><th class="num">Stock actual</th><th>Cuánto dura el stock</th></tr></thead><tbody>'+prRows+'</tbody></table></div>':'<p class="empty">Todavía no hay productos vendidos ni usados en este período.</p>')+'</div></div></section>';
 }
 
 /* ============================================================
@@ -924,8 +924,8 @@ function trashBody(){
       '<button class="link bad" data-action="trash-purge" data-kind="'+x.kind+'" data-id="'+x.id+'">Eliminar definitivamente</button></td></tr>';
   }).join('');
   return '<div class="cfg-tabacts">'+'<p class="empty">Lo que se borra de la historia clínica queda acá '+t.days+' días y se puede restaurar. Pasado ese plazo solo se puede eliminar definitivamente. Si lo borrado había devuelto stock, al restaurarlo se vuelve a descontar (si no alcanza el stock, se restaura igual y te avisamos).</p>'+(t.expiredCount?'<button class="btn danger-o" data-action="trash-purge-expired">Eliminar definitivamente los vencidos ('+t.expiredCount+')</button>':'')+'</div>'+
-    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Tipo</th><th>Elemento</th><th>Paciente</th><th>Borrado</th><th>Plazo</th><th></th></tr></thead><tbody>'+
-    (rows||'<tr><td colspan="6" class="empty">La papelera está vacía.</td></tr>')+'</tbody></table></div>';
+    (rows?'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Tipo</th><th>Elemento</th><th>Paciente</th><th>Borrado</th><th>Plazo</th><th></th></tr></thead><tbody>'+
+    rows+'</tbody></table></div>':'<p class="empty">La papelera está vacía.</p>');
 }
 
 /* ============================================================
@@ -938,7 +938,7 @@ function attachmentsPanel(){
   if(u&&u.configured){
     var pct=Math.min(100,Math.round(u.bytes/u.limit*100));
     meter='<p><b>Adjuntos: '+fmtBytes(u.bytes)+' de '+fmtBytes(u.limit)+'</b> <small>('+plural(u.count,'archivo','archivos')+')</small></p>'+
-      '<div class="meter'+(pct>=80?' hot':'')+'" role="img" aria-label="'+pct+'% del espacio usado"><i style="width:'+Math.max(pct,u.bytes?1:0)+'%"></i></div>'+
+      '<div class="meter'+(pct>=80?' hot':'')+'" role="img" aria-label="'+pct+'% del espacio usado"><i data-w="'+Math.max(pct,u.bytes?1:0)+'%"></i></div>'+
       (pct>=80?'<p class="warnbox">Queda poco espacio para adjuntos. Revisá los archivos pesados o ampliá el plan de Supabase.</p>':'');
   }else meter='<p class="empty">Los adjuntos todavía no están activados en el servidor.</p>';
   return '<section class="sec"><h3>Archivos adjuntos de los estudios</h3>'+meter+
@@ -955,7 +955,7 @@ function backupsBody(){
   }).join(''):'<p class="empty">Todavía no hay copias guardadas.</p>';
   return '<p class="warnbox">El sistema guarda solo una copia por día dentro de la misma base de datos (te sirve si borrás algo por error), pero <b>si se perdiera la base, esas copias también se pierden</b>. Descargá un archivo a tu computadora o a un pendrive, por lo menos una vez por semana.'+
     (d===null?' Todavía no descargaste ninguno desde esta computadora.':' La última descarga desde esta computadora fue hace '+plural(d,'día','días')+'.')+'</p>'+
-    '<div class="cashbox" style="margin-top:1rem"><div class="panel"><h3>Copia automática diaria</h3><p>'+(lastAuto?'Última copia automática: '+fmtTs(lastAuto.createdAt)+'.':'Todavía no se hizo ninguna.')+' Se hace sola una vez por día y se conservan las últimas 14.</p></div>'+
+    '<div class="cashbox mt-1"><div class="panel"><h3>Copia automática diaria</h3><p>'+(lastAuto?'Última copia automática: '+fmtTs(lastAuto.createdAt)+'.':'Todavía no se hizo ninguna.')+' Se hace sola una vez por día y se conservan las últimas 14.</p></div>'+
     '<div class="panel"><h3>Archivo y copias manuales</h3><div class="filerow"><button class="btn primary" data-action="backup-download">Descargar copia a mi computadora</button><button class="btn" data-action="backup-now">Crear copia ahora</button><button class="btn" data-action="pick-file">Cargar desde archivo</button><input id="bfile" type="file" accept=".json,application/json" hidden></div></div></div>'+
     attachmentsPanel()+
     '<section class="sec"><h3>Copias guardadas en el sistema</h3><div class="bk-list">'+rows+'</div></section>';
@@ -990,8 +990,8 @@ function viewProveedores(){
   if(!ui.suppliers)return '<section class="farm"><div class="head"><h1>Proveedores</h1></div><p class="empty">Cargando…</p></section>';
   var admin=isAdmin();
   return '<section class="farm"><div class="head"><h1>Proveedores</h1>'+(admin?'<button class="btn primary" data-action="new-supplier">Agregar proveedor</button>':'')+'</div>'+
-    '<input id="sq" type="search" placeholder="Buscar por nombre, teléfono, email o descripción" value="'+esc(ui.sq)+'" aria-label="Buscar proveedor" style="margin-bottom:1rem">'+
-    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Proveedor</th><th>Teléfono</th><th>Email</th>'+(admin?'<th></th>':'')+'</tr></thead><tbody id="srows">'+supplierRows()+'</tbody></table></div></section>';
+    '<input id="sq" type="search" placeholder="Buscar por nombre, teléfono, email o descripción" value="'+esc(ui.sq)+'" aria-label="Buscar proveedor" class="mb-1">'+
+    (ui.suppliers.length?'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Proveedor</th><th>Teléfono</th><th>Email</th>'+(admin?'<th></th>':'')+'</tr></thead><tbody id="srows">'+supplierRows()+'</tbody></table></div>':'<p class="empty">Todavía no cargaste proveedores.'+(admin?' Empezá con “Agregar proveedor”.':'')+'</p>')+'</section>';
 }
 
 /* ============================================================
@@ -1007,7 +1007,7 @@ function calDayColumn(iso){
   var d=parse(iso),isToday=iso===todayIso();
   // E3: en la vista Semana el alto del bloque refleja la duración del turno.
   var blocks=list.map(function(a){
-    var h=ui.cal.view==='week'?' style="min-height:'+Math.round(Math.min(Math.max(38,a.duration*0.9),180))+'px"':'';
+    var h=ui.cal.view==='week'?' data-mh="'+Math.round(Math.min(Math.max(38,a.duration*0.9),180))+'px"':'';
     return '<button class="appt '+a.type+'"'+h+' data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'<small>'+esc(a.title)+'</small></button>';
   }).join('');
   return '<div class="cal-day'+(isToday?' today':'')+'"><div class="cal-day-head"><span>'+WEEKDAYS[(d.getDay()+6)%7]+'</span><b>'+d.getDate()+'</b>'+
@@ -1069,6 +1069,8 @@ function viewCalendario(){
     while(d<=r[1]){cells+=calDayColumn(d);d=shiftDays(1,d);}
     body='<div class="cal-week fit">'+cells+'</div>';
   }
+  // Sin turnos en el rango visible: se dice en una línea, arriba de la grilla (la vista Día ya trae su propio mensaje).
+  if(ui.cal.view!=='day'&&!ui.appts.length)body='<p class="empty cal-empty">No hay turnos en estas fechas. Tocá + en un día o “Agregar turno”.</p>'+body;
   return '<section class="farm"><div class="head"><h1>Calendario</h1><button class="btn primary" data-action="new-appt">Agregar turno</button></div>'+
     '<div class="cal-head"><div class="cal-nav"><button data-action="cal-prev" aria-label="Anterior">‹</button><button class="btn" data-action="cal-today" aria-label="'+CAL_NOW[ui.cal.view][1]+'">'+CAL_NOW[ui.cal.view][0]+'</button><button data-action="cal-next" aria-label="Siguiente">›</button></div>'+
     '<div class="cal-title">'+calTitle()+'</div>'+segHTML('cal-view',APPT_VIEWS,ui.cal.view)+'</div>'+
@@ -1404,7 +1406,7 @@ function chargeForm(p){
   var f=openForm({title:'Cobrar a '+esc(p.name),
     body:'<div class="cline head"><span>Servicio o producto</span><span>Cant.</span><span>Precio</span><span>Subtotal</span><span></span></div><div id="lines"></div>'+
       '<button type="button" class="btn" id="addline">+ Agregar línea</button>'+
-      '<div class="fields" style="margin-top:.8rem">'+fld('Descuento','dtype',{opts:[['none','Sin descuento'],['amount','Monto ($)'],['percent','Porcentaje (%)']],value:'none'})+fld('Valor del descuento','dvalue',{type:'number',min:0,step:'0.01'})+
+      '<div class="fields mt-08">'+fld('Descuento','dtype',{opts:[['none','Sin descuento'],['amount','Monto ($)'],['percent','Porcentaje (%)']],value:'none'})+fld('Valor del descuento','dvalue',{type:'number',min:0,step:'0.01'})+
       fld('Fecha','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+fld('Forma de pago','method',{opts:payMethods(),value:payMethods()[0]})+
       fld('Registrar como ingreso en caja','cash',{type:'checkbox',value:true,full:true})+'</div>'+
       '<div class="ctotals"><div><span>Subtotal</span><span id="c-sub"></span></div><div><span>Descuento</span><span id="c-disc"></span></div><div class="grand"><span>Total</span><span id="c-tot"></span></div></div>',
@@ -1656,8 +1658,8 @@ function movementsDialog(x){
         '<td class="num">'+(m.unitPrice>0?money(m.unitPrice):'—')+'</td><td class="num">'+total+'</td></tr>';
     }).join('');
     var p=dlg.querySelector('p');
-    if(p)p.outerHTML='<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Motivo</th><th class="num">Cantidad</th><th class="num">Precio unitario</th><th class="num">Total</th></tr></thead><tbody>'+
-      (rows||'<tr><td colspan="5" class="empty">Todavía no hay movimientos.</td></tr>')+'</tbody></table></div>';
+    if(p)p.outerHTML=!rows?'<p class="empty">Todavía no hay movimientos.</p>':'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Motivo</th><th class="num">Cantidad</th><th class="num">Precio unitario</th><th class="num">Total</th></tr></thead><tbody>'+
+      rows+'</tbody></table></div>';
   }).catch(function(e){if(dlg.open)toast(e.message);});
 }
 function adjustForm(x){
@@ -1929,7 +1931,7 @@ function userForm(u){
   var isNew=!u;u=u||{role:'staff',active:true};
   openForm({title:isNew?'Nuevo usuario':'Editar usuario',
     body:'<div class="fields">'+fld('Nombre','name',{value:u.name,req:true,full:true})+
-    (isNew?fld('Email (es el usuario para ingresar)','email',{type:'email',req:true,full:true,auto:'off'}):'<p class="full" style="grid-column:1/-1">'+esc(u.email)+'</p>')+
+    (isNew?fld('Email (es el usuario para ingresar)','email',{type:'email',req:true,full:true,auto:'off'}):'<p class="full span-all">'+esc(u.email)+'</p>')+
     fld('Rol','role',{opts:[['staff','Ayudante'],['admin','Administrador']],value:u.role})+
     fld(isNew?'Contraseña (mínimo 8 caracteres)':'Nueva contraseña (dejala vacía para no cambiarla)','password',{type:'password',req:isNew,minlength:8,auto:'new-password'})+
     (isNew?'':fld('Usuario activo','active',{type:'checkbox',value:u.active,full:true}))+'</div>',
@@ -2291,7 +2293,7 @@ document.addEventListener('input',function(e){
   }
   if(e.target.id==='stq'||e.target.id==='cq'){var id=e.target.id;ui[id]=e.target.value;render();var el=$('#'+id);if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length);}}
   if(e.target.id==='cliq'){ui.cliq=e.target.value;$('#clist').innerHTML=clientListHTML();}
-  if(e.target.id==='sq'){ui.sq=e.target.value;$('#srows').innerHTML=supplierRows();}
+  if(e.target.id==='sq'){ui.sq=e.target.value;var sr=$('#srows');if(sr)sr.innerHTML=supplierRows();}
 });
 document.addEventListener('change',function(e){
   // Configuración: abrir o cerrar un día del horario.
@@ -2373,6 +2375,8 @@ document.addEventListener('click',function(e){if(document.body.dataset.more&&e.t
    mostrar como tarjeta apilada sin scroll horizontal. En pantallas medianas, si la tabla igual no entra, se avisa
    que hay más columnas. Se aplica a todo lo que se dibuje (vistas, ventanas, filtros) con un MutationObserver. */
 function labelTables(root){
+  root.querySelectorAll('[data-w]').forEach(function(e){e.style.width=e.dataset.w;});
+  root.querySelectorAll('[data-mh]').forEach(function(e){e.style.minHeight=e.dataset.mh;});
   root.querySelectorAll('table.tbl').forEach(function(t){
     var hs=Array.prototype.map.call(t.querySelectorAll('thead th'),function(th){return th.textContent.trim();});
     t.querySelectorAll('tbody tr').forEach(function(tr){
