@@ -1429,15 +1429,17 @@ function reportRange(q) {
   return { from: U.addDays(today, -days), to: today, days };
 }
 
+// Últimos 12 meses (el actual y los 11 anteriores). La pantalla descarta los meses vacíos del principio,
+// de antes de empezar a usar el sistema, y con "today" estima cómo cierra el mes en curso.
 add('GET', '/api/reports/monthly', { admin: true }, async () => {
   const today = U.todayAR();
   const r = await db.query('SELECT on_date, kind, method, amount FROM cash_movements WHERE on_date >= $1 AND on_date <= $2', [
-    U.monthStart(today, 5),
+    U.monthStart(today, 11),
     U.monthEnd(today),
   ]);
   const months = [];
   const idx = {};
-  for (let i = 5; i >= 0; i--) {
+  for (let i = 11; i >= 0; i--) {
     const m = { ym: U.monthStart(today, i).slice(0, 7), in: 0, out: 0, efe: 0, tra: 0, tar: 0 };
     months.push(m);
     idx[m.ym] = m;
@@ -1460,7 +1462,7 @@ add('GET', '/api/reports/monthly', { admin: true }, async () => {
       m[k] = U.round2(m[k]);
     });
   });
-  return { months };
+  return { months, today };
 });
 
 add('GET', '/api/reports/services', { admin: true }, async (ctx) => {

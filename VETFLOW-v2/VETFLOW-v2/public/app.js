@@ -268,7 +268,7 @@ async function loadCash(){
 async function loadReports(){
   var rq=ui.rfrom&&ui.rto?'from='+ui.rfrom+'&to='+ui.rto:'days='+ui.rep;
   var r=await Promise.all([api('/reports/monthly'),api('/reports/services?'+rq),api('/reports/products?'+rq)]);
-  ui.rmonthly=r[0].months;ui.rservices=r[1].items;ui.rproducts=r[2].items;ui.rdays=r[2].days;
+  ui.rmonthly=r[0].months;ui.rtoday=r[0].today;ui.rservices=r[1].items;ui.rproducts=r[2].items;ui.rdays=r[2].days;
 }
 /* Después de guardar algo: vuelve a pedir los datos y redibuja. */
 async function reload(){
@@ -832,44 +832,165 @@ function preciosHTML(){
    Reportes
    ============================================================ */
 function monthLabel(ym){return new Date(Number(ym.slice(0,4)),Number(ym.slice(5,7))-1,1).toLocaleDateString('es-AR',{month:'short'}).replace('.','');}
-function chartSVG(M){
-  var W=640,H=230,pl=8,pb=28,pt=12,ch=H-pb-pt;
-  var max=Math.max.apply(null,M.map(function(x){return Math.max(x.in,x.out);}).concat([1]));
-  var gw=(W-pl*2)/M.length,bw=Math.min(34,gw/2-6),g='';
-  M.forEach(function(x,i){
-    var x0=pl+i*gw+gw/2,hi=Math.round(x.in/max*ch),he=Math.round(x.out/max*ch);
-    g+='<rect x="'+(x0-bw-2)+'" y="'+(pt+ch-hi)+'" width="'+bw+'" height="'+hi+'" rx="3" fill="var(--chart-in)"/>';
-    g+='<rect x="'+(x0+2)+'" y="'+(pt+ch-he)+'" width="'+bw+'" height="'+he+'" rx="3" fill="var(--chart-out)"/>';
-    g+='<text x="'+x0+'" y="'+(H-8)+'" text-anchor="middle" font-size="13" fill="var(--muted)">'+monthLabel(x.ym)+'</text>';
+/* ---------- Reportes: tablero del negocio ----------
+   Arriba, cómo va el mes en curso y cómo cerraría; después el gráfico por mes (columnas = ingresos, línea = egresos,
+   rayado = estimado), lo que dicen los números en frases, la tabla por mes y los servicios y productos del período. */
+var MONTH_LONG=function(ym){var t=new Date(Number(ym.slice(0,4)),Number(ym.slice(5,7))-1,1).toLocaleDateString('es-AR',{month:'long'});return t.charAt(0).toUpperCase()+t.slice(1);};
+var nextYm=function(ym,n){var d=new Date(Number(ym.slice(0,4)),Number(ym.slice(5,7))-1+n,1);return d.getFullYear()+'-'+pad(d.getMonth()+1);};
+// Montos cortos para el eje y las etiquetas: "$ 1,2 M", "$ 850 mil", "$ 900".
+function moneyShort(n){
+  var a=Math.abs(n),s=n<0?'−':'';
+  if(a>=1e6)return s+'$ '+(Math.round(a/1e5)/10).toString().replace('.',',')+' M';
+  if(a>=1e3)return s+'$ '+Math.round(a/1e3)+' mil';
+  return s+'$ '+Math.round(a);
+}
+// Recta de mínimos cuadrados sobre los valores; devuelve la pendiente (cambio promedio por mes) y el valor para el índice x.
+function trend(vals){
+  var n=vals.length,sx=0,sy=0,sxy=0,sxx=0;
+  vals.forEach(function(y,x){sx+=x;sy+=y;sxy+=x*y;sxx+=x*x;});
+  var m=(n*sxy-sx*sy)/((n*sxx-sx*sx)||1),b=(sy-m*sx)/n;
+  return {slope:m,at:function(x){return Math.max(0,m*x+b);}};
+}
+// Arma todo lo que muestra el tablero a partir de los 12 meses que manda el servidor.
+function repModel(){
+  var all=ui.rmonthly||[],today=ui.rtoday||todayIso(),curYm=today.slice(0,7);
+  var first=all.findIndex(function(m){return m.in>0||m.out>0;});
+  var M=first<0?[]:all.slice(first).filter(function(m){return m.ym<=curYm;});
+  if(!M.length)return {M:[]};
+  var cur=M[M.length-1].ym===curYm?M[M.length-1]:null,prev=cur?M[M.length-2]:M[M.length-1];
+  var day=Number(today.slice(8,10)),dim=new Date(Number(today.slice(0,4)),Number(today.slice(5,7)),0).getDate();
+  // Cierre del mes en curso: lo que va del mes, al mismo ritmo diario hasta fin de mes (desde el día 5, antes es poco dato).
+  var proj=cur&&day>=5?{in:cur.in*dim/day,out:cur.out*dim/day}:null;
+  // Próximos meses: tendencia de los últimos 6 meses completos, sin el primero con datos (suele estar a medias,
+  // de cuando se empezó a usar el sistema). Desde el día 15 se suma el cierre estimado del mes en curso. Hacen falta 3.
+  var done=(cur?M.slice(1,-1):M.slice(1)).slice(-6),fc=[];
+  var serie=done.map(function(m){return {in:m.in,out:m.out};});
+  if(cur&&proj&&day>=15)serie.push(proj);
+  var tIn=done.length>=3?trend(serie.map(function(m){return m.in;})):null,tOut=done.length>=3?trend(serie.map(function(m){return m.out;})):null;
+  var x0=serie.length-1+(cur&&!(proj&&day>=15)?1:0);
+  if(tIn)for(var k=1;k<=3;k++)fc.push({ym:nextYm(curYm,k),in:tIn.at(x0+k),out:tOut.at(x0+k),est:true});
+  return {M:M,cur:cur,prev:prev,proj:proj,day:day,dim:dim,fc:fc,tIn:tIn,done:done,today:today};
+}
+function pct(a,b){return b>0?Math.round((a-b)/b*100):null;}
+function deltaChip(p,what){
+  if(p==null)return '';
+  return '<span class="chip '+(p>=0?'ok':'bad')+'">'+(p>=0?'+':'−')+Math.abs(p)+' % '+what+'</span>';
+}
+function repKpis(R){
+  var c=R.cur||{ym:R.today.slice(0,7),in:0,out:0},bal=c.in-c.out,mes=MONTH_LONG(c.ym).toLowerCase();
+  var cell=function(k,v,sub,cls){return '<div><dt>'+k+'</dt><dd'+(cls?' class="'+cls+'"':'')+'>'+v+'</dd>'+(sub?'<p>'+sub+'</p>':'')+'</div>';};
+  var close=R.proj?cell('Cierre estimado de '+mes,money(Math.round(R.proj.in)),(R.prev&&R.prev.in>0?'<span class="rep-delta">'+deltaChip(pct(R.proj.in,R.prev.in),'vs '+MONTH_LONG(R.prev.ym).toLowerCase())+'</span>':'')+(R.day>=R.dim?'El mes termina hoy.':'Si sigue el ritmo de estos '+R.day+' días.'))
+    :cell('Cierre estimado de '+mes,'—','Se calcula desde el día 5 del mes.');
+  return '<dl class="rep-kpis">'+
+    cell('Ingresos de '+mes+' hasta hoy',money(c.in),R.prev?MONTH_LONG(R.prev.ym)+' completo: '+money(R.prev.in):'')+
+    cell('Egresos',money(c.out),c.in>0?'Se llevan el '+Math.round(c.out/c.in*100)+' % de los ingresos.':'')+
+    cell('Balance',money(bal),'Ingresos menos egresos del mes.',bal>=0?'in':'out')+close+'</dl>';
+}
+// Frases con lo que dicen los números. Cada una sale de un dato; si no hay dato suficiente, se dice.
+function repInsights(R){
+  var out=[],days=ui.rdays||Number(ui.rep);
+  if(R.proj&&R.prev&&R.prev.in>0){var p=pct(R.proj.in,R.prev.in),cmp=(p>=0?Math.abs(p)+' % más':Math.abs(p)+' % menos')+' que '+MONTH_LONG(R.prev.ym).toLowerCase()+'.',mn=MONTH_LONG(R.cur.ym);
+    out.push(R.day>=R.dim?mn+' cierra hoy con <b>'+money(Math.round(R.cur.in))+'</b> de ingresos, '+cmp:'Si '+mn.toLowerCase()+' sigue a este ritmo, cerraría con unos <b>'+money(Math.round(R.proj.in))+'</b> de ingresos, '+cmp);}
+  if(R.tIn){var s=R.tIn.slope;out.push('En los últimos '+R.done.length+' meses los ingresos '+(Math.abs(s)<1?'se mantuvieron estables':(s>0?'subieron':'bajaron')+' en promedio <b>'+money(Math.round(Math.abs(s)))+'</b> por mes')+'. Con esa tendencia, '+MONTH_LONG(R.fc[0].ym).toLowerCase()+' rondaría los <b>'+money(Math.round(R.fc[0].in))+'</b>.');}
+  else out.push('Para estimar los próximos meses hacen falta 3 meses completos con movimientos; hoy hay '+plural(R.done.length,'mes completo','meses completos')+'.');
+  var low=(ui.rproducts||[]).filter(function(x){return x.units>0&&(x.stock<=0||x.stock/(x.units/days)<=30);}).slice(0,3);
+  if(low.length)out.push('Para reponer pronto: '+low.map(function(x){return '<b>'+esc(x.name)+'</b> ('+(x.stock<=0?'sin stock':'alcanza para ~'+Math.round(x.stock/(x.units/days))+' días')+')';}).join(', ')+'.');
+  var sv=(ui.rservices||[])[0];
+  if(sv)out.push('El servicio más cobrado del período es <b>'+esc(sv.name)+'</b>: '+plural(sv.n,'vez','veces')+', '+money(sv.total)+'.');
+  return '<ul class="rep-notes">'+out.map(function(t){return '<li>'+t+'</li>';}).join('')+'</ul>';
+}
+// El gráfico se dibuja después de insertar la pantalla, con el ancho real disponible (texto legible en celular).
+function drawRepChart(box){
+  var R=ui.repModel;if(!R||!R.M.length)return;
+  var W=Math.max(280,box.clientWidth),H=W<560?230:270,pl=W<560?52:62,pr=8,pt=18,pb=40,cw=W-pl-pr,ch=H-pt-pb;
+  var narrow=W<560;
+  var pts=R.M.slice(narrow?-5:-12).map(function(m){var o={ym:m.ym,in:m.in,out:m.out,cur:R.cur&&m.ym===R.cur.ym};if(o.cur&&R.proj){o.pin=R.proj.in;o.pout=R.proj.out;}return o;}).concat(R.fc.slice(0,narrow?2:3));
+  var top=Math.max.apply(null,pts.map(function(p){return Math.max(p.in,p.out,p.pin||0,p.pout||0);}).concat([1]));
+  var step=Math.pow(10,Math.floor(Math.log10(top/4))),nice=[1,1.5,2,2.5,3,4,5,6,8,10].map(function(k){return k*step;}).find(function(s){return s*4>=top;})||step*10,ymax=nice*4;
+  var Y=function(v){return pt+ch-v/ymax*ch;},band=cw/pts.length,X=function(i){return pl+band*i+band/2;},bw=Math.min(24,band*.45);
+  var g='<defs><pattern id="hatch-in" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="var(--panel)"/><line x1="0" y1="0" x2="0" y2="6" stroke="var(--chart-in)" stroke-width="2.5"/></pattern></defs>';
+  for(var t=0;t<=4;t++){var yv=nice*t,yy=Y(yv);g+='<line x1="'+pl+'" x2="'+(W-pr)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(pl-8)+'" y="'+(yy+4)+'" text-anchor="end" class="rc-ax">'+moneyShort(yv)+'</text>';}
+  // Columna con la punta redondeada (4px) y la base recta.
+  var col=function(x,y0,y1,fill,dash){var h=y0-y1;if(h<=0)return '';var r=Math.min(4,h,bw/2);return '<path d="M'+(x-bw/2)+','+y0+'V'+(y1+r)+'Q'+(x-bw/2)+','+y1+' '+(x-bw/2+r)+','+y1+'H'+(x+bw/2-r)+'Q'+(x+bw/2)+','+y1+' '+(x+bw/2)+','+(y1+r)+'V'+y0+'Z" fill="'+fill+'"'+(dash?' stroke="var(--chart-in)" stroke-width="1" stroke-dasharray="3 2"':'')+'/>';};
+  pts.forEach(function(p,i){
+    var x=X(i),base=Y(0);
+    if(p.est)g+=col(x,base,Y(p.in),'url(#hatch-in)',true);
+    else{g+=col(x,base,Y(p.in),'var(--chart-in)');if(p.pin>p.in)g+=col(x,Y(p.in)-2,Y(p.pin),'url(#hatch-in)',true);}
+    g+='<text x="'+x+'" y="'+(H-pb+18)+'" text-anchor="middle" class="rc-ax'+(p.cur?' rc-cur':'')+'">'+monthLabel(p.ym)+'</text>';
+    if(p.cur||p.est)g+='<text x="'+x+'" y="'+(H-pb+32)+'" text-anchor="middle" class="rc-sub">'+(p.cur?'en curso':narrow?'est.':'estimado')+'</text>';
   });
-  return '<svg class="chart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Ingresos y egresos de los últimos 6 meses"><line x1="0" x2="'+W+'" y1="'+(pt+ch)+'" y2="'+(pt+ch)+'" stroke="var(--line)"/>'+g+'</svg>';
+  // Egresos: línea de 2px con puntos; el tramo estimado, punteado y con puntos huecos.
+  var poly=function(xy,dash){return xy.length>1?'<polyline points="'+xy.map(function(q){return q[0]+','+q[1];}).join(' ')+'" fill="none" stroke="var(--chart-out)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"'+(dash?' stroke-dasharray="4 4"':'')+'/>':'';};
+  var li=-1;pts.forEach(function(p,i){if(!p.est)li=i;});
+  g+=poly(pts.slice(0,li+1).map(function(p,i){return [X(i),Y(p.out)];}),false);
+  // Tramo estimado: del último mes real a su cierre estimado y de ahí a los meses que vienen.
+  var dash=[[X(li),Y(pts[li].out)]];
+  if(pts[li].pout!=null)dash.push([X(li),Y(pts[li].pout)]);
+  pts.slice(li+1).forEach(function(p,k){dash.push([X(li+1+k),Y(p.out)]);});
+  g+=poly(dash,true);
+  pts.forEach(function(p,i){
+    g+='<circle cx="'+X(i)+'" cy="'+Y(p.out)+'" r="4.5" fill="'+(p.est?'var(--panel)':'var(--chart-out)')+'" stroke="'+(p.est?'var(--chart-out)':'var(--panel)')+'" stroke-width="2"/>';
+    if(p.pout!=null&&p.pout>p.out)g+='<circle cx="'+X(i)+'" cy="'+Y(p.pout)+'" r="4" fill="var(--panel)" stroke="var(--chart-out)" stroke-width="2"/>';
+  });
+  // Etiqueta directa solo en el mes en curso (lo que más importa); el resto, en el detalle al pasar el mouse.
+  var ci=pts.findIndex(function(p){return p.cur;});
+  if(ci>=0){var cp=pts[ci],ly=Y(Math.max(cp.in,cp.pin||0,cp.out,cp.pout||0))-10;g+='<text x="'+X(ci)+'" y="'+Math.max(12,ly)+'" text-anchor="middle" class="rc-val">'+moneyShort(cp.in)+'</text>';}
+  // Zonas de detalle: una por mes, más anchas que las marcas; también se recorren con Tab.
+  pts.forEach(function(p,i){g+='<rect class="rc-hit" x="'+(pl+band*i)+'" y="'+pt+'" width="'+band+'" height="'+ch+'" fill="transparent" tabindex="0" data-i="'+i+'" aria-label="'+esc(MONTH_LONG(p.ym))+': ingresos '+money(Math.round(p.in))+', egresos '+money(Math.round(p.out))+(p.est?' (estimado)':'')+'"/>';});
+  box.innerHTML='<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Ingresos (columnas) y egresos (línea) por mes; lo rayado es estimado">'+g+'</svg><div class="rc-tip" hidden></div>';
+  var tip=box.querySelector('.rc-tip');
+  var show=function(e){
+    var i=Number(e.target.dataset.i),p=pts[i];
+    var rows=[['Ingresos',p.in,p.pin],['Egresos',p.out,p.pout]].map(function(r){return '<div><span>'+r[0]+(p.est?' estimados':'')+'</span><b>'+money(Math.round(r[1]))+'</b></div>'+(r[2]!=null?'<div class="rc-tip-sub"><span>Cierre estimado</span><span>'+money(Math.round(r[2]))+'</span></div>':'');}).join('');
+    tip.innerHTML='<p>'+MONTH_LONG(p.ym)+' '+p.ym.slice(0,4)+(p.cur?' · en curso':'')+'</p>'+rows+'<div class="rc-tip-bal"><span>Balance</span><b class="'+(p.in-p.out>=0?'in':'out')+'">'+money(Math.round(p.in-p.out))+'</b></div>';
+    tip.hidden=false;
+    var x=X(i)+(i>pts.length/2?-tip.offsetWidth-14:14);tip.style.left=Math.max(4,Math.min(W-tip.offsetWidth-4,x))+'px';tip.style.top=pt+'px';
+    box.querySelectorAll('.rc-hit').forEach(function(h){h.classList.toggle('on',h===e.target);});
+  };
+  var hide=function(){tip.hidden=true;box.querySelectorAll('.rc-hit').forEach(function(h){h.classList.remove('on');});};
+  box.querySelectorAll('.rc-hit').forEach(function(h){h.addEventListener('mouseenter',show);h.addEventListener('focus',show);h.addEventListener('click',show);h.addEventListener('blur',hide);});
+  box.addEventListener('mouseleave',hide);
+}
+function repTable(R){
+  return '<div class="tbl-wrap"><table class="tbl keep rep-months"><thead><tr><th>Mes</th><th class="num c-pay">Efectivo</th><th class="num c-pay">Transferencias</th><th class="num c-pay">Tarjetas</th><th class="num">Ingresos</th><th class="num">Egresos</th><th class="num">Balance</th></tr></thead><tbody>'+
+    R.M.slice().reverse().map(function(x){var bal=x.in-x.out,cur=R.cur&&x.ym===R.cur.ym;
+      return '<tr><td><span class="m-long">'+MONTH_LONG(x.ym)+' '+x.ym.slice(0,4)+(cur?' <small>(en curso)</small>':'')+'</span><span class="m-short">'+monthLabel(x.ym)+' '+x.ym.slice(2,4)+(cur?'<small> · en curso</small>':'')+'</span></td><td class="num c-pay">'+money(x.efe)+'</td><td class="num c-pay">'+money(x.tra)+'</td><td class="num c-pay">'+money(x.tar)+'</td><td class="num"><b>'+money(x.in)+'</b></td><td class="num">'+money(x.out)+'</td><td class="num '+(bal>=0?'in':'out')+'">'+money(bal)+'</td></tr>';
+    }).join('')+'</tbody></table></div>';
+}
+// Lista con los 5 primeros y "Ver todos". "all" la abre completa (en productos, incluso los que no se movieron).
+function topList(key,items,rowFn,head,emptyMsg,allLabel){
+  var open=!!ui.repAll[key],shown=open?items.all:items.top.slice(0,5);
+  if(!items.all.length)return '<p class="empty">'+emptyMsg+'</p>';
+  var more=items.all.length>Math.min(5,items.top.length)?'<button class="btn rep-more" data-action="rep-all" data-v="'+key+'" aria-expanded="'+open+'">'+(open?'Ver menos':'Ver todos ('+items.all.length+(allLabel||'')+')')+'</button>':'';
+  return (shown.length?'<div class="tbl-wrap"><table class="tbl"><thead><tr>'+head+'</tr></thead><tbody>'+shown.map(rowFn).join('')+'</tbody></table></div>':'<p class="empty">'+emptyMsg+'</p>')+more;
 }
 function viewReportes(){
   if(!ui.rmonthly||!ui.rservices||!ui.rproducts)return '<section class="farm"><div class="head"><h1>Reportes</h1></div><p class="empty">Cargando…</p></section>';
-  var days=ui.rdays||Number(ui.rep);
-  var mrows=ui.rmonthly.slice().reverse().map(function(x){
-    var bal=x.in-x.out;
-    return '<tr><td>'+monthLabel(x.ym)+' '+x.ym.slice(0,4)+'</td><td class="num">'+money(x.efe)+'</td><td class="num">'+money(x.tra)+'</td><td class="num">'+money(x.tar)+'</td><td class="num"><b>'+money(x.in)+'</b></td><td class="num">'+money(x.out)+'</td><td class="num '+(bal>=0?'in':'out')+'">'+money(bal)+'</td></tr>';
-  }).join('');
+  ui.repAll=ui.repAll||{};
+  var days=ui.rdays||Number(ui.rep),R=repModel();ui.repModel=R;
+  var period=ui.rfrom&&ui.rto?'del '+fmtDate(ui.rfrom)+' al '+fmtDate(ui.rto):{30:'de los últimos 30 días',90:'de los últimos 3 meses',365:'del último año'}[ui.rep]||'';
   var maxN=ui.rservices.length?ui.rservices[0].n:1;
-  var svRows=ui.rservices.map(function(x){
-    return '<tr><td><b>'+esc(x.name)+'</b></td><td><div class="bars"><div class="bar" data-w="'+Math.max(4,Math.round(x.n/maxN*140))+'px"></div><span>'+x.n+'</span></div></td><td class="num">'+money(x.total)+'</td></tr>';
-  }).join('');
-  var maxU=ui.rproducts.length&&ui.rproducts[0].units?ui.rproducts[0].units:1;
-  var prRows=ui.rproducts.map(function(x){
+  var svRow=function(x){return '<tr><td><b>'+esc(x.name)+'</b></td><td><div class="bars"><div class="bar" data-w="'+Math.max(4,Math.round(x.n/maxN*90))+'px"></div><span>'+x.n+'</span></div></td><td class="num">'+money(x.total)+'</td></tr>';};
+  var moved=ui.rproducts.filter(function(x){return x.units>0;}),maxU=moved.length?moved[0].units:1;
+  var prRow=function(x){
     var st,left=x.units>0?Math.round(x.stock/(x.units/days)):null;
     if(x.stock<=0)st='<span class="chip bad">Sin stock</span>';
     else if(x.units===0)st='<span class="chip none">Sin movimiento</span>';
-    else if(left<=15)st='<span class="chip warn">Alcanza para '+plural(left,'día','días')+'</span>';
-    else st='Alcanza para ~'+left+' días';
-    return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small></td><td><div class="bars"><div class="bar" data-w="'+Math.max(4,Math.round(x.units/maxU*140))+'px"></div><span>'+x.units+'</span></div></td><td class="num">'+x.stock+'</td><td>'+st+'</td></tr>';
-  }).join('');
-  return '<section class="farm"><div class="head"><h1>Reportes</h1></div>'+
-    '<div class="repsec"><h2>Ingresos por mes</h2>'+(mrows?'<div class="legend"><span><i class="sw-in"></i>Ingresos</span><span><i class="sw-out"></i>Egresos</span></div>'+chartSVG(ui.rmonthly)+
-    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Mes</th><th class="num">Efectivo</th><th class="num">Transferencias</th><th class="num">Tarjetas</th><th class="num">Total ingresos</th><th class="num">Egresos</th><th class="num">Balance</th></tr></thead><tbody>'+mrows+'</tbody></table></div>':'<p class="empty">Todavía no hay ingresos ni egresos para mostrar.</p>')+'</div>'+
-    '<div class="repsec"><div class="toolbar"><h2>Servicios y productos</h2>'+segHTML('rep',[['30','Últimos 30 días'],['90','Últimos 3 meses'],['365','Último año']],ui.rfrom&&ui.rto?'':ui.rep)+rangeHTML('rfrom','rto',ui.rfrom,ui.rto)+'<button class="btn" data-action="rep-export">Exportar CSV de movimientos</button></div>'+
-    '<div class="grp"><h3>Servicios más vendidos</h3>'+(svRows?'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Servicio</th><th>Veces cobrado</th><th class="num">Total cobrado</th></tr></thead><tbody>'+svRows+'</tbody></table></div>':'<p class="empty">No hay servicios cobrados en este período.</p>')+'</div>'+
-    '<div class="grp"><h3>Productos que más rotan</h3>'+(prRows?'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Producto</th><th>Unidades vendidas o usadas</th><th class="num">Stock actual</th><th>Cuánto dura el stock</th></tr></thead><tbody>'+prRows+'</tbody></table></div>':'<p class="empty">Todavía no hay productos vendidos ni usados en este período.</p>')+'</div></div></section>';
+    else if(left<=15)st='<span class="chip warn">'+plural(left,'día','días')+'</span>';
+    else st='~'+left+' días';
+    return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small></td><td><div class="bars"><div class="bar" data-w="'+Math.max(4,Math.round(x.units/maxU*90))+'px"></div><span>'+x.units+'</span></div></td><td class="num">'+x.stock+'</td><td>'+st+'</td></tr>';
+  };
+  var head='<section class="farm rep"><div class="head"><h1>Reportes</h1><button class="btn" data-action="rep-export">Exportar movimientos (CSV)</button></div>';
+  if(!R.M.length)return head+'<p class="empty">Todavía no hay ingresos ni egresos para mostrar. Cuando cobres o registres movimientos en la caja, acá vas a ver cómo va el negocio.</p></section>';
+  return head+repKpis(R)+
+    '<section class="panel rep-chart"><div class="rep-chart-head"><h2>Ingresos y egresos por mes</h2>'+
+      '<div class="legend"><span><i class="sw-in"></i>Ingresos</span><span><i class="sw-line"></i>Egresos</span><span><i class="sw-est"></i>Estimado</span></div></div>'+
+      '<div class="rchart" id="repchart"></div></section>'+
+    '<section class="rep-where"><h2>Hacia dónde va</h2>'+repInsights(R)+'</section>'+
+    '<section class="repsec"><h2>Mes por mes</h2>'+repTable(R)+'</section>'+
+    '<section class="repsec"><div class="toolbar"><h2>Servicios y productos '+period+'</h2>'+segHTML('rep',[['30','30 días'],['90','3 meses'],['365','1 año']],ui.rfrom&&ui.rto?'':ui.rep)+rangeHTML('rfrom','rto',ui.rfrom,ui.rto)+'</div>'+
+      '<div class="rep-cols"><div class="grp"><h3>Servicios más cobrados</h3>'+topList('svc',{top:ui.rservices,all:ui.rservices},svRow,'<th>Servicio</th><th>Veces</th><th class="num">Total</th>','No hay servicios cobrados en este período.')+'</div>'+
+      '<div class="grp"><h3>Productos que más rotan</h3>'+topList('prod',{top:moved,all:ui.rproducts},prRow,'<th>Producto</th><th>Unidades</th><th class="num">Stock</th><th>Cuánto dura</th>','Ningún producto se vendió ni se usó en este período.',', con los que no rotaron')+'</div></div></section></section>';
 }
 
 /* ============================================================
@@ -2154,6 +2275,7 @@ var actions={
   cashf:function(id,b){ui.cashf=b.dataset.v;return refreshView();},
   cashm:function(id,b){ui.cashm=b.dataset.v;return refreshView();},
   rep:function(id,b){ui.rep=b.dataset.v;ui.rfrom='';ui.rto='';return refreshView();},
+  'rep-all':function(id,b){ui.repAll=ui.repAll||{};ui.repAll[b.dataset.v]=!ui.repAll[b.dataset.v];render();},
   'rep-export':function(){
     var from=ui.rfrom&&ui.rto?ui.rfrom:shiftDays(-Number(ui.rep)),to=ui.rfrom&&ui.rto?ui.rto:todayIso();
     return downloadFile('/cash/export?period=range&from='+from+'&to='+to,'movimientos-'+from+'_a_'+to+'.csv');
@@ -2414,6 +2536,9 @@ document.addEventListener('click',function(e){if(document.body.dataset.more&&e.t
    mostrar como tarjeta apilada sin scroll horizontal. En pantallas medianas, si la tabla igual no entra, se avisa
    que hay más columnas. Se aplica a todo lo que se dibuje (vistas, ventanas, filtros) con un MutationObserver. */
 function labelTables(root){
+  // Gráfico de Reportes: se dibuja con el ancho real; se vuelve a dibujar solo si el ancho cambió.
+  var rc=document.getElementById('repchart');
+  if(rc&&rc.clientWidth&&rc.dataset.w!==String(rc.clientWidth)){rc.dataset.w=String(rc.clientWidth);drawRepChart(rc);}
   root.querySelectorAll('[data-w]').forEach(function(e){e.style.width=e.dataset.w;});
   root.querySelectorAll('[data-mh]').forEach(function(e){e.style.minHeight=e.dataset.mh;});
   root.querySelectorAll('table.tbl').forEach(function(t){
