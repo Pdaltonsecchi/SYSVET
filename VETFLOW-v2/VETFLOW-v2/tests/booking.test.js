@@ -130,17 +130,33 @@ test('blocked y hit: se puede contar solo lo que falla, sin sumar al consultar',
   assert.equal(booking.blocked(key, 2), true, 'consultar no cambia nada');
 });
 
-test('llenar un grupo de claves no desbloquea a nadie ni toca los otros grupos', () => {
+test('llenar un grupo de claves no toca los otros grupos ni deja afuera a los visitantes nuevos', () => {
   const g = 'prueba-b' + Math.floor(Math.random() * 1e9);
   const otro = 'prueba-c' + Math.floor(Math.random() * 1e9) + ':x';
-  assert.equal(booking.limit(g + ':víctima', 1, 60000), true);
-  assert.equal(booking.limit(g + ':víctima', 1, 60000), false, 'ya está bloqueada');
+  const total = 'prueba-e' + Math.floor(Math.random() * 1e9) + ':todos';
   assert.equal(booking.limit(otro, 1, 60000), true);
+  for (let i = 0; i < 3; i++) booking.hit(total, 60000);
   for (let i = 0; i < 12000; i++) booking.limit(g + ':relleno-' + i, 1, 60000);
-  assert.equal(booking.limit(g + ':víctima', 1, 60000), false, 'sigue bloqueada después de 12.000 claves nuevas');
   assert.equal(booking.limit(otro, 1, 60000), false, 'el otro grupo conserva su cuenta');
-  // Con el grupo lleno, las claves nuevas comparten un solo contador: no pasan gratis.
-  assert.equal(booking.limit(g + ':nueva-1', 1, 60000), false);
+  assert.equal(booking.blocked(total, 3), true, 'un tope total (una sola clave) nunca se pierde');
+  // Con el grupo lleno, un visitante nuevo tiene su propia cuenta: no paga por lo que hicieron los demás.
+  assert.equal(booking.limit(g + ':nueva-1', 2, 60000), true);
+  assert.equal(booking.limit(g + ':nueva-1', 2, 60000), true);
+  assert.equal(booking.limit(g + ':nueva-1', 2, 60000), false, 'y su tope se sigue aplicando');
+});
+
+test('unhit devuelve un intento anotado (el ingreso que al final salió bien)', () => {
+  const key = 'prueba-f:' + Math.random();
+  booking.hit(key, 60000);
+  booking.hit(key, 60000);
+  assert.equal(booking.blocked(key, 2), true);
+  booking.unhit(key);
+  assert.equal(booking.blocked(key, 2), false);
+  booking.unhit(key);
+  booking.unhit(key);
+  booking.unhit('prueba-f:no-existe');
+  booking.hit(key, 60000);
+  assert.equal(booking.blocked(key, 1), true, 'nunca queda en negativo');
 });
 
 test('las claves larguísimas se recortan (no se puede inflar la memoria)', () => {
@@ -156,6 +172,13 @@ test('la IP del visitante: CF-Connecting-IP primero, y nunca un texto que no sea
   assert.equal(U.clientIp(req({ 'cf-connecting-ip': '203.0.113.7', 'x-forwarded-for': '1.2.3.4' })), '203.0.113.7');
   assert.equal(U.clientIp(req({ 'x-forwarded-for': '198.51.100.4, 10.0.0.1' })), '198.51.100.4');
   assert.equal(U.clientIp(req({ 'x-forwarded-for': 'cualquier cosa ' + 'x'.repeat(5000) })), '10.0.0.9');
-  assert.equal(U.clientIp(req({ 'cf-connecting-ip': 'no-es-ip', 'x-forwarded-for': '2001:db8::1' })), '2001:db8::1');
   assert.equal(U.clientIp(req({})), '10.0.0.9');
+  // IPv6: se cuenta el bloque /64 (una casa tiene millones de direcciones dentro de un mismo bloque).
+  const v6 = (ip) => U.clientIp(req({ 'cf-connecting-ip': ip }));
+  assert.equal(U.clientIp(req({ 'cf-connecting-ip': 'no-es-ip', 'x-forwarded-for': '2001:db8::1' })), '2001:db8:0:0::/64');
+  assert.equal(v6('2001:0db8:00ab:0001:aaaa:bbbb:cccc:dddd'), v6('2001:db8:ab:1::9'));
+  assert.notEqual(v6('2001:db8:ab:1::9'), v6('2001:db8:ab:2::9'));
+  assert.equal(v6('::1'), '0:0:0:0::/64');
+  assert.equal(v6('::ffff:203.0.113.7'), '203.0.113.7');
+  assert.equal(U.clientIp({ headers: {}, socket: { remoteAddress: '::ffff:127.0.0.1' } }), '127.0.0.1');
 });

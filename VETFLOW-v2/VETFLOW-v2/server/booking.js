@@ -98,13 +98,17 @@ function samePhone(a, b) {
 }
 /** Últimos 6 dígitos tal como se escribieron: sirven para buscar candidatos en la base (ver clients_phone_tail_idx). */
 const phoneTail = (v) => String(v == null ? '' : v).replace(/\D/g, '').slice(-6);
-/** Clave del límite de intentos: la misma para todas las formas de escribir un número. */
+/**
+ * Clave del límite de intentos fallidos con un mismo número: la misma para todas las formas de escribirlo (con o sin
+ * característica). Solo se usa cuando el ingreso falló, así que no puede dejar afuera a quien entra bien.
+ */
 const phoneLimitKey = (v) => phoneKey(v).slice(-8);
 
 /* ---------- límite de pedidos (en memoria, por proceso) ---------- */
 // Las claves tienen la forma "grupo:valor" (por ejemplo "ip:1.2.3.4"). Cada grupo tiene su propio mapa con tope de
-// tamaño: llenar uno no borra los contadores de los demás. Si un grupo se llena, las claves nuevas comparten un
-// solo contador ("*"): nunca se vacía todo de golpe (eso dejaría pasar a quien ya estaba bloqueado).
+// tamaño: llenar uno no borra los contadores de los demás. Si un grupo se llena, se saca el contador más viejo para
+// hacer lugar: nunca se vacía todo de golpe y los visitantes nuevos no pagan por lo que hicieron otros.
+// Los topes totales usan una sola clave por grupo, así que nunca se sacan.
 const MAX_KEYS = 5000;
 const MAX_KEY_LEN = 64;
 const groups = new Map();
@@ -119,7 +123,7 @@ function slot(key, windowMs, create) {
     map = new Map();
     groups.set(group, map);
   }
-  let id = k.slice(i + 1, i + 1 + MAX_KEY_LEN);
+  const id = k.slice(i + 1, i + 1 + MAX_KEY_LEN);
   let h = map.get(id);
   if (h && now - h.t > h.w) {
     map.delete(id);
@@ -128,12 +132,8 @@ function slot(key, windowMs, create) {
   if (h || !create) return h;
   if (map.size >= MAX_KEYS) {
     for (const [kk, v] of map) if (now - v.t > v.w) map.delete(kk);
-    if (map.size >= MAX_KEYS) {
-      id = '*';
-      h = map.get(id);
-      if (h && now - h.t > h.w) h = null;
-      if (h) return h;
-    }
+    // Sigue lleno: sale el más viejo (un Map recorre sus claves en el orden en que se agregaron).
+    if (map.size >= MAX_KEYS) map.delete(map.keys().next().value);
   }
   h = { n: 0, t: now, w: windowMs };
   map.set(id, h);
@@ -142,6 +142,11 @@ function slot(key, windowMs, create) {
 /** Suma un pedido a la clave (la ventana de tiempo arranca con el primero). */
 function hit(key, windowMs) {
   slot(key, windowMs, true).n += 1;
+}
+/** Devuelve un pedido sumado con hit (por ejemplo, un intento de ingreso que al final salió bien). */
+function unhit(key) {
+  const h = slot(key, 0, false);
+  if (h && h.n > 0) h.n -= 1;
 }
 /** true si la clave ya llegó a `max` dentro de su ventana. No suma nada. */
 function blocked(key, max) {
@@ -165,7 +170,7 @@ const LIMITS = {
   ipRequests: envInt('TURNOS_PEDIDOS_POR_IP', 120), // pedidos por IP cada 10 minutos
   failsPerIp: envInt('TURNOS_FALLOS_POR_IP', 20), // ingresos fallidos por IP por hora
   failsPerPhone: 10, // ingresos fallidos con el mismo teléfono cada 15 minutos
-  failsGlobal: envInt('TURNOS_FALLOS_TOTAL', 30), // ingresos fallidos en total cada 15 minutos (frena el barrido de números)
+  failsGlobal: envInt('TURNOS_FALLOS_TOTAL', 60), // ingresos fallidos en total cada 15 minutos (frena el barrido de números)
   signupsPerIp: envInt('TURNOS_ALTAS_POR_IP', 5), // clientes nuevos por IP por hora
   signupsPerDay: envInt('TURNOS_ALTAS_POR_DIA', 20), // clientes nuevos por la web por día, en total
   petsPerClient: 10, // mascotas por cliente (más que eso, por teléfono)
@@ -175,6 +180,6 @@ const LIMITS = {
 
 module.exports = {
   WEB_TYPES, BOOKABLE_STATUS, DAYS_AHEAD, STEP_MIN,
-  toMin, fromMin, rangesFor, webType, freeSlots, canBook, limit, hit, blocked, LIMITS,
+  toMin, fromMin, rangesFor, webType, freeSlots, canBook, limit, hit, unhit, blocked, LIMITS,
   phoneKey, samePhone, phoneTail, phoneLimitKey,
 };

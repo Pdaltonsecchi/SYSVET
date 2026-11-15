@@ -54,15 +54,18 @@ function monthEnd(iso) {
 const round2 = (x) => Math.round(x * 100) / 100;
 
 /* ---------- validaciones ---------- */
+// El carácter nulo no se puede guardar en Postgres: se rechaza acá en vez de terminar en un error interno.
+const NUL = String.fromCharCode(0);
 function reqStr(v, label, max) {
   if (typeof v !== 'string' || !v.trim()) throw bad('Falta completar: ' + label);
+  if (v.includes(NUL)) throw bad(label + ' tiene caracteres que no se pueden guardar');
   const s = v.trim();
   if (s.length > (max || 200)) throw bad(label + ' es demasiado largo');
   return s;
 }
 function optStr(v, max) {
   if (v == null) return '';
-  if (typeof v !== 'string') throw bad('Hay un dato inválido');
+  if (typeof v !== 'string' || v.includes(NUL)) throw bad('Hay un dato inválido');
   const s = v.trim();
   if (s.length > (max || 500)) throw bad('Hay un texto demasiado largo');
   return s;
@@ -257,10 +260,27 @@ function parseCookies(header) {
  */
 function clientIp(req) {
   const cf = String(req.headers['cf-connecting-ip'] || '').trim();
-  if (net.isIP(cf)) return cf;
+  if (net.isIP(cf)) return ipGroup(cf);
   const xf = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  if (net.isIP(xf)) return xf;
-  return req.socket.remoteAddress || 'desconocida';
+  if (net.isIP(xf)) return ipGroup(xf);
+  return ipGroup(req.socket.remoteAddress || '') || 'desconocida';
+}
+/**
+ * Una conexión IPv6 de una casa tiene millones de direcciones (todo un bloque /64): para los límites se cuenta el
+ * bloque, no la dirección. Las IPv4 (también escritas como ::ffff:1.2.3.4) quedan como están.
+ */
+function ipGroup(ip) {
+  const s = String(ip).split('%')[0];
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(s);
+  if (mapped) return mapped[1];
+  if (!net.isIPv6(s)) return s;
+  const halves = s.split('::');
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length > 1 && halves[1] ? halves[1].split(':') : [];
+  // Una IPv4 al final ("…:1.2.3.4") ocupa el lugar de dos grupos.
+  const tailLen = tail.length + (tail.length && tail[tail.length - 1].includes('.') ? 1 : 0);
+  const groups = halves.length > 1 ? head.concat(new Array(Math.max(0, 8 - head.length - tailLen)).fill('0'), tail) : head;
+  return groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, '').toLowerCase()).join(':') + '::/64';
 }
 
 module.exports = {

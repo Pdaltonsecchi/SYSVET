@@ -448,3 +448,30 @@ test('el aviso de pedidos para aceptar cuenta los pendientes y pide sesión', as
   assert.equal((await owner.call('POST', '/appointments/' + req.data.id + '/status', { status: 'rechazado' })).status, 200);
   assert.equal((await owner.call('GET', '/appointments/pending')).data.count, antes.count);
 });
+
+/* ---------- segunda revisión de seguridad ---------- */
+test('nadie puede dejar afuera a un cliente probando su número, uno parecido, o intentando darlo de alta', async () => {
+  const n = local8();
+  const reg = await pub().call('POST', '/register', { firstName: 'Pía', lastName: 'Víctima', phone: '11 ' + tail4(n), pet: { name: 'Uno', species: 'Gato', sex: 'Hembra' } });
+  assert.equal(reg.status, 200);
+  // Otra característica con los mismos últimos 8 dígitos: es otro número, no entra.
+  for (let i = 0; i < 12; i++) assert.notEqual((await pub().call('POST', '/login', { phone: '29 ' + tail4(n) })).status, 200);
+  // Altas con el teléfono exacto de la clienta: siempre "ya está registrado".
+  for (let i = 0; i < 12; i++) {
+    const dup = await pub().call('POST', '/register', { firstName: 'Otro', lastName: 'Intento', phone: '11 ' + tail4(n), pet: { name: 'X', species: 'Perro', sex: 'Macho' } });
+    assert.equal(dup.status, 409);
+  }
+  const ok = await pub().call('POST', '/login', { phone: '011 15 ' + tail4(n) });
+  assert.equal(ok.status, 200, 'la clienta sigue entrando: ' + JSON.stringify(ok.data));
+  assert.equal(ok.data.client.id, reg.data.client.id);
+});
+
+test('un texto con el carácter nulo da error de validación, no un error interno', async () => {
+  const nul = String.fromCharCode(0);
+  const r1 = await pub().call('POST', '/register', { firstName: 'Ra' + nul + 'ro', lastName: 'Nulo', phone: '11 ' + tail4(local8()), pet: { name: 'Uno', species: 'Perro', sex: 'Macho' } });
+  assert.equal(r1.status, 400, JSON.stringify(r1.data));
+  const r2 = await pub().call('POST', '/register', { firstName: 'Raro', lastName: 'Nulo', phone: '11 ' + tail4(local8()), pet: { name: 'U' + nul + 'no', species: 'Perro', sex: 'Macho' } });
+  assert.equal(r2.status, 400, JSON.stringify(r2.data));
+  const c = await clienteNuevo('Quique');
+  assert.equal((await pub(c.token).call('POST', '/pets', { pet: { name: nul, species: 'Perro', sex: 'Macho' } })).status, 400);
+});

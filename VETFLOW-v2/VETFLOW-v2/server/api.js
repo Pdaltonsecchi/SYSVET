@@ -1928,20 +1928,22 @@ function publicIpLimit(ctx) {
   if (!booking.limit('ip:' + U.clientIp(ctx.req), L.ipRequests, 10 * MIN)) throw new HttpError(429, PUBLIC_IP_LIMIT_MSG);
 }
 /**
- * Ingresos fallidos: se cuentan por IP, por teléfono y en total. Solo los fallidos: entrar bien con tu número nunca
- * te bloquea, y nadie puede bloquear a un cliente probando su número. El tope total frena a quien prueba números al
- * azar para encontrar clientes, aunque cambie de IP.
+ * Ingresos fallidos: se cuentan por IP y en total. El tope total frena a quien prueba números al azar para encontrar
+ * clientes, aunque cambie de IP.
+ * El intento se anota ANTES de consultar la base (si no, cien pedidos mandados a la vez pasarían todos el control) y
+ * se devuelve con loginRelease si el ingreso salió bien: entrar con tu número nunca te bloquea.
  */
-function loginGuard(ctx, norm) {
+function loginReserve(ctx) {
+  const ipKey = 'fallo-ip:' + U.clientIp(ctx.req);
   if (booking.blocked('fallo-total:todos', L.failsGlobal)) throw new HttpError(429, PUBLIC_CLOSED_MSG);
-  if (booking.blocked('fallo-ip:' + U.clientIp(ctx.req), L.failsPerIp) || booking.blocked('fallo-tel:' + booking.phoneLimitKey(norm), L.failsPerPhone)) {
-    throw new HttpError(429, PUBLIC_IP_LIMIT_MSG);
-  }
-}
-function loginFailed(ctx, norm) {
+  if (booking.blocked(ipKey, L.failsPerIp)) throw new HttpError(429, PUBLIC_IP_LIMIT_MSG);
   booking.hit('fallo-total:todos', 15 * MIN);
-  booking.hit('fallo-ip:' + U.clientIp(ctx.req), 60 * MIN);
-  booking.hit('fallo-tel:' + booking.phoneLimitKey(norm), 15 * MIN);
+  booking.hit(ipKey, 60 * MIN);
+  return ipKey;
+}
+function loginRelease(ipKey) {
+  booking.unhit('fallo-total:todos');
+  booking.unhit(ipKey);
 }
 /** Huella corta del teléfono guardado: si la veterinaria lo cambia, las sesiones abiertas de ese cliente dejan de valer. */
 const phoneTag = (norm) => crypto.createHash('sha256').update(String(norm || '')).digest('base64url').slice(0, 12);
@@ -1985,11 +1987,12 @@ async function upcomingOf(clientId) {
       'ORDER BY a.appointment_date, a.appointment_time, a.id',
     [clientId, U.todayAR()]
   );
+  const now = nowAR();
   return r.rows.map((x) => ({
     id: x.id, patientId: x.patient_id, patientName: x.patient_name, type: x.appointment_type,
     typeLabel: U.APPT_LABELS[x.appointment_type] || x.appointment_type, date: x.appointment_date, time: x.hhmm, status: x.status,
     // Desde la página se cancela solo lo que se pidió desde la página; lo que agendó la veterinaria, por teléfono.
-    canCancel: x.source === 'web',
+    canCancel: x.source === 'web' && (x.appointment_date > now.date || booking.toMin(x.hhmm) > now.min),
   }));
 }
 async function clientSummary(client, withToken) {
@@ -2069,15 +2072,24 @@ add('POST', '/api/public/login', { public: true }, async (ctx) => {
   publicIpLimit(ctx);
   const ph = U.optPhone(ctx.body && ctx.body.phone);
   if (!ph.norm) throw U.bad('Ingresá tu teléfono.');
-  loginGuard(ctx, ph.norm);
-  const found = await clientsByPhone(db, ph.norm);
-  if (found.length !== 1) {
-    loginFailed(ctx, ph.norm);
-    if (!found.length) throw new HttpError(404, 'Ese teléfono no está registrado. Probá de nuevo o llamá a la veterinaria.');
-    // El mismo teléfono en más de una ficha: no se entra a ninguna, para no mostrar los datos de otra persona.
-    throw new HttpError(404, 'No pudimos identificarte con ese teléfono. Llamá a la veterinaria y te ayudamos.');
+  const reserved = loginReserve(ctx);
+  let found;
+  try {
+    found = await clientsByPhone(db, ph.norm);
+  } catch (e) {
+    loginRelease(reserved);
+    throw e;
   }
-  return clientSummary(found[0], true);
+  if (found.length === 1) {
+    loginRelease(reserved);
+    return clientSummary(found[0], true);
+  }
+  // Insistir con un mismo número que no entra: tope propio. Solo se mira cuando el ingreso falló, así que nadie puede
+  // dejar afuera a un cliente probando su número (ni uno parecido): el que entra bien, entra siempre.
+  if (!booking.limit('fallo-tel:' + booking.phoneLimitKey(ph.norm), L.failsPerPhone, 15 * MIN)) throw new HttpError(429, PUBLIC_IP_LIMIT_MSG);
+  if (!found.length) throw new HttpError(404, 'Ese teléfono no está registrado. Probá de nuevo o llamá a la veterinaria.');
+  // El mismo teléfono en más de una ficha: no se entra a ninguna, para no mostrar los datos de otra persona.
+  throw new HttpError(404, 'No pudimos identificarte con ese teléfono. Llamá a la veterinaria y te ayudamos.');
 });
 
 add('GET', '/api/public/me', { public: true }, async (ctx) => {
@@ -2094,16 +2106,18 @@ add('POST', '/api/public/register', { public: true }, async (ctx) => {
   const ph = U.optPhone(b.phone);
   if (!ph.norm) throw U.bad('Ingresá tu teléfono.');
   const pet = webPetInput(b.pet);
-  // El alta también dice si un teléfono ya existe, así que comparte los topes del ingreso.
-  loginGuard(ctx, ph.norm);
   const ipKey = 'alta-ip:' + U.clientIp(ctx.req);
   if (booking.blocked(ipKey, L.signupsPerIp)) throw new HttpError(429, PUBLIC_IP_LIMIT_MSG);
   if (booking.blocked('alta-total:dia', L.signupsPerDay)) throw new HttpError(429, PUBLIC_CLOSED_MSG);
+  // El alta también dice si un teléfono ya existe, así que comparte los topes del ingreso (por IP y total): el intento
+  // se anota antes de consultar y solo queda anotado si el teléfono ya estaba registrado.
+  const reserved = loginReserve(ctx);
+  let dup = false;
   const client = await db.tx(async (c) => {
     // Con candado: dos altas simultáneas con el mismo teléfono no crean dos fichas.
     await c.query("SELECT pg_advisory_xact_lock(hashtext('turnos-web-alta'))");
     if ((await clientsByPhone(c, ph.norm)).length) {
-      loginFailed(ctx, ph.norm);
+      dup = true;
       throw new HttpError(409, 'Ese teléfono ya está registrado. Volvé atrás y entrá con tu número.');
     }
     // Se vuelve a mirar el tope con el candado tomado: varias altas a la vez no lo pasan.
@@ -2114,6 +2128,8 @@ add('POST', '/api/public/register', { public: true }, async (ctx) => {
     booking.hit(ipKey, 60 * MIN);
     booking.hit('alta-total:dia', 24 * 60 * MIN);
     return r.rows[0];
+  }).finally(() => {
+    if (!dup) loginRelease(reserved);
   });
   return clientSummary(client, true);
 });

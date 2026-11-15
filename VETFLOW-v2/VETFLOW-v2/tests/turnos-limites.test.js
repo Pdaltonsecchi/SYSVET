@@ -37,9 +37,9 @@ test('desde una misma IP: 20 ingresos fallidos por hora', async () => {
   assert.equal((await call('/login', { phone: '11 ' + n8() }, '198.51.100.50')).status, 429);
 });
 
-test('probar números cambiando de IP: a los 30 ingresos fallidos en total se cierra el ingreso por un rato', async () => {
-  // La prueba anterior ya sumó 20 fallidos: con 10 más, desde 10 IP distintas, se llega al tope total.
-  for (let i = 1; i <= 10; i++) assert.equal((await call('/login', { phone: '11 ' + n8() }, '203.0.113.' + i)).status, 404, 'intento ' + i);
+test('probar números cambiando de IP: a los 60 ingresos fallidos en total se cierra el ingreso por un rato', async () => {
+  // La prueba anterior ya sumó 20 fallidos: con 40 más, desde 40 IP distintas, se llega al tope total.
+  for (let i = 1; i <= 40; i++) assert.equal((await call('/login', { phone: '11 ' + n8() }, '203.0.113.' + i)).status, 404, 'intento ' + i);
   const r = await call('/login', { phone: '11 ' + n8() }, '203.0.113.200');
   assert.equal(r.status, 429);
   assert.match(r.data.error, /Llamá a la veterinaria/);
