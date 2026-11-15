@@ -16,6 +16,7 @@ const MIME = {
   '.png': 'image/png',
   '.ico': 'image/x-icon',
   '.json': 'application/json; charset=utf-8',
+  '.woff2': 'font/woff2',
 };
 
 function checkEnv() {
@@ -57,8 +58,8 @@ function securityHeaders(res) {
   // Sin 'unsafe-inline' en style-src: la app no usa style="…"; las medidas calculadas se aplican por JavaScript.
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; " +
-      "font-src https://fonts.gstatic.com; img-src 'self' data:" + (STORAGE_ORIGIN ? ' ' + STORAGE_ORIGIN : '') + "; connect-src 'self'; " +
+    "default-src 'self'; script-src 'self'; style-src 'self'; " +
+      "font-src 'self'; img-src 'self' data:" + (STORAGE_ORIGIN ? ' ' + STORAGE_ORIGIN : '') + "; connect-src 'self'; " +
       "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
   );
   if (PROD) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
