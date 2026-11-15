@@ -194,8 +194,8 @@ PostgreSQL para Node).
 - **Cabeceras de seguridad** (en `server/index.js`, aplicadas a toda
   respuesta): `X-Content-Type-Options`, `X-Frame-Options: DENY`,
   `Referrer-Policy`, `Permissions-Policy`, `Content-Security-Policy`
-  (restrictiva: solo permite estilos propios + Google Fonts, sin scripts
-  externos), y `Strict-Transport-Security` en producción.
+  (restrictiva: solo permite estilos, fuentes y scripts propios; nada de
+  otros sitios), y `Strict-Transport-Security` en producción.
 
 ## 6. Modelo de datos (ver `db/schema.sql` para el detalle exacto)
 
@@ -401,12 +401,14 @@ encontrado, 409 conflicto de stock/email duplicado, 413 payload muy grande,
   `CHECK` de `schema.sql` si se agregara una restricción a nivel de base
   (hoy esas columnas son `TEXT` sin `CHECK`, la validación es solo de
   aplicación).
-- **Identidad visual:** paleta verde-azulado ("teal") oscuro para la barra
-  lateral, tipografía `Bricolage Grotesque` para títulos y `Figtree` para
-  texto (cargadas desde Google Fonts), tema claro/oscuro automático según
-  preferencia del sistema operativo (`prefers-color-scheme`), diseño
-  responsive con un quiebre a los 820px (en mobile, la lista de pacientes y
-  el detalle se muestran uno a la vez con un botón "Volver").
+- **Identidad visual:** definida en `DISENO.md` (fuente de verdad: tokens y
+  reglas de componentes). Grafito verdoso + verde salvia + gris fresco, estilo
+  "iOS" (tarjetas blancas, radios 8/12/16/22, sombras mínimas, ventanas como
+  hoja inferior en celular, barra inferior translúcida). Texto con la fuente
+  del dispositivo; títulos en `Bricolage Grotesque` servida desde
+  `public/vendor` (no se usa Google Fonts). Solo tema claro. Quiebre
+  responsive a los 820px (en celular, lista y detalle se muestran de a uno
+  con un botón "Volver").
 
 ## 12. Qué falta o quedó pendiente (mencionado explícitamente al usuario)
 
