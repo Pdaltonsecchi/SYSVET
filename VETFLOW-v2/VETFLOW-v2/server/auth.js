@@ -143,5 +143,6 @@ module.exports = {
   hashPassword, verifyPassword, dummyHash,
   setSession, clearSession, currentUser,
   throttleCheck, throttleFail, throttleOk,
+  sign, verify,
   ensureAdmin,
 };

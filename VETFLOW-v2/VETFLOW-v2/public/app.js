@@ -156,7 +156,7 @@ function showLogin(msg){
   $('#lerror').textContent=msg||'';
 }
 function applyBootstrap(d){
-  S.clinic=d.clinic||'SYSVET';S.settings=d.settings||{};document.title=S.clinic;var sn=$('#shopname');if(sn)sn.textContent=S.clinic;S.attachments=!!d.attachments;S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.suppliers=d.suppliers||[];S.clients=d.clients||[];S.summary=d.summary||null;
+  S.clinic=d.clinic||'SYSVET';S.settings=d.settings||{};document.title=S.clinic;var sn=$('#shopname');if(sn)sn.textContent=S.clinic;S.attachments=!!d.attachments;S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.suppliers=d.suppliers||[];S.clients=d.clients||[];S.summary=d.summary||null;S.pendingWeb=Number(d.pendingWeb&&d.pendingWeb.count)||0;S.pendingWebFirst=(d.pendingWeb&&d.pendingWeb.first)||null;
 }
 async function start(){
   var d=await api('/bootstrap');
@@ -484,6 +484,7 @@ function renderAlerts(){
   var warn=S.patients.filter(function(p){return patientAlert(p)==='warn';}).length;
   var low=S.products.filter(lowStock).length;
   var h='';
+  if(S.pendingWeb)h+='<button class="al" data-action="goto-pedidos"><span class="dot pedido"></span><span>'+plural(S.pendingWeb,'turno pedido por la web para aceptar','turnos pedidos por la web para aceptar')+'</span></button>';
   if(bad)h+='<button class="al" data-action="goto-vac"><span class="dot vencida"></span><span>'+plural(bad,'paciente con vacuna vencida','pacientes con vacuna vencida')+'</span></button>';
   if(warn)h+='<button class="al" data-action="goto-vac"><span class="dot porvencer"></span><span>'+plural(warn,'paciente con vacuna por vencer','pacientes con vacuna por vencer')+'</span></button>';
   if(low)h+='<button class="al" data-action="goto-stock"><span class="dot stock"></span><span>'+plural(low,'producto con poco stock','productos con poco stock')+'</span></button>';
@@ -1150,7 +1151,8 @@ function viewProveedores(){
 var WEEKDAYS=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
 // Texto de un turno en la grilla: "10:00 · Luna (Gómez)" (el apellido distingue pacientes homónimos).
 var ownerLast=function(a){return a.patientOwnerLast||surname(a.patientOwner);};
-var apptLabel=function(a){return a.time.slice(0,5)+' · '+esc(a.patientName)+' ('+esc(ownerLast(a))+')';};
+// Los pedidos hechos desde la página de turnos llevan "Pendiente" hasta que se acepten.
+var apptLabel=function(a){return a.time.slice(0,5)+' · '+(a.status==='pendiente'?'Pendiente · ':'')+esc(a.patientName)+' ('+esc(ownerLast(a))+')';};
 function dayAppts(iso){return (ui.appts||[]).filter(function(a){return a.date===iso;}).sort(function(a,b){return a.time.localeCompare(b.time);});}
 function calDayColumn(iso){
   var list=dayAppts(iso);
@@ -1267,6 +1269,13 @@ function configGeneral(){
   return '<form id="cfgform" class="cfg" novalidate>'+
     '<section class="panel"><h2>Veterinaria</h2><div class="fields">'+fld('Nombre de la veterinaria','shopName',{value:st.shopName||S.clinic,req:true,maxlength:100,full:true})+'</div>'+
       '<p class="cfg-hint">Se ve en el menú, en la pestaña del navegador y en las impresiones.</p></section>'+
+    '<section class="panel"><h2>Página pública</h2><div class="fields">'+
+      fld('Nombre del profesional','professionalName',{value:st.professionalName||'',maxlength:100,full:true,ph:'Ej: Dra. Laura Gómez'})+
+      fld('Teléfono de la veterinaria','clinicPhone',{type:'tel',value:st.phone||'',maxlength:50,pattern:PHONE_PAT,title:'Solo números, espacios, + , - y paréntesis (mínimo 6 dígitos)',ph:'Ej: 11 4444-5555'})+
+      fld('Dirección','clinicAddress',{value:st.address||'',maxlength:200,ph:'Calle, número, localidad'})+
+      fld('Enlace de Google Maps','mapsUrl',{value:st.mapsUrl||'',maxlength:300,full:true,ph:'https://maps.app.goo.gl/...'})+
+      fld('Reseñas (una por línea: estrellas | autor | texto)','reviews',{type:'textarea',value:(st.reviews||[]).map(function(r){return r.stars+' | '+r.author+' | '+r.text;}).join('\n'),full:true,ph:'5 | María P. | Muy buena atención con mi perro.'})+
+      '</div><p class="cfg-hint">Estos datos se muestran en la página de turnos. El teléfono es el del botón "Llamar" y el que ve un cliente cuando la página no lo reconoce. Las reseñas las copiás de Google Maps a mano: las que quieras mostrar, con su autor y la cantidad de estrellas.</p></section>'+
     '<section class="panel"><h2>Horario de atención</h2><p class="cfg-hint">Un día puede tener más de un horario, por ejemplo de 08:00 a 12:00 y de 16:00 a 19:00. Al anotar un turno fuera de estos horarios, la agenda te avisa antes de guardarlo.</p>'+
       '<div class="hours" id="cfghours">'+WEEK_ORDER.map(hourDayHTML).join('')+'</div></section>'+
     '<section class="panel"><h2>Medios de pago</h2><p class="cfg-hint">Los que marques son los que aparecen al cobrar y al registrar ingresos o egresos.</p>'+
@@ -1310,7 +1319,21 @@ async function saveConfig(){
   var methods=Array.prototype.map.call(f.querySelectorAll('[name="methods"]:checked'),function(x){return x.value;});
   var msg=!name.value.trim()?'Escribí el nombre de la veterinaria.':h.error||(!methods.length?'Dejá habilitado al menos un medio de pago.':'');
   if(msg){err.textContent=msg;throw new Error(msg);}
-  var body=Object.assign({},S.settings,{shopName:name.value.trim(),hours:h.hours,methods:methods});
+  // Reseñas: una por línea, "estrellas | autor | texto". Las líneas vacías se ignoran.
+  var reviews=[],revErr='';
+  f.querySelector('[name="reviews"]').value.split('\n').forEach(function(line){
+    if(!line.trim()||revErr)return;
+    var parts=line.split('|').map(function(x){return x.trim();});
+    if(parts.length<3){revErr='Cada reseña va en una línea: estrellas | autor | texto.';return;}
+    var stars=Number(parts[0]);
+    if(!(stars>=1&&stars<=5)){revErr='Las estrellas de cada reseña tienen que ser un número del 1 al 5.';return;}
+    reviews.push({stars:stars,author:parts[1],text:parts.slice(2).join('|')});
+  });
+  if(revErr){err.textContent=revErr;throw new Error(revErr);}
+  var body=Object.assign({},S.settings,{shopName:name.value.trim(),hours:h.hours,methods:methods,
+    professionalName:f.querySelector('[name="professionalName"]').value.trim(),
+    phone:f.querySelector('[name="clinicPhone"]').value.trim(),address:f.querySelector('[name="clinicAddress"]').value.trim(),
+    mapsUrl:f.querySelector('[name="mapsUrl"]').value.trim(),reviews:reviews});
   delete body.emailReady;
   var r;
   try{r=await api('/settings',{method:'PUT',body:body});}
@@ -2054,8 +2077,29 @@ function appointmentDetails(a){
     '<p><b>Tipo:</b> '+esc(APPT_LABEL[a.type]||a.type)+'</p>'+
     '<p><b>Cuándo:</b> '+fmtDate(a.date)+' de '+a.time.slice(0,5)+' a '+a.endTime+' hs <small>('+a.duration+' min)</small></p>'+
     (a.description?'<p><b>Descripción:</b> '+esc(a.description)+'</p>':'')+
-    '<div class="actions"><button type="button" class="btn danger-o" data-x="del">Eliminar turno</button><button type="button" class="btn" data-x="ficha">Ver ficha</button><button type="button" class="btn ghost" data-close>Cerrar</button><button type="button" class="btn primary" data-x="edit">Editar</button></div></form>';
+    (a.status==='pendiente'?'<p class="cfg-hint"><b>Pedido desde la página de turnos.</b> Todavía no lo aceptaste: mientras esté pendiente, ese horario queda reservado.</p>'+
+      '<div class="actions"><button type="button" class="btn danger-o" data-x="reject">Rechazar</button><button type="button" class="btn ghost" data-close>Cerrar</button><button type="button" class="btn primary" data-x="accept">Aceptar turno</button></div></form>':
+    '<div class="actions"><button type="button" class="btn danger-o" data-x="del">Eliminar turno</button><button type="button" class="btn" data-x="ficha">Ver ficha</button><button type="button" class="btn ghost" data-close>Cerrar</button><button type="button" class="btn primary" data-x="edit">Editar</button></div></form>');
   dlg.querySelector('[data-close]').addEventListener('click',function(){dlg.close();});
+  if(a.status==='pendiente'){
+    dlg.querySelector('[data-x="accept"]').addEventListener('click',async function(){
+      var s0=toMin(a.time),e0=s0+a.duration;
+      var hit=(await api('/appointments?from='+a.date+'&to='+a.date)).items.find(function(x){var xs=toMin(x.time);return x.id!==a.id&&x.status==='confirmado'&&s0<xs+x.duration&&xs<e0;});
+      if(hit){
+        var ch=await choiceDialog('Turno superpuesto','<p>Ya hay un turno confirmado a esa hora: '+esc(hit.patientName)+' ('+esc(ownerLast(hit))+') – '+esc(hit.title)+'. ¿Aceptar igual?</p>',
+          [{label:'No aceptar',value:'no',cls:'ghost'},{label:'Aceptar igual',value:'ok',cls:'primary'}]);
+        if(ch!=='ok')return;
+      }
+      await api('/appointments/'+a.id+'/status',{method:'POST',body:{status:'confirmado'}});dlg.close();await reloadCal();await checkPendingWeb(true);toast('Turno aceptado y agregado a la agenda');
+    });
+    dlg.querySelector('[data-x="reject"]').addEventListener('click',function(){
+      confirmForm('Rechazar turno','Se rechaza el pedido de '+esc(a.patientName)+' para el '+fmtDate(a.date)+' a las '+a.time.slice(0,5)+' hs. El horario queda libre para otro pedido.','Rechazar',async function(){
+        await api('/appointments/'+a.id+'/status',{method:'POST',body:{status:'rechazado'}});await reloadCal();await checkPendingWeb(true);toast('Pedido rechazado');
+      });
+    });
+    if(!dlg.open)dlg.showModal();
+    return;
+  }
   dlg.querySelector('[data-x="edit"]').addEventListener('click',function(){dlg.close();appointmentForm(a);});
   dlg.querySelector('[data-x="ficha"]').addEventListener('click',function(){
     dlg.close();ui.sel=a.patientId;ui.detail=null;ui.filter='all';ui.q='';go('pacientes');
@@ -2180,6 +2224,8 @@ var actions={
   'goto-vac':function(){ui.view='pacientes';ui.filter='alert';ui.sel=null;ui.detail=null;render();},
   'goto-stock':function(){ui.view='farmacia';ui.tab='stock';render();},
   'goto-backups':function(){return go('copias');},
+  // Pedidos de la web: abre el calendario en "2 semanas" a partir del pedido más próximo.
+  'goto-pedidos':function(){ui.cal.view='2weeks';ui.cal.anchor=S.pendingWebFirst||todayIso();return go('calendario');},
   'new-patient':function(){patientForm();},
   'edit-patient':function(){if(ui.detail)patientForm(ui.detail);},
   'del-patient':function(){
@@ -2528,9 +2574,25 @@ async function checkSession(){
     if(u&&S.user&&(u.id!==S.user.id||u.role!==S.user.role))showStaleSession(u);
   }catch(e){/* sin conexión: no se molesta al usuario */}
 }
-document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')checkSession();});
+document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible'){checkSession();checkPendingWeb();}});
+// Pedidos de turno hechos desde la página pública: se consulta cada dos minutos mientras la pestaña está a la vista,
+// así el aviso de "Para revisar" aparece solo. Si cambió la cantidad y se está mirando el calendario, se actualiza.
+var pendingCheckedAt=0;
+async function checkPendingWeb(force){
+  if(!S.user||document.body.dataset.stale||document.body.dataset.state!=='app'||document.visibilityState!=='visible')return;
+  var now=Date.now();if(!force&&now-pendingCheckedAt<60000)return;pendingCheckedAt=now;
+  try{
+    var p=await api('/appointments/pending'),n=Number(p.count)||0;
+    S.pendingWebFirst=p.first||null;
+    if(n===S.pendingWeb)return;
+    var more=n>S.pendingWeb;S.pendingWeb=n;renderAlerts();
+    if(more&&!force&&ui.view==='calendario'&&!document.querySelector('dialog[open]'))await reloadCal();
+  }catch(e){/* sin conexión: no se molesta al usuario */}
+}
+setInterval(checkPendingWeb,120000);
 document.addEventListener('keydown',function(e){if(e.key==='Escape'&&document.body.dataset.more){setMore(false);var b=$('#tabbar [data-action="more"]');if(b)b.focus();}});
-document.addEventListener('click',function(e){if(document.body.dataset.more&&e.target.closest('#side button:not([data-action="nav"])'))setMore(false);});
+// En la fase de captura: corre antes de que la acción vuelva a dibujar el menú (si no, el botón tocado ya no está en la página y "Más" quedaba abierto).
+document.addEventListener('click',function(e){if(document.body.dataset.more&&e.target.closest('#side button:not([data-action="nav"])'))setMore(false);},true);
 
 /* Tablas en celular: cada celda lleva como etiqueta el título de su columna (data-label), así la fila se puede
    mostrar como tarjeta apilada sin scroll horizontal. En pantallas medianas, si la tabla igual no entra, se avisa

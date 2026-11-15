@@ -8,6 +8,8 @@ const U = require('./util');
 const settings = require('./settings');
 const report = require('./report');
 const weekly = require('./weekly');
+const crypto = require('crypto');
+const booking = require('./booking');
 const { HttpError } = U;
 
 const routes = [];
@@ -136,6 +138,8 @@ const mapAppointment = (r) => ({
   time: String(r.appointment_time).slice(0, 5),
   type: r.appointment_type,
   duration: r.duration_min || 30,
+  status: r.status || 'confirmado',
+  source: r.source || 'sistema',
   endTime: addMinutes(String(r.appointment_time).slice(0, 5), r.duration_min || 30),
   patientOwner: r.c_first != null ? fullName(r.c_first, r.c_last) : r.owner_name || '',
   patientOwnerLast: r.c_first != null ? r.c_last || '' : '',
@@ -470,7 +474,7 @@ add('GET', '/api/bootstrap', async (ctx) => {
     listClients(db),
   ]);
   const st = await settings.getSettings();
-  const out = { user: ctx.user, clinic: st.shopName, settings: settings.publicSettings(st, ctx.user.role === 'admin'), attachments: storage.configured(), patients, products, services, suppliers: sup.rows.map(mapSupplier), clients };
+  const out = { user: ctx.user, clinic: st.shopName, settings: settings.publicSettings(st, ctx.user.role === 'admin'), attachments: storage.configured(), patients, products, services, suppliers: sup.rows.map(mapSupplier), clients, pendingWeb: await pendingWeb() };
   if (ctx.user.role === 'admin') out.summary = await cashSummary();
   return out;
 });
@@ -1836,9 +1840,9 @@ add('GET', '/api/appointments', async (ctx) => {
   const to = U.reqDate(ctx.query.get('to') || '', 'Hasta');
   if (to < from) throw U.bad('El rango de fechas no es válido');
   const r = await db.query(
-    'SELECT a.id, a.patient_id, p.name AS patient_name, p.owner_name, p.species, p.breed, p.phone, cl.first_name AS c_first, cl.last_name AS c_last, cl.phone AS c_phone, a.title, a.description, a.appointment_date, a.appointment_time, a.appointment_type, a.duration_min ' +
+    'SELECT a.id, a.patient_id, p.name AS patient_name, p.owner_name, p.species, p.breed, p.phone, cl.first_name AS c_first, cl.last_name AS c_last, cl.phone AS c_phone, a.title, a.description, a.appointment_date, a.appointment_time, a.appointment_type, a.duration_min, a.status, a.source ' +
       'FROM appointments a JOIN patients p ON p.id = a.patient_id LEFT JOIN clients cl ON cl.id = p.client_id ' +
-      'WHERE p.deleted_at IS NULL AND a.appointment_date BETWEEN $1 AND $2 ORDER BY a.appointment_date, a.appointment_time, a.id',
+      "WHERE p.deleted_at IS NULL AND a.status NOT IN ('rechazado', 'cancelado') AND a.appointment_date BETWEEN $1 AND $2 ORDER BY a.appointment_date, a.appointment_time, a.id",
     [from, to]
   );
   return { items: r.rows.map(mapAppointment) };
@@ -1888,6 +1892,326 @@ add('POST', '/api/cron/weekly-report', { public: true }, async (ctx) => {
   const secret = process.env.CRON_SECRET || '';
   if (!secret || ctx.req.headers['x-cron-secret'] !== secret) throw new HttpError(403, 'No autorizado.');
   return weekly.weeklyTick();
+});
+
+// Cuántos pedidos de la web están esperando respuesta (para el aviso "Para revisar").
+// first = fecha del pedido más próximo, para abrir el calendario justo ahí.
+async function pendingWeb() {
+  const r = await db.query(
+    "SELECT COUNT(*) AS n, MIN(a.appointment_date) AS first FROM appointments a JOIN patients p ON p.id = a.patient_id WHERE a.status = 'pendiente' AND p.deleted_at IS NULL AND a.appointment_date >= $1",
+    [U.todayAR()]
+  );
+  return { count: Number(r.rows[0].n), first: r.rows[0].first || null };
+}
+add('GET', '/api/appointments/pending', async () => pendingWeb());
+
+// La veterinaria acepta o rechaza un turno pedido desde la web (solo los pendientes).
+add('POST', '/api/appointments/:id/status', async (ctx) => {
+  const id = U.idParam(ctx.params.id);
+  const status = U.oneOf(ctx.body && ctx.body.status, ['confirmado', 'rechazado'], 'Estado');
+  const r = await db.query("UPDATE appointments SET status = $1 WHERE id = $2 AND status = 'pendiente' RETURNING id", [status, id]);
+  if (!r.rows[0]) throw new HttpError(404, 'No se encontró un turno pendiente con ese número.');
+  return { id, status };
+});
+
+/* ============================================================
+   Página pública de turnos: el cliente entra con su teléfono (sin usuario ni contraseña).
+   Solo ve y cancela sus propios turnos; nunca se devuelven datos de otros clientes.
+   ============================================================ */
+const CLIENT_SESSION_MS = 2 * 3600 * 1000;
+const PUBLIC_IP_LIMIT_MSG = 'Hiciste muchos pedidos seguidos. Esperá unos minutos y probá de nuevo.';
+const PUBLIC_CLOSED_MSG = 'En este momento no se puede hacer eso desde la página. Llamá a la veterinaria.';
+const MIN = 60 * 1000;
+const L = booking.LIMITS;
+
+function publicIpLimit(ctx) {
+  if (!booking.limit('ip:' + U.clientIp(ctx.req), L.ipRequests, 10 * MIN)) throw new HttpError(429, PUBLIC_IP_LIMIT_MSG);
+}
+/**
+ * Ingresos fallidos: se cuentan por IP y en total. El tope total frena a quien prueba números al azar para encontrar
+ * clientes, aunque cambie de IP.
+ * El intento se anota ANTES de consultar la base (si no, cien pedidos mandados a la vez pasarían todos el control) y
+ * se devuelve con loginRelease si el ingreso salió bien: entrar con tu número nunca te bloquea.
+ */
+function loginReserve(ctx) {
+  const ipKey = 'fallo-ip:' + U.clientIp(ctx.req);
+  if (booking.blocked('fallo-total:todos', L.failsGlobal)) throw new HttpError(429, PUBLIC_CLOSED_MSG);
+  if (booking.blocked(ipKey, L.failsPerIp)) throw new HttpError(429, PUBLIC_IP_LIMIT_MSG);
+  booking.hit('fallo-total:todos', 15 * MIN);
+  booking.hit(ipKey, 60 * MIN);
+  return ipKey;
+}
+function loginRelease(ipKey) {
+  booking.unhit('fallo-total:todos');
+  booking.unhit(ipKey);
+}
+/** Huella corta del teléfono guardado: si la veterinaria lo cambia, las sesiones abiertas de ese cliente dejan de valer. */
+const phoneTag = (norm) => crypto.createHash('sha256').update(String(norm || '')).digest('base64url').slice(0, 12);
+/** Fecha y minutos del día en Buenos Aires. */
+function nowAR() {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: U.TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date());
+  const g = (t) => parts.find((p) => p.type === t).value;
+  return { date: g('year') + '-' + g('month') + '-' + g('day'), min: Number(g('hour')) * 60 + Number(g('minute')) };
+}
+const SESSION_EXPIRED = 'Tu sesión venció. Ingresá de nuevo con tu teléfono.';
+/**
+ * Clientes cuyo teléfono es el mismo que el ingresado, aunque esté escrito distinto (011, 15, +54 9, espacios, guiones).
+ * Se buscan candidatos por los últimos 6 dígitos (con índice) y la comparación fina se hace con booking.samePhone.
+ */
+async function clientsByPhone(q, norm) {
+  const r = await q.query(
+    "SELECT id, first_name, last_name, phone_norm FROM clients WHERE phone_norm <> '' AND right(phone_norm, 6) = $1 ORDER BY id",
+    [booking.phoneTail(norm)]
+  );
+  return r.rows.filter((x) => booking.samePhone(x.phone_norm, norm));
+}
+function clientToken(client) {
+  return auth.sign({ c: client.id, p: phoneTag(client.phone_norm), exp: Date.now() + CLIENT_SESSION_MS });
+}
+async function clientFromRequest(ctx) {
+  const p = auth.verify(ctx.req.headers['x-cliente-token']);
+  if (!p || !Number.isInteger(p.c) || typeof p.p !== 'string') throw new HttpError(401, SESSION_EXPIRED);
+  const r = await db.query('SELECT id, first_name, last_name, phone_norm FROM clients WHERE id = $1', [p.c]);
+  if (!r.rows[0] || phoneTag(r.rows[0].phone_norm) !== p.p) throw new HttpError(401, SESSION_EXPIRED);
+  return r.rows[0];
+}
+async function petsOf(clientId) {
+  const r = await db.query('SELECT id, name, species, breed FROM patients WHERE client_id = $1 AND deleted_at IS NULL ORDER BY name, id', [clientId]);
+  return r.rows.map((x) => ({ id: x.id, name: x.name, species: x.species, breed: x.breed }));
+}
+async function upcomingOf(clientId) {
+  const r = await db.query(
+    "SELECT a.id, a.patient_id, p.name AS patient_name, a.appointment_type, a.appointment_date, to_char(a.appointment_time, 'HH24:MI') AS hhmm, a.status, a.source " +
+      'FROM appointments a JOIN patients p ON p.id = a.patient_id ' +
+      "WHERE p.client_id = $1 AND p.deleted_at IS NULL AND a.status IN ('pendiente', 'confirmado') AND a.appointment_date >= $2 " +
+      'ORDER BY a.appointment_date, a.appointment_time, a.id',
+    [clientId, U.todayAR()]
+  );
+  const now = nowAR();
+  return r.rows.map((x) => ({
+    id: x.id, patientId: x.patient_id, patientName: x.patient_name, type: x.appointment_type,
+    typeLabel: U.APPT_LABELS[x.appointment_type] || x.appointment_type, date: x.appointment_date, time: x.hhmm, status: x.status,
+    // Desde la página se cancela solo lo que se pidió desde la página; lo que agendó la veterinaria, por teléfono.
+    canCancel: x.source === 'web' && (x.appointment_date > now.date || booking.toMin(x.hhmm) > now.min),
+  }));
+}
+async function clientSummary(client, withToken) {
+  const out = {
+    client: { id: client.id, firstName: client.first_name },
+    pets: await petsOf(client.id),
+    appointments: await upcomingOf(client.id),
+  };
+  if (withToken) out.token = clientToken(client);
+  return out;
+}
+/** Turnos que ocupan agenda entre dos fechas (ambas incluidas), con hora en HH:MM y duración. */
+async function busyRows(q, from, to) {
+  const r = await q.query(
+    "SELECT appointment_date AS d, to_char(appointment_time, 'HH24:MI') AS hhmm, duration_min AS dur FROM appointments " +
+      'WHERE status = ANY($3) AND appointment_date BETWEEN $1 AND $2',
+    [from, to, booking.BOOKABLE_STATUS]
+  );
+  const byDay = new Map();
+  for (const x of r.rows) {
+    const s = booking.toMin(x.hhmm);
+    if (!byDay.has(x.d)) byDay.set(x.d, []);
+    byDay.get(x.d).push([s, s + (x.dur || 30)]);
+  }
+  return byDay;
+}
+const webPetInput = (p) => {
+  if (!p || typeof p !== 'object') throw U.bad('Falta la mascota del turno.');
+  return {
+    name: U.reqStr(p.name, 'Nombre de la mascota', 100),
+    species: U.oneOf(p.species, ['Perro', 'Gato'], 'Especie'),
+    sex: U.oneOf(p.sex, ['Macho', 'Hembra'], 'Sexo'),
+  };
+};
+async function insertPet(q, clientId, ownerName, pet) {
+  await q.query(
+    "INSERT INTO patients (name, species, breed, sex, neutered, birth, weight, owner_name, phone, email, notes, phone_norm, client_id) " +
+      "VALUES ($1, $2, '', $3, FALSE, NULL, NULL, $4, '', '', '', '', $5)",
+    [pet.name, pet.species, pet.sex, ownerName, clientId]
+  );
+}
+
+add('GET', '/api/public/info', { public: true }, async () => {
+  const st = await settings.getSettings();
+  return {
+    clinic: st.shopName,
+    phone: st.phone,
+    address: st.address,
+    professionalName: st.professionalName,
+    mapsUrl: st.mapsUrl,
+    reviews: st.reviews,
+    hours: st.hours,
+    methods: st.methods,
+    types: booking.WEB_TYPES.map((t) => ({ value: t, label: U.APPT_LABELS[t], duration: U.APPT_DURATIONS[t] })),
+  };
+});
+
+// Horarios libres de los próximos días, según el horario de atención y los turnos ya tomados.
+add('GET', '/api/public/slots', { public: true }, async (ctx) => {
+  publicIpLimit(ctx);
+  const type = booking.webType(ctx.query.get('type'));
+  const duration = U.APPT_DURATIONS[type];
+  const now = nowAR();
+  const st = await settings.getSettings();
+  const busy = await busyRows(db, now.date, U.addDays(now.date, booking.DAYS_AHEAD - 1));
+  const days = [];
+  for (let i = 0; i < booking.DAYS_AHEAD; i++) {
+    const date = U.addDays(now.date, i);
+    const times = booking.freeSlots({ hours: st.hours, date, duration, busy: busy.get(date) || [], nowMin: i === 0 ? now.min : null });
+    if (times.length) days.push({ date, times });
+  }
+  return { type, duration, days };
+});
+
+// Entrar con el teléfono: si está registrado, se devuelven sus mascotas y sus turnos.
+add('POST', '/api/public/login', { public: true }, async (ctx) => {
+  publicIpLimit(ctx);
+  const ph = U.optPhone(ctx.body && ctx.body.phone);
+  if (!ph.norm) throw U.bad('Ingresá tu teléfono.');
+  const reserved = loginReserve(ctx);
+  let found;
+  try {
+    found = await clientsByPhone(db, ph.norm);
+  } catch (e) {
+    loginRelease(reserved);
+    throw e;
+  }
+  if (found.length === 1) {
+    loginRelease(reserved);
+    return clientSummary(found[0], true);
+  }
+  // Insistir con un mismo número que no entra: tope propio. Solo se mira cuando el ingreso falló, así que nadie puede
+  // dejar afuera a un cliente probando su número (ni uno parecido): el que entra bien, entra siempre.
+  if (!booking.limit('fallo-tel:' + booking.phoneLimitKey(ph.norm), L.failsPerPhone, 15 * MIN)) throw new HttpError(429, PUBLIC_IP_LIMIT_MSG);
+  if (!found.length) throw new HttpError(404, 'Ese teléfono no está registrado. Probá de nuevo o llamá a la veterinaria.');
+  // El mismo teléfono en más de una ficha: no se entra a ninguna, para no mostrar los datos de otra persona.
+  throw new HttpError(404, 'No pudimos identificarte con ese teléfono. Llamá a la veterinaria y te ayudamos.');
+});
+
+add('GET', '/api/public/me', { public: true }, async (ctx) => {
+  publicIpLimit(ctx);
+  return clientSummary(await clientFromRequest(ctx), false);
+});
+
+// Cliente nuevo: nombre, apellido, teléfono y su primera mascota (un turno siempre es para una mascota).
+add('POST', '/api/public/register', { public: true }, async (ctx) => {
+  publicIpLimit(ctx);
+  const b = ctx.body || {};
+  const first = U.reqStr(b.firstName, 'Nombre', 100);
+  const last = U.reqStr(b.lastName, 'Apellido', 100);
+  const ph = U.optPhone(b.phone);
+  if (!ph.norm) throw U.bad('Ingresá tu teléfono.');
+  const pet = webPetInput(b.pet);
+  const ipKey = 'alta-ip:' + U.clientIp(ctx.req);
+  if (booking.blocked(ipKey, L.signupsPerIp)) throw new HttpError(429, PUBLIC_IP_LIMIT_MSG);
+  if (booking.blocked('alta-total:dia', L.signupsPerDay)) throw new HttpError(429, PUBLIC_CLOSED_MSG);
+  // El alta también dice si un teléfono ya existe, así que comparte los topes del ingreso (por IP y total): el intento
+  // se anota antes de consultar y solo queda anotado si el teléfono ya estaba registrado.
+  const reserved = loginReserve(ctx);
+  let dup = false;
+  const client = await db.tx(async (c) => {
+    // Con candado: dos altas simultáneas con el mismo teléfono no crean dos fichas.
+    await c.query("SELECT pg_advisory_xact_lock(hashtext('turnos-web-alta'))");
+    if ((await clientsByPhone(c, ph.norm)).length) {
+      dup = true;
+      throw new HttpError(409, 'Ese teléfono ya está registrado. Volvé atrás y entrá con tu número.');
+    }
+    // Se vuelve a mirar el tope con el candado tomado: varias altas a la vez no lo pasan.
+    if (booking.blocked(ipKey, L.signupsPerIp)) throw new HttpError(429, PUBLIC_IP_LIMIT_MSG);
+    if (booking.blocked('alta-total:dia', L.signupsPerDay)) throw new HttpError(429, PUBLIC_CLOSED_MSG);
+    const r = await c.query("INSERT INTO clients (first_name, last_name, email, phone, phone_norm, address) VALUES ($1, $2, '', $3, $4, '') RETURNING id, first_name, last_name, phone_norm", [first, last, ph.phone, ph.norm]);
+    await insertPet(c, r.rows[0].id, fullName(first, last), pet);
+    booking.hit(ipKey, 60 * MIN);
+    booking.hit('alta-total:dia', 24 * 60 * MIN);
+    return r.rows[0];
+  }).finally(() => {
+    if (!dup) loginRelease(reserved);
+  });
+  return clientSummary(client, true);
+});
+
+// Mascota nueva para un cliente que ya está registrado.
+add('POST', '/api/public/pets', { public: true }, async (ctx) => {
+  publicIpLimit(ctx);
+  const client = await clientFromRequest(ctx);
+  const pet = webPetInput(ctx.body && ctx.body.pet);
+  await db.tx(async (c) => {
+    await c.query("SELECT pg_advisory_xact_lock(hashtext('turnos-web-alta'))");
+    const n = await c.query('SELECT COUNT(*) AS n FROM patients WHERE client_id = $1', [client.id]);
+    if (Number(n.rows[0].n) >= L.petsPerClient) throw U.bad('Ya tenés ' + L.petsPerClient + ' mascotas cargadas. Para agregar otra, llamá a la veterinaria.');
+    await insertPet(c, client.id, fullName(client.first_name, client.last_name), pet);
+  });
+  return clientSummary(client, false);
+});
+
+// Pedido de turno: queda "pendiente" hasta que la veterinaria lo acepte. Se revisa el horario dentro de una transacción
+// con un candado, así dos pedidos a la misma hora no se pisan.
+add('POST', '/api/public/appointments', { public: true }, async (ctx) => {
+  publicIpLimit(ctx);
+  const client = await clientFromRequest(ctx);
+  const b = ctx.body || {};
+  const type = booking.webType(b.type);
+  const duration = U.APPT_DURATIONS[type];
+  const date = U.reqDate(b.date, 'Fecha');
+  // Solo HH:MM: los horarios se ofrecen de a 10 minutos, sin segundos.
+  if (typeof b.time !== 'string' || !/^\d{2}:\d{2}$/.test(b.time)) throw U.bad('Hora inválida: Hora');
+  const time = U.reqTime(b.time, 'Hora');
+  const patientId = U.idParam(b.patientId);
+  if (date < U.todayAR()) throw U.bad('Ese día ya pasó. Elegí otra fecha.');
+  if (date > U.addDays(U.todayAR(), booking.DAYS_AHEAD - 1)) throw U.bad('Solo se pueden pedir turnos para los próximos ' + booking.DAYS_AHEAD + ' días.');
+  const id = await db.tx(async (c) => {
+    await c.query("SELECT pg_advisory_xact_lock(hashtext('turnos-web'))");
+    const own = await c.query('SELECT 1 FROM patients WHERE id = $1 AND client_id = $2 AND deleted_at IS NULL', [patientId, client.id]);
+    if (!own.rows[0]) throw new HttpError(404, 'No encontramos esa mascota en tu cuenta.');
+    const st = await settings.getSettings();
+    const now = nowAR();
+    const busy = (await busyRows(c, date, date)).get(date) || [];
+    if (!booking.canBook({ hours: st.hours, date, time, duration, busy, nowMin: date === now.date ? now.min : null })) {
+      throw U.bad('Ese horario ya no está disponible. Elegí otro.');
+    }
+    // Topes: un mismo cliente (o alguien que entró con su número) no puede llenar la agenda.
+    const sameDay = await c.query('SELECT 1 FROM appointments WHERE patient_id = $1 AND appointment_date = $2 AND status = ANY($3) LIMIT 1', [patientId, date, booking.BOOKABLE_STATUS]);
+    if (sameDay.rows[0]) throw U.bad('Esa mascota ya tiene un turno ese día. Si querés cambiarlo, cancelalo y pedí otro.');
+    const mine = await c.query(
+      "SELECT COUNT(*) AS n FROM appointments a JOIN patients p ON p.id = a.patient_id WHERE p.client_id = $1 AND a.status = 'pendiente' AND a.appointment_date >= $2",
+      [client.id, now.date]
+    );
+    if (Number(mine.rows[0].n) >= L.pendingPerClient) {
+      throw U.bad('Ya tenés ' + L.pendingPerClient + ' pedidos esperando confirmación. Cuando la veterinaria los confirme vas a poder pedir más.');
+    }
+    const all = await c.query("SELECT COUNT(*) AS n FROM appointments WHERE status = 'pendiente' AND source = 'web' AND appointment_date >= $1", [now.date]);
+    if (Number(all.rows[0].n) >= L.pendingGlobal) throw new HttpError(429, PUBLIC_CLOSED_MSG);
+    const r = await c.query(
+      "INSERT INTO appointments (patient_id, title, description, appointment_date, appointment_time, appointment_type, duration_min, status, source) " +
+        "VALUES ($1, $2, '', $3, $4, $5, $6, 'pendiente', 'web') RETURNING id",
+      [patientId, U.APPT_LABELS[type] + ' (pedido web)', date, time, type, duration]
+    );
+    return r.rows[0].id;
+  });
+  return { id, status: 'pendiente' };
+});
+
+// El cliente cancela un turno suyo que todavía no pasó.
+add('POST', '/api/public/appointments/:id/cancel', { public: true }, async (ctx) => {
+  publicIpLimit(ctx);
+  const client = await clientFromRequest(ctx);
+  const id = U.idParam(ctx.params.id);
+  const now = nowAR();
+  const cur = await db.query(
+    "SELECT a.source FROM appointments a JOIN patients p ON p.id = a.patient_id " +
+      "WHERE a.id = $1 AND p.client_id = $2 AND a.status IN ('pendiente', 'confirmado') AND (a.appointment_date > $3 OR (a.appointment_date = $3 AND a.appointment_time > $4::time))",
+    [id, client.id, now.date, booking.fromMin(now.min)]
+  );
+  if (!cur.rows[0]) throw new HttpError(404, 'No encontramos ese turno para cancelar. Puede que ya haya pasado.');
+  // Lo que agendó la veterinaria (por ejemplo una cirugía) no se cancela desde la página: se avisa por teléfono.
+  if (cur.rows[0].source !== 'web') throw new HttpError(409, 'Ese turno lo agendó la veterinaria. Para cancelarlo o cambiarlo, llamá a la veterinaria.');
+  const r = await db.query("UPDATE appointments SET status = 'cancelado' WHERE id = $1 AND source = 'web' AND status IN ('pendiente', 'confirmado') RETURNING id", [id]);
+  if (!r.rows[0]) throw new HttpError(404, 'No encontramos ese turno para cancelar. Puede que ya haya pasado.');
+  return { ok: true };
 });
 
 module.exports = { dispatch, weeklyTick: weekly.weeklyTick };

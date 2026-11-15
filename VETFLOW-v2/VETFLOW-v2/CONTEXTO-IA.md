@@ -457,3 +457,41 @@ como posible trabajo futuro si el usuario o esta IA las retoman):
   `checkEnv()` en `server/index.js` y a `render.yaml`.
 - Mantener los mensajes de cara al usuario en español simple: este
   proyecto está pensado para alguien sin formación técnica.
+
+## 14. Turnos por la web (página pública)
+
+Agregado en la rama `turnos-web`. Guía para el dueño: `INSTRUCTIVO-TURNOS-WEB.md`.
+
+- **Qué es:** `public/turnos.html` (+ `turnos.css`, `turnos.js`) es la página pública de la veterinaria: datos,
+  horarios, formas de pago, reseñas cargadas a mano, "Cómo llegar" y pedido de turnos. Se sirve en `/turnos.html`;
+  `/` sigue siendo el sistema interno (decisión del dueño).
+- **Ingreso del cliente:** solo con su teléfono, sin contraseña (decisión del dueño, riesgo aceptado). El servidor
+  devuelve un token firmado (`auth.sign`, 2 horas) que viaja en el header `X-Cliente-Token`; lleva una huella del
+  teléfono guardado, así que deja de valer si la veterinaria cambia ese teléfono. No sirve como sesión del personal.
+- **Teléfonos:** `booking.phoneKey` saca 54, 9, 0 y 15; `booking.samePhone` compara por los últimos 10 dígitos (u 8
+  si a alguno le falta la característica; con menos de 8, solo exacto). En la base se buscan candidatos por los
+  últimos 6 dígitos (`clients_phone_tail_idx`). Si el teléfono coincide con más de un cliente, no entra a ninguno.
+- **Turnos:** `appointments.status` (`pendiente`/`confirmado`/`rechazado`/`cancelado`) y `source`
+  (`sistema`/`web`). Desde la web solo consulta y vacuna, dentro de los próximos 14 días y del horario de atención;
+  quedan `pendiente` hasta que el personal acepta o rechaza (`POST /api/appointments/:id/status`). Pendientes y
+  confirmados ocupan agenda. El pedido se valida dentro de una transacción con `pg_advisory_xact_lock`.
+  El cliente solo cancela por la web lo que pidió por la web y todavía no empezó.
+- **Rutas públicas** (`{ public: true }`): `GET /api/public/info`, `GET /api/public/slots`, `POST /api/public/login`,
+  `GET /api/public/me`, `POST /api/public/register`, `POST /api/public/pets`, `POST /api/public/appointments`,
+  `POST /api/public/appointments/:id/cancel`. Nunca devuelven datos de otro cliente.
+- **Topes** (`booking.LIMITS`, contadores en memoria por proceso con `booking.limit/hit/blocked`; los que dependen de
+  datos se cuentan en la base): 120 pedidos por IP cada 10 min; ingresos fallidos: 20 por IP por hora, 10 por teléfono
+  cada 15 min y 60 en total cada 15 min (el intento se anota antes de consultar la base y se devuelve si el ingreso salió bien: entrar bien nunca bloquea); altas: 5 por IP por hora y 20 por día; 10 mascotas por cliente; un turno por
+  mascota por día; 3 pendientes por cliente; 60 pendientes web en total. Se ajustan con variables `TURNOS_*` (las
+  pruebas los suben en `tests/helpers.js`; `tests/turnos-limites.test.js` prueba los valores reales).
+  Las IPv6 se cuentan por bloque /64. La IP sale de `CF-Connecting-IP` (Render está detrás de Cloudflare) y, si no viene, de `X-Forwarded-For`; como esa
+  cabecera se puede falsificar, la protección real son los topes totales, que no dependen de la IP.
+- **Sistema interno:** el calendario muestra "Pendiente · …" y permite aceptar o rechazar; `GET /api/appointments/pending`
+  y `bootstrap.pendingWeb` alimentan el aviso de "Para revisar" (se consulta cada 2 minutos con la pestaña visible).
+  Configuración → Página pública: profesional, teléfono, dirección, enlace de Maps (solo https) y reseñas.
+- **Copias de seguridad:** `appointments` incluye `status` y `source`; una copia vieja se restaura como
+  `confirmado`/`sistema`. La configuración (tabla de ajustes) no entra en las copias, igual que antes.
+- **Pruebas:** `tests/booking.test.js` (lógica pura), `tests/turnos-web.test.js` (de punta a punta, incluye pedidos
+  simultáneos) y `tests/turnos-limites.test.js`. Necesitan un Postgres de prueba con codificación UTF-8.
+- **Pendiente / ideas:** avisar al personal cuando un cliente cancela un turno ya confirmado; no hay recordatorios
+  al cliente; los contadores en memoria se reinician si el servidor se reinicia (plan gratuito de Render).

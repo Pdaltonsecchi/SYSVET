@@ -30,7 +30,40 @@ const DEFAULT_SETTINGS = {
   expiryDays: 30,
   fixedMonthly: 0,
   report: { enabled: false, weekday: 1, hour: 8, recipients: '' },
+  // Datos para la página pública de la veterinaria.
+  professionalName: '',
+  mapsUrl: '',
+  reviews: [],
 };
+
+const MAX_REVIEWS = 6;
+
+/** Reseñas que se muestran en la página pública: { author, stars (1-5), text }. Las escribe la veterinaria a mano. */
+function checkReviews(list) {
+  if (!Array.isArray(list)) throw U.bad('Las reseñas no son válidas.');
+  if (list.length > MAX_REVIEWS) throw U.bad('Podés mostrar hasta ' + MAX_REVIEWS + ' reseñas.');
+  return list.map((r) => {
+    if (!r || typeof r !== 'object') throw U.bad('Una reseña no es válida.');
+    return {
+      author: U.reqStr(r.author, 'Autor de la reseña', 80),
+      stars: U.reqInt(r.stars, 'Estrellas de la reseña', 1, 5),
+      text: U.reqStr(r.text, 'Texto de la reseña', 400),
+    };
+  });
+}
+/** El enlace a Google Maps tiene que ser una dirección https. Vacío = sin enlace. */
+function checkMapsUrl(s) {
+  const t = U.optStr(s, 300);
+  if (!t) return '';
+  let u;
+  try {
+    u = new URL(t);
+  } catch (e) {
+    throw U.bad('El enlace de Google Maps no es válido.');
+  }
+  if (u.protocol !== 'https:') throw U.bad('El enlace de Google Maps tiene que empezar con https://');
+  return u.toString();
+}
 
 let cache = null;
 function clearCache() {
@@ -92,7 +125,11 @@ function normHours(h) {
 
 // El ayudante no necesita ver la configuración del informe por email ni los umbrales de ganancia.
 function publicSettings(s, admin) {
-  const out = { shopName: s.shopName, address: s.address, phone: s.phone, ticketText: s.ticketText, ticketWidth: s.ticketWidth, hours: s.hours, methods: s.methods, expiryDays: s.expiryDays, defaultMinStock: s.defaultMinStock };
+  const out = {
+    shopName: s.shopName, address: s.address, phone: s.phone, ticketText: s.ticketText, ticketWidth: s.ticketWidth, hours: s.hours, methods: s.methods,
+    expiryDays: s.expiryDays, defaultMinStock: s.defaultMinStock,
+    professionalName: s.professionalName, mapsUrl: s.mapsUrl, reviews: s.reviews,
+  };
   if (admin) Object.assign(out, { fixedCategories: s.fixedCategories, fixedMonthly: s.fixedMonthly, lowMargin: s.lowMargin, lostDays: s.lostDays, report: s.report, emailReady: report.configured() });
   return out;
 }
@@ -112,6 +149,9 @@ function validate(b, cur) {
   const next = {
     shopName: U.reqStr(b.shopName, 'Nombre del negocio', 100),
     address: U.optStr(b.address, 200),
+    professionalName: U.optStr(b.professionalName, 100),
+    mapsUrl: checkMapsUrl(b.mapsUrl),
+    reviews: checkReviews(Array.isArray(b.reviews) ? b.reviews : cur.reviews),
     phone: U.optPhone(b.phone).phone,
     ticketText: U.optStr(b.ticketText, 200),
     ticketWidth: U.oneOf(Number(b.ticketWidth || 80), [58, 80], 'Ancho del ticket'),

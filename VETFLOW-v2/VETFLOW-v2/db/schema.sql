@@ -423,3 +423,16 @@ CREATE TABLE IF NOT EXISTS cash_closings (
   adjustment_id INTEGER REFERENCES cash_movements(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS cash_closings_date_idx ON cash_closings(on_date);
+
+-- ============================================================
+-- Turnos pedidos desde la página pública (VETFLOW-v2, etapa "turnos web").
+-- status: pendiente (lo pidió el cliente, falta aceptarlo), confirmado (en la agenda), rechazado, cancelado (lo canceló el cliente).
+-- source: sistema (lo cargó la veterinaria) o web. Los turnos que ya existían quedan como confirmados y de sistema.
+-- ============================================================
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'confirmado'
+  CHECK (status IN ('pendiente', 'confirmado', 'rechazado', 'cancelado'));
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'sistema'
+  CHECK (source IN ('sistema', 'web'));
+CREATE INDEX IF NOT EXISTS appt_status_idx ON appointments(status);
+-- El ingreso con teléfono busca candidatos por los últimos 6 dígitos y después compara en el servidor (011, 15, +54 9...).
+CREATE INDEX IF NOT EXISTS clients_phone_tail_idx ON clients (right(phone_norm, 6));

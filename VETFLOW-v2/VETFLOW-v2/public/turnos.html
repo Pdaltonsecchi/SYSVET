@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Veterinaria: horarios, formas de pago, reseñas y turnos online para consultas y vacunas.">
+  <title>Veterinaria</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cg%20fill%3D%22%2356785B%22%3E%3Cellipse%20cx%3D%226.2%22%20cy%3D%2210.4%22%20rx%3D%222%22%20ry%3D%222.6%22%2F%3E%3Cellipse%20cx%3D%229.6%22%20cy%3D%225.8%22%20rx%3D%222%22%20ry%3D%222.7%22%2F%3E%3Cellipse%20cx%3D%2214.4%22%20cy%3D%225.8%22%20rx%3D%222%22%20ry%3D%222.7%22%2F%3E%3Cellipse%20cx%3D%2217.8%22%20cy%3D%2210.4%22%20rx%3D%222%22%20ry%3D%222.6%22%2F%3E%3Cpath%20d%3D%22M12%2011.4c-2.6%200-5.4%203.6-5.4%206%200%201.6%201.2%202.4%202.6%202.4%201.1%200%201.8-.6%202.8-.6s1.7.6%202.8.6c1.4%200%202.6-.8%202.6-2.4%200-2.4-2.8-6-5.4-6z%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E">
+  <link rel="stylesheet" href="turnos.css">
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-inner">
+      <p class="eyebrow">Veterinaria</p>
+      <h1 id="clinic">Veterinaria</h1>
+      <p id="professional" class="lead" hidden></p>
+      <p id="address" class="muted" hidden></p>
+      <div class="row hero-actions">
+        <a id="call-btn" class="btn primary" href="#" hidden>Llamar</a>
+        <a class="btn primary" href="#reserva">Sacar turno</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="info-grid" aria-label="Información de la veterinaria">
+      <div class="card" id="hours-card">
+        <h2>Horarios de atención</h2>
+        <ul id="hours" class="plain"></ul>
+      </div>
+      <div class="card" id="methods-card">
+        <h2>Formas de pago</h2>
+        <ul id="methods" class="chips"></ul>
+      </div>
+    </section>
+
+    <section class="card" id="reviews-card" aria-labelledby="reviews-title" hidden>
+      <h2 id="reviews-title">Lo que dicen nuestros clientes</h2>
+      <ul id="reviews" class="reviews"></ul>
+      <p id="all-reviews" class="muted" hidden></p>
+    </section>
+
+    <section class="card" id="location-card" aria-labelledby="location-title" hidden>
+      <h2 id="location-title">Cómo llegar</h2>
+      <p id="location-text"></p>
+      <a id="maps-btn" class="btn" href="#" target="_blank" rel="noopener" hidden>Ver en Google Maps</a>
+    </section>
+
+    <!-- Turnos -->
+    <div id="reserva" class="booking-anchor">
+      <h2 class="section-title">Sacá tu turno</h2>
+
+      <!-- Paso 1: entrar con el teléfono -->
+      <section id="login" class="card" aria-labelledby="login-title">
+        <h3 id="login-title">Entrá con tu teléfono</h3>
+        <p class="muted">Usá el número que le diste a la veterinaria.</p>
+        <form id="login-form" novalidate>
+          <label for="phone">Teléfono</label>
+          <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="Ej: 11 5555-1234" required>
+          <button type="submit" class="btn primary">Entrar</button>
+        </form>
+        <div id="login-error" class="alert" role="alert" hidden>
+          <p id="login-error-text"></p>
+          <div class="row">
+            <button type="button" class="btn ghost" id="retry">Probar de nuevo</button>
+            <a id="call-link" class="btn" href="#" hidden>Llamar a la veterinaria</a>
+          </div>
+        </div>
+        <div class="new-client">
+          <p>¿No sos cliente todavía?</p>
+          <button type="button" class="btn" id="show-register">Cliente nuevo</button>
+        </div>
+      </section>
+
+      <!-- Alta de cliente nuevo: datos del cliente y de su primera mascota -->
+      <section id="register" class="card" aria-labelledby="register-title" hidden>
+        <h3 id="register-title">Cliente nuevo</h3>
+        <form id="register-form" novalidate>
+          <fieldset>
+            <legend>Tus datos</legend>
+            <label for="r-first">Nombre</label>
+            <input id="r-first" name="firstName" autocomplete="given-name" required maxlength="100">
+            <label for="r-last">Apellido</label>
+            <input id="r-last" name="lastName" autocomplete="family-name" required maxlength="100">
+            <label for="r-phone">Teléfono</label>
+            <input id="r-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" required>
+          </fieldset>
+          <fieldset>
+            <legend>Tu mascota</legend>
+            <label for="r-pet-name">Nombre de la mascota</label>
+            <input id="r-pet-name" name="petName" required maxlength="100">
+            <label for="r-species">Especie</label>
+            <select id="r-species" name="species"><option value="Perro">Perro</option><option value="Gato">Gato</option></select>
+            <label for="r-sex">Sexo</label>
+            <select id="r-sex" name="sex"><option value="Macho">Macho</option><option value="Hembra">Hembra</option></select>
+          </fieldset>
+          <div id="register-error" class="alert" role="alert" hidden></div>
+          <div class="row">
+            <button type="button" class="btn ghost" id="register-cancel">Volver</button>
+            <button type="submit" class="btn primary">Guardar y sacar turno</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Paso 2: ya entró -->
+      <section id="home" hidden>
+        <div class="card">
+          <h3 id="hello"></h3>
+          <h4>Tus turnos</h4>
+          <ul id="my-appts" class="list"></ul>
+          <p id="no-appts" class="muted" hidden>No tenés turnos pendientes ni confirmados.</p>
+        </div>
+
+        <div class="card">
+          <h3>Pedir turno</h3>
+          <fieldset class="choice">
+            <legend>¿Para qué es?</legend>
+            <div id="types"></div>
+          </fieldset>
+          <label for="pet">Mascota</label>
+          <select id="pet"></select>
+          <button type="button" class="btn ghost small" id="toggle-add-pet">+ Agregar otra mascota</button>
+
+          <form id="add-pet-form" class="sub-form" novalidate hidden>
+            <label for="a-pet-name">Nombre de la mascota</label>
+            <input id="a-pet-name" name="petName" required maxlength="100">
+            <label for="a-species">Especie</label>
+            <select id="a-species" name="species"><option value="Perro">Perro</option><option value="Gato">Gato</option></select>
+            <label for="a-sex">Sexo</label>
+            <select id="a-sex" name="sex"><option value="Macho">Macho</option><option value="Hembra">Hembra</option></select>
+            <button type="submit" class="btn primary">Agregar mascota</button>
+          </form>
+
+          <h4>Horarios libres</h4>
+          <p class="muted small-text">Elegí un horario. El pedido queda pendiente hasta que la veterinaria lo confirme.</p>
+          <div id="slots"></div>
+          <p id="slots-msg" class="muted" hidden></p>
+        </div>
+
+        <button type="button" class="btn ghost" id="logout">Salir</button>
+      </section>
+
+      <p id="status" role="status" class="status"></p>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <p id="footer-text" class="muted"></p>
+  </footer>
+
+  <script src="turnos.js"></script>
+</body>
+</html>

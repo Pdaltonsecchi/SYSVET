@@ -16,7 +16,7 @@
   /* Estados: éxito, advertencia, error e información, con fondos suaves. */
   --ok:#15803D; --ok-bg:#DCFCE7; --warn:#B45309; --warn-bg:#FEF3C7; --bad:#B91C1C; --bad-bg:#FEE2E2; --info:#1D4ED8; --info-bg:#DBEAFE;
   /* Puntos de aviso sobre el menú grafito (claros a propósito: ≥3:1 contra --side) */
-  --dot-vencida:#F87171; --dot-porvencer:#FBBF24; --dot-stock:#60A5FA; --dot-copia:#9CA3AF;
+  --dot-vencida:#F87171; --dot-porvencer:#FBBF24; --dot-stock:#60A5FA; --dot-copia:#9CA3AF; --dot-pedido:#A78BFA;
   /* Colores de los turnos del calendario: reservados SOLO para identificar eventos (no se usan como decoración).
      Todos dan ≥4,8:1 con texto blanco (el verde #16A34A daba 3,3:1). */
   --appt-consulta:#2563EB; --appt-vacuna:#15803D; --appt-cirugia:#DC2626; --appt-otro:#6B7280;
@@ -81,7 +81,7 @@ body[data-state="error"] #login, body[data-state="error"] #app{display:none}
 .al{display:flex;gap:.55rem;align-items:flex-start;text-align:left;background:transparent;border:0;padding:.35rem .5rem;border-radius:8px;color:var(--side-ink);font-size:.92rem;width:100%}
 .al:hover{background:var(--side-hover)}
 .dot{flex:none;width:.6rem;height:.6rem;border-radius:50%;margin-top:.45rem}
-.dot.vencida{background:var(--dot-vencida)}.dot.porvencer{background:var(--dot-porvencer)}.dot.stock{background:var(--dot-stock)}.dot.copia{background:var(--dot-copia)}.dot.ok{background:var(--brand-tint)}
+.dot.vencida{background:var(--dot-vencida)}.dot.porvencer{background:var(--dot-porvencer)}.dot.stock{background:var(--dot-stock)}.dot.copia{background:var(--dot-copia)}.dot.pedido{background:var(--dot-pedido)}.dot.ok{background:var(--brand-tint)}
 .side-foot{margin-top:auto;font-size:.85rem;color:var(--side-muted);display:flex;flex-direction:column;gap:.15rem;align-items:flex-start}
 .side-foot .who{margin-bottom:.4rem;display:flex;flex-direction:column}
 .side-foot .who b{color:var(--side-ink)}

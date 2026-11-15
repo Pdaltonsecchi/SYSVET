@@ -97,6 +97,9 @@ test('cron externo: exige el secreto', async () => {
 });
 
 test('envío manual sin email configurado: 503', async () => {
+  // Con un destinatario cargado: sin destinatarios el servidor responde 400 antes de revisar si hay email configurado.
+  const set = await owner.call('PUT', '/settings', base({ report: { enabled: false, hour: 8, recipients: 'a@x.com' } }));
+  assert.equal(set.status, 200, JSON.stringify(set.data));
   const r = await owner.call('POST', '/report/send', {});
   assert.equal(r.status, 503);
   assert.match(r.data.error, /faltan EMAIL_PROVIDER, EMAIL_API_KEY y EMAIL_FROM/);

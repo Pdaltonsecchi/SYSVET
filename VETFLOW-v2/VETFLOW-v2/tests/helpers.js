@@ -11,6 +11,13 @@ const ENV = {
   ADMIN_PASSWORD: 'clave-de-prueba-1',
   CRON_SECRET: 'secreto-cron',
   PORT: String(PORT),
+  // Topes de la página pública de turnos: altos para que las pruebas (todas desde la misma IP) no choquen con ellos.
+  // tests/turnos-limites.test.js los quita para probar los valores reales.
+  TURNOS_PEDIDOS_POR_IP: '100000',
+  TURNOS_FALLOS_POR_IP: '1000',
+  TURNOS_FALLOS_TOTAL: '1000',
+  TURNOS_ALTAS_POR_IP: '1000',
+  TURNOS_ALTAS_POR_DIA: '1000',
 };
 
 function startServer() {
