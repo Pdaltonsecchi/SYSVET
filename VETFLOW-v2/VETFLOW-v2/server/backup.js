@@ -22,7 +22,7 @@ const TABLES = [
   ['complementary_studies', ['id', 'patient_id', 'on_date', 'title', 'notes', 'deleted_at']],
   // Solo los metadatos de los adjuntos: los archivos quedan en Supabase Storage (no viajan en el JSON).
   ['study_attachments', ['id', 'study_id', 'file_path', 'file_name', 'mime_type', 'size_bytes', 'created_at']],
-  ['appointments', ['id', 'patient_id', 'title', 'description', 'appointment_date', 'appointment_time', 'appointment_type', 'duration_min']],
+  ['appointments', ['id', 'patient_id', 'title', 'description', 'appointment_date', 'appointment_time', 'appointment_type', 'duration_min', 'status', 'source']],
   ['cash_movements', ['id', 'on_date', 'kind', 'concept', 'category', 'method', 'amount', 'stock_movement_id', 'supplier_id']],
   ['charges', ['id', 'patient_id', 'on_date', 'concept', 'amount', 'method', 'cash_id', 'line_type', 'deleted_at', 'cash_was']],
   ['cash_closings', ['id', 'closed_at', 'on_date', 'expected', 'counted', 'difference', 'note', 'closed_by', 'adjustment_id']],
@@ -38,7 +38,7 @@ const NEW_TABLES = new Set(['suppliers', 'complementary_studies', 'appointments'
 const COL_DEFAULTS = {
   stock_movements: { unit_price: 0, voided: false, note: '' },
   charges: { line_type: 'service', cash_was: false },
-  appointments: { duration_min: 30 },
+  appointments: { duration_min: 30, status: 'confirmado', source: 'sistema' },
   study_attachments: { created_at: new Date().toISOString() },
   clients: { created_at: new Date().toISOString() },
   vaccines: { stock_qty: 0 },

@@ -434,3 +434,5 @@ ALTER TABLE appointments ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT '
 ALTER TABLE appointments ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'sistema'
   CHECK (source IN ('sistema', 'web'));
 CREATE INDEX IF NOT EXISTS appt_status_idx ON appointments(status);
+-- El ingreso con teléfono busca candidatos por los últimos 6 dígitos y después compara en el servidor (011, 15, +54 9...).
+CREATE INDEX IF NOT EXISTS clients_phone_tail_idx ON clients (right(phone_norm, 6));

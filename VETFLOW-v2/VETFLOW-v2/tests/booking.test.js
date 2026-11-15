@@ -72,3 +72,49 @@ test('el límite de pedidos corta después de la cantidad permitida', () => {
   assert.equal(booking.limit(key, 2, 60000), true);
   assert.equal(booking.limit(key, 2, 60000), false);
 });
+
+/* ---------- teléfonos: la misma persona escribe su número de muchas formas ---------- */
+test('phoneKey deja el número sin 0, 15, 54 ni 9', () => {
+  for (const v of ['11 5555-1234', '011 5555-1234', '011 15 5555-1234', '+54 9 11 5555-1234', '+54 11 5555 1234', '0054 9 11 5555 1234', '(011) 15-5555-1234', '54 9 011 15 5555 1234']) {
+    assert.equal(booking.phoneKey(v), '1155551234', v);
+  }
+  // Interior: característica de 3 y de 4 dígitos, con y sin 15.
+  for (const v of ['351 555-1234', '0351 15 555-1234', '+54 9 351 555 1234']) assert.equal(booking.phoneKey(v), '3515551234', v);
+  for (const v of ['2954 43-1234', '02954 15 43-1234', '+54 9 2954 431234']) assert.equal(booking.phoneKey(v), '2954431234', v);
+  // Sin característica queda corto.
+  assert.equal(booking.phoneKey('5555-1234'), '55551234');
+  assert.equal(booking.phoneKey('15 5555-1234'), '55551234');
+  assert.equal(booking.phoneKey(''), '');
+  assert.equal(booking.phoneKey(null), '');
+});
+
+test('samePhone: 011 contra sin 0, con 15, con 54 9, con espacios y guiones', () => {
+  const base = '11 5555-1234';
+  for (const v of ['011 5555-1234', '011 15 5555-1234', '54 9 11 5555 1234', '+54 9 11 5555-1234', '11-5555-1234', '1155551234', ' 11  5555 1234 ']) {
+    assert.equal(booking.samePhone(base, v), true, v);
+    assert.equal(booking.samePhone(v, base), true, v + ' (al revés)');
+  }
+});
+
+test('samePhone: número corto se compara por los últimos 8; con menos de 8, solo exacto', () => {
+  assert.equal(booking.samePhone('5555-1234', '011 15 5555-1234'), true, 'guardado sin característica');
+  assert.equal(booking.samePhone('11 5555-1234', '15 5555-1234'), true, 'ingresado sin característica');
+  assert.equal(booking.samePhone('555-1234', '555 1234'), true, '7 dígitos iguales');
+  assert.equal(booking.samePhone('555-1234', '0351 555-1234'), false, '7 dígitos contra uno completo: no alcanza');
+  assert.equal(booking.samePhone('431234', '2954 431234'), false, '6 dígitos contra uno completo: no alcanza');
+});
+
+test('samePhone: números distintos no coinciden', () => {
+  assert.equal(booking.samePhone('11 5555-1234', '11 5555-1235'), false);
+  assert.equal(booking.samePhone('11 5555-1234', '351 555-1234'), false);
+  // Misma terminación pero otra característica: con los dos números completos se comparan los 10 dígitos.
+  assert.equal(booking.samePhone('11 5555-1234', '22 5555-1234'), false);
+  assert.equal(booking.samePhone('', '11 5555-1234'), false);
+  assert.equal(booking.samePhone('', ''), false);
+});
+
+test('phoneTail y phoneLimitKey: iguales para todas las formas de escribir un número', () => {
+  const forms = ['11 5555-1234', '011 15 5555-1234', '+54 9 11 5555-1234', '0351 15 555-1234', '02954 15 43-1234'];
+  for (const v of forms) assert.equal(booking.phoneTail(v), booking.phoneKey(v).slice(-6), v);
+  assert.equal(booking.phoneLimitKey('011 15 5555-1234'), booking.phoneLimitKey('+54 9 11 5555-1234'));
+});

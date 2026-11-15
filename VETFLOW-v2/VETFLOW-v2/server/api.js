@@ -1919,6 +1919,17 @@ function nowAR() {
   return { date: g('year') + '-' + g('month') + '-' + g('day'), min: Number(g('hour')) * 60 + Number(g('minute')) };
 }
 const SESSION_EXPIRED = 'Tu sesión venció. Ingresá de nuevo con tu teléfono.';
+/**
+ * Clientes cuyo teléfono es el mismo que el ingresado, aunque esté escrito distinto (011, 15, +54 9, espacios, guiones).
+ * Se buscan candidatos por los últimos 6 dígitos (con índice) y la comparación fina se hace con booking.samePhone.
+ */
+async function clientsByPhone(q, norm) {
+  const r = await q.query(
+    "SELECT id, first_name, last_name, phone_norm FROM clients WHERE phone_norm <> '' AND right(phone_norm, 6) = $1 ORDER BY id",
+    [booking.phoneTail(norm)]
+  );
+  return r.rows.filter((x) => booking.samePhone(x.phone_norm, norm));
+}
 function clientToken(clientId) {
   return auth.sign({ c: clientId, exp: Date.now() + CLIENT_SESSION_MS });
 }
@@ -2023,10 +2034,12 @@ add('POST', '/api/public/login', { public: true }, async (ctx) => {
   publicIpLimit(ctx);
   const ph = U.optPhone(ctx.body && ctx.body.phone);
   if (!ph.norm) throw U.bad('Ingresá tu teléfono.');
-  if (!booking.limit('phone:' + ph.norm, 10, 15 * 60 * 1000)) throw new HttpError(429, PUBLIC_IP_LIMIT_MSG);
-  const r = await db.query('SELECT id, first_name, last_name FROM clients WHERE phone_norm = $1 ORDER BY id LIMIT 1', [ph.norm]);
-  if (!r.rows[0]) throw new HttpError(404, 'Ese teléfono no está registrado. Probá de nuevo o llamá a la veterinaria.');
-  return clientSummary(r.rows[0], true);
+  if (!booking.limit('phone:' + booking.phoneLimitKey(ph.norm), 10, 15 * 60 * 1000)) throw new HttpError(429, PUBLIC_IP_LIMIT_MSG);
+  const found = await clientsByPhone(db, ph.norm);
+  if (!found.length) throw new HttpError(404, 'Ese teléfono no está registrado. Probá de nuevo o llamá a la veterinaria.');
+  // El mismo teléfono en más de una ficha: no se entra a ninguna, para no mostrar los datos de otra persona.
+  if (found.length > 1) throw new HttpError(404, 'No pudimos identificarte con ese teléfono. Llamá a la veterinaria y te ayudamos.');
+  return clientSummary(found[0], true);
 });
 
 add('GET', '/api/public/me', { public: true }, async (ctx) => {
@@ -2043,9 +2056,11 @@ add('POST', '/api/public/register', { public: true }, async (ctx) => {
   const ph = U.optPhone(b.phone);
   if (!ph.norm) throw U.bad('Ingresá tu teléfono.');
   const pet = webPetInput(b.pet);
-  const dup = await db.query('SELECT 1 FROM clients WHERE phone_norm = $1 LIMIT 1', [ph.norm]);
-  if (dup.rows[0]) throw new HttpError(409, 'Ese teléfono ya está registrado. Volvé atrás y entrá con tu número.');
+  if (!booking.limit('phone:' + booking.phoneLimitKey(ph.norm), 10, 15 * 60 * 1000)) throw new HttpError(429, PUBLIC_IP_LIMIT_MSG);
   const client = await db.tx(async (c) => {
+    // Con candado: dos altas simultáneas con el mismo teléfono no crean dos fichas.
+    await c.query("SELECT pg_advisory_xact_lock(hashtext('turnos-web-alta'))");
+    if ((await clientsByPhone(c, ph.norm)).length) throw new HttpError(409, 'Ese teléfono ya está registrado. Volvé atrás y entrá con tu número.');
     const r = await c.query("INSERT INTO clients (first_name, last_name, email, phone, phone_norm, address) VALUES ($1, $2, '', $3, $4, '') RETURNING id, first_name, last_name", [first, last, ph.phone, ph.norm]);
     await insertPet(c, r.rows[0].id, fullName(first, last), pet);
     return r.rows[0];
@@ -2073,6 +2088,7 @@ add('POST', '/api/public/appointments', { public: true }, async (ctx) => {
   const time = U.reqTime(b.time, 'Hora');
   const patientId = U.idParam(b.patientId);
   if (date < U.todayAR()) throw U.bad('Ese día ya pasó. Elegí otra fecha.');
+  if (date > U.addDays(U.todayAR(), booking.DAYS_AHEAD - 1)) throw U.bad('Solo se pueden pedir turnos para los próximos ' + booking.DAYS_AHEAD + ' días.');
   const id = await db.tx(async (c) => {
     await c.query("SELECT pg_advisory_xact_lock(hashtext('turnos-web'))");
     const own = await c.query('SELECT 1 FROM patients WHERE id = $1 AND client_id = $2 AND deleted_at IS NULL', [patientId, client.id]);
