@@ -1270,9 +1270,11 @@ function configGeneral(){
       '<p class="cfg-hint">Se ve en el menú, en la pestaña del navegador y en las impresiones.</p></section>'+
     '<section class="panel"><h2>Página pública</h2><div class="fields">'+
       fld('Nombre del profesional','professionalName',{value:st.professionalName||'',maxlength:100,full:true,ph:'Ej: Dra. Laura Gómez'})+
+      fld('Teléfono de la veterinaria','clinicPhone',{type:'tel',value:st.phone||'',maxlength:50,pattern:PHONE_PAT,title:'Solo números, espacios, + , - y paréntesis (mínimo 6 dígitos)',ph:'Ej: 11 4444-5555'})+
+      fld('Dirección','clinicAddress',{value:st.address||'',maxlength:200,ph:'Calle, número, localidad'})+
       fld('Enlace de Google Maps','mapsUrl',{value:st.mapsUrl||'',maxlength:300,full:true,ph:'https://maps.app.goo.gl/...'})+
       fld('Reseñas (una por línea: estrellas | autor | texto)','reviews',{type:'textarea',value:(st.reviews||[]).map(function(r){return r.stars+' | '+r.author+' | '+r.text;}).join('\n'),full:true,ph:'5 | María P. | Muy buena atención con mi perro.'})+
-      '</div><p class="cfg-hint">Estos datos se muestran en la página de turnos. Las reseñas las copiás de Google Maps a mano: las que quieras mostrar, con su autor y la cantidad de estrellas.</p></section>'+
+      '</div><p class="cfg-hint">Estos datos se muestran en la página de turnos. El teléfono es el del botón "Llamar" y el que ve un cliente cuando la página no lo reconoce. Las reseñas las copiás de Google Maps a mano: las que quieras mostrar, con su autor y la cantidad de estrellas.</p></section>'+
     '<section class="panel"><h2>Horario de atención</h2><p class="cfg-hint">Un día puede tener más de un horario, por ejemplo de 08:00 a 12:00 y de 16:00 a 19:00. Al anotar un turno fuera de estos horarios, la agenda te avisa antes de guardarlo.</p>'+
       '<div class="hours" id="cfghours">'+WEEK_ORDER.map(hourDayHTML).join('')+'</div></section>'+
     '<section class="panel"><h2>Medios de pago</h2><p class="cfg-hint">Los que marques son los que aparecen al cobrar y al registrar ingresos o egresos.</p>'+
@@ -1329,6 +1331,7 @@ async function saveConfig(){
   if(revErr){err.textContent=revErr;throw new Error(revErr);}
   var body=Object.assign({},S.settings,{shopName:name.value.trim(),hours:h.hours,methods:methods,
     professionalName:f.querySelector('[name="professionalName"]').value.trim(),
+    phone:f.querySelector('[name="clinicPhone"]').value.trim(),address:f.querySelector('[name="clinicAddress"]').value.trim(),
     mapsUrl:f.querySelector('[name="mapsUrl"]').value.trim(),reviews:reviews});
   delete body.emailReady;
   var r;
