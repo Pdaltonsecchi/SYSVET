@@ -71,7 +71,7 @@ Si el teléfono no está registrado, o figura en la ficha de más de un cliente,
 
 ## 3. Aceptar o rechazar un pedido
 
-1. Cuando hay pedidos esperando, en el menú aparece un aviso en **"Para revisar"**: *"2 turnos pedidos por la web para aceptar"*. Tocalo y te lleva al calendario. En el celular, el aviso está dentro de **Más** (el botón queda marcado con un punto rojo).
+1. Cuando hay pedidos esperando, en el menú aparece un aviso en **"Para revisar"**: un punto **naranja** con el texto *"2 turnos pedidos desde la web para confirmar"*. Tocalo y te lleva al calendario. En el celular, el aviso está dentro de **Más** (el botón queda marcado con un punto naranja).
    En el **Calendario**, los pedidos de la web tienen la palabra **"Pendiente"** adelante.
 2. Tocá el pedido. Vas a ver la mascota, el dueño con su teléfono, el tipo y el horario.
 3. Elegí:
@@ -80,7 +80,7 @@ Si el teléfono no está registrado, o figura en la ficha de más de un cliente,
 
 Mientras un pedido está pendiente, **ese horario queda reservado**: nadie más lo puede pedir.
 
-El sistema no manda avisos por email ni por WhatsApp. El aviso de "Para revisar" se actualiza solo cada dos minutos mientras tengas el sistema abierto. Si rechazás un pedido, llamá al cliente: en su página el turno simplemente deja de aparecer.
+El sistema no manda avisos por email ni por WhatsApp. El aviso de "Para revisar" se actualiza solo cada minuto mientras tengas el sistema abierto (no hace falta recargar), y cuando entra un pedido nuevo aparece un cartel abajo. Si rechazás un pedido, llamá al cliente: en su página el turno simplemente deja de aparecer.
 
 ## Topes para que nadie abuse de la página
 

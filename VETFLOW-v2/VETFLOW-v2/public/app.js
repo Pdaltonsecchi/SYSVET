@@ -156,7 +156,7 @@ function showLogin(msg){
   $('#lerror').textContent=msg||'';
 }
 function applyBootstrap(d){
-  S.clinic=d.clinic||'SYSVET';S.settings=d.settings||{};document.title=S.clinic;var sn=$('#shopname');if(sn)sn.textContent=S.clinic;S.attachments=!!d.attachments;S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.suppliers=d.suppliers||[];S.clients=d.clients||[];S.summary=d.summary||null;S.pendingWeb=Number(d.pendingWeb&&d.pendingWeb.count)||0;S.pendingWebFirst=(d.pendingWeb&&d.pendingWeb.first)||null;
+  S.clinic=d.clinic||'SYSVET';S.settings=d.settings||{};document.title=S.clinic;var sn=$('#shopname');if(sn)sn.textContent=S.clinic;S.attachments=!!d.attachments;S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.suppliers=d.suppliers||[];S.clients=d.clients||[];S.summary=d.summary||null;S.pendingWeb=Number(d.pendingWeb&&d.pendingWeb.count)||0;S.pendingWebFirst=(d.pendingWeb&&d.pendingWeb.first)||null;S.pendingWebPast=Number(d.pendingWeb&&d.pendingWeb.past)||0;
 }
 async function start(){
   var d=await api('/bootstrap');
@@ -484,7 +484,9 @@ function renderAlerts(){
   var warn=S.patients.filter(function(p){return patientAlert(p)==='warn';}).length;
   var low=S.products.filter(lowStock).length;
   var h='';
-  if(S.pendingWeb)h+='<button class="al" data-action="goto-pedidos"><span class="dot pedido"></span><span>'+plural(S.pendingWeb,'turno pedido por la web para aceptar','turnos pedidos por la web para aceptar')+'</span></button>';
+  // Turnos pedidos desde la web: va primero porque es lo único que espera una respuesta de la veterinaria (aceptar o rechazar).
+  if(S.pendingWeb)h+='<button class="al pedido" data-action="goto-pedidos"><span class="dot pedido"></span><span>'+plural(S.pendingWeb,'turno pedido desde la web para confirmar','turnos pedidos desde la web para confirmar')+
+    (S.pendingWebPast?' <small>('+(S.pendingWebPast===S.pendingWeb?(S.pendingWeb===1?'la fecha ya pasó':'las fechas ya pasaron'):S.pendingWebPast+' con fecha ya pasada')+')</small>':'')+'</span></button>';
   if(bad)h+='<button class="al" data-action="goto-vac"><span class="dot vencida"></span><span>'+plural(bad,'paciente con vacuna vencida','pacientes con vacuna vencida')+'</span></button>';
   if(warn)h+='<button class="al" data-action="goto-vac"><span class="dot porvencer"></span><span>'+plural(warn,'paciente con vacuna por vencer','pacientes con vacuna por vencer')+'</span></button>';
   if(low)h+='<button class="al" data-action="goto-stock"><span class="dot stock"></span><span>'+plural(low,'producto con poco stock','productos con poco stock')+'</span></button>';
@@ -495,7 +497,10 @@ function renderAlerts(){
   if(!h)h='<div class="al"><span class="dot ok"></span><span>Todo al día</span></div>';
   $('#alerts').innerHTML='<h3>Para revisar</h3>'+h;
   // En celular los avisos viven dentro de "Más": un punto en el botón indica que hay algo para revisar.
-  var mb=$('#tabbar [data-action="more"]');if(mb)mb.classList.toggle('has-alerts',!!$('#alerts button.al'));
+  // Regla del color del punto: naranja si hay turnos web por confirmar (es lo más urgente: un cliente espera respuesta y
+  // el horario queda reservado mientras tanto), aunque también haya otros avisos; rojo si solo hay avisos de los otros.
+  var mb=$('#tabbar [data-action="more"]');
+  if(mb){mb.classList.toggle('has-alerts',!!$('#alerts button.al'));mb.classList.toggle('has-pedidos',!!S.pendingWeb);}
 }
 
 /* ============================================================
@@ -1160,7 +1165,7 @@ function calDayColumn(iso){
   // E3: en la vista Semana el alto del bloque refleja la duración del turno.
   var blocks=list.map(function(a){
     var h=ui.cal.view==='week'?' data-mh="'+Math.round(Math.min(Math.max(38,a.duration*0.9),180))+'px"':'';
-    return '<button class="appt '+a.type+'"'+h+' data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'<small>'+esc(a.title)+'</small></button>';
+    return '<button class="appt '+a.type+(a.status==='pendiente'?' pendiente':'')+'"'+h+' data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'<small>'+esc(a.title)+'</small></button>';
   }).join('');
   return '<div class="cal-day'+(isToday?' today':'')+'"><div class="cal-day-head"><span>'+WEEKDAYS[(d.getDay()+6)%7]+'</span><b>'+d.getDate()+'</b>'+
     '<button class="cal-add" data-action="cal-add-day" data-v="'+iso+'" aria-label="Agregar turno este día">+</button></div>'+blocks+'</div>';
@@ -1186,7 +1191,8 @@ function calDayAgenda(){
   var inHours=function(a){var s=toMin(a.time),e=s+Number(a.duration||0);return open.some(function(r){return s>=toMin(r[0])&&e<=toMin(r[1]);});};
   var rows=list.map(function(a){
     return '<li class="dv-row"><span class="dv-time"><b>'+a.time.slice(0,5)+'</b><small>'+esc(a.endTime||'')+'</small></span>'+
-      '<button class="dv-appt '+a.type+'" data-action="appt-view" data-id="'+a.id+'">'+
+      '<button class="dv-appt '+a.type+(a.status==='pendiente'?' pendiente':'')+'" data-action="appt-view" data-id="'+a.id+'">'+
+      (a.status==='pendiente'?'<span class="chip pedido">Pedido desde la web · falta confirmar</span>':'')+
       '<span class="dv-what"><b>'+esc(a.title||APPT_LABEL[a.type]||'')+'</b><span class="dv-type">'+(APPT_LABEL[a.type]||'')+'</span></span>'+
       '<span class="dv-who">'+esc(a.patientName)+' ('+esc(ownerLast(a))+')'+'</span>'+(a.patientPhone?'<span class="dv-phone">'+esc(a.patientPhone)+'</span>':'')+
       (open.length&&!inHours(a)?'<span class="chip warn">Fuera de horario</span>':'')+'</button></li>';
@@ -2090,11 +2096,11 @@ function appointmentDetails(a){
           [{label:'No aceptar',value:'no',cls:'ghost'},{label:'Aceptar igual',value:'ok',cls:'primary'}]);
         if(ch!=='ok')return;
       }
-      await api('/appointments/'+a.id+'/status',{method:'POST',body:{status:'confirmado'}});dlg.close();await reloadCal();await checkPendingWeb(true);toast('Turno aceptado y agregado a la agenda');
+      await api('/appointments/'+a.id+'/status',{method:'POST',body:{status:'confirmado'}});dlg.close();pendingWebResolved(a);await reloadCal();toast('Turno aceptado y agregado a la agenda');
     });
     dlg.querySelector('[data-x="reject"]').addEventListener('click',function(){
       confirmForm('Rechazar turno','Se rechaza el pedido de '+esc(a.patientName)+' para el '+fmtDate(a.date)+' a las '+a.time.slice(0,5)+' hs. El horario queda libre para otro pedido.','Rechazar',async function(){
-        await api('/appointments/'+a.id+'/status',{method:'POST',body:{status:'rechazado'}});await reloadCal();await checkPendingWeb(true);toast('Pedido rechazado');
+        await api('/appointments/'+a.id+'/status',{method:'POST',body:{status:'rechazado'}});pendingWebResolved(a);await reloadCal();toast('Pedido rechazado');
       });
     });
     if(!dlg.open)dlg.showModal();
@@ -2225,7 +2231,8 @@ var actions={
   'goto-stock':function(){ui.view='farmacia';ui.tab='stock';render();},
   'goto-backups':function(){return go('copias');},
   // Pedidos de la web: abre el calendario en "2 semanas" a partir del pedido más próximo.
-  'goto-pedidos':function(){ui.cal.view='2weeks';ui.cal.anchor=S.pendingWebFirst||todayIso();return go('calendario');},
+  // Abre la agenda del día del pedido más próximo: ahí se lo toca para aceptarlo o rechazarlo.
+  'goto-pedidos':function(){ui.cal.view='day';ui.cal.anchor=S.pendingWebFirst||todayIso();return go('calendario');},
   'new-patient':function(){patientForm();},
   'edit-patient':function(){if(ui.detail)patientForm(ui.detail);},
   'del-patient':function(){
@@ -2575,21 +2582,33 @@ async function checkSession(){
   }catch(e){/* sin conexión: no se molesta al usuario */}
 }
 document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible'){checkSession();checkPendingWeb();}});
-// Pedidos de turno hechos desde la página pública: se consulta cada dos minutos mientras la pestaña está a la vista,
-// así el aviso de "Para revisar" aparece solo. Si cambió la cantidad y se está mirando el calendario, se actualiza.
+// Turnos pedidos desde la página pública: se consulta SOLO el resumen (cantidad y fecha del más próximo) una vez por
+// minuto mientras la pestaña está a la vista, y al volver a ella. Así el aviso naranja de "Para revisar" aparece sin
+// recargar. Con la pestaña oculta no se consulta nada. Si entró un pedido nuevo se avisa con un cartel breve; el
+// calendario se vuelve a pedir solo si se lo está mirando y la cantidad cambió (nunca en cada consulta).
 var pendingCheckedAt=0;
+function setPendingWeb(p){
+  S.pendingWeb=Math.max(0,Number(p.count)||0);S.pendingWebPast=Math.min(S.pendingWeb,Math.max(0,Number(p.past)||0));S.pendingWebFirst=p.first||null;renderAlerts();
+}
 async function checkPendingWeb(force){
   if(!S.user||document.body.dataset.stale||document.body.dataset.state!=='app'||document.visibilityState!=='visible')return;
-  var now=Date.now();if(!force&&now-pendingCheckedAt<60000)return;pendingCheckedAt=now;
+  var now=Date.now();if(!force&&now-pendingCheckedAt<20000)return;pendingCheckedAt=now;
   try{
-    var p=await api('/appointments/pending'),n=Number(p.count)||0;
-    S.pendingWebFirst=p.first||null;
-    if(n===S.pendingWeb)return;
-    var more=n>S.pendingWeb;S.pendingWeb=n;renderAlerts();
-    if(more&&!force&&ui.view==='calendario'&&!document.querySelector('dialog[open]'))await reloadCal();
+    var p=await api('/appointments/pending-summary'),n=Number(p.count)||0,before=S.pendingWeb;
+    if(n===before&&(p.first||null)===S.pendingWebFirst&&(Number(p.past)||0)===S.pendingWebPast)return;
+    setPendingWeb(p);
+    if(n>before&&!force){
+      toast(n-before===1?'Entró un turno pedido desde la web para confirmar':'Entraron '+(n-before)+' turnos pedidos desde la web para confirmar');
+      if(ui.view==='calendario'&&!document.querySelector('dialog[open]'))await reloadCal();
+    }
   }catch(e){/* sin conexión: no se molesta al usuario */}
 }
-setInterval(checkPendingWeb,120000);
+// Al aceptar o rechazar: el contador baja en el momento (sin esperar al servidor) y después se confirma con el resumen real.
+function pendingWebResolved(a){
+  setPendingWeb({count:S.pendingWeb-1,past:S.pendingWebPast-(a&&a.date<todayIso()?1:0),first:S.pendingWeb>1?S.pendingWebFirst:null});
+  return checkPendingWeb(true);
+}
+setInterval(checkPendingWeb,60000);
 document.addEventListener('keydown',function(e){if(e.key==='Escape'&&document.body.dataset.more){setMore(false);var b=$('#tabbar [data-action="more"]');if(b)b.focus();}});
 // En la fase de captura: corre antes de que la acción vuelva a dibujar el menú (si no, el botón tocado ya no está en la página y "Más" quedaba abierto).
 document.addEventListener('click',function(e){if(document.body.dataset.more&&e.target.closest('#side button:not([data-action="nav"])'))setMore(false);},true);
