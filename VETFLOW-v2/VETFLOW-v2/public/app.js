@@ -1150,7 +1150,8 @@ function viewProveedores(){
 var WEEKDAYS=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
 // Texto de un turno en la grilla: "10:00 · Luna (Gómez)" (el apellido distingue pacientes homónimos).
 var ownerLast=function(a){return a.patientOwnerLast||surname(a.patientOwner);};
-var apptLabel=function(a){return a.time.slice(0,5)+' · '+esc(a.patientName)+' ('+esc(ownerLast(a))+')';};
+// Los pedidos hechos desde la página de turnos llevan "Pendiente" hasta que se acepten.
+var apptLabel=function(a){return a.time.slice(0,5)+' · '+(a.status==='pendiente'?'Pendiente · ':'')+esc(a.patientName)+' ('+esc(ownerLast(a))+')';};
 function dayAppts(iso){return (ui.appts||[]).filter(function(a){return a.date===iso;}).sort(function(a,b){return a.time.localeCompare(b.time);});}
 function calDayColumn(iso){
   var list=dayAppts(iso);
@@ -1267,6 +1268,11 @@ function configGeneral(){
   return '<form id="cfgform" class="cfg" novalidate>'+
     '<section class="panel"><h2>Veterinaria</h2><div class="fields">'+fld('Nombre de la veterinaria','shopName',{value:st.shopName||S.clinic,req:true,maxlength:100,full:true})+'</div>'+
       '<p class="cfg-hint">Se ve en el menú, en la pestaña del navegador y en las impresiones.</p></section>'+
+    '<section class="panel"><h2>Página pública</h2><div class="fields">'+
+      fld('Nombre del profesional','professionalName',{value:st.professionalName||'',maxlength:100,full:true,ph:'Ej: Dra. Laura Gómez'})+
+      fld('Enlace de Google Maps','mapsUrl',{value:st.mapsUrl||'',maxlength:300,full:true,ph:'https://maps.app.goo.gl/...'})+
+      fld('Reseñas (una por línea: estrellas | autor | texto)','reviews',{type:'textarea',value:(st.reviews||[]).map(function(r){return r.stars+' | '+r.author+' | '+r.text;}).join('\n'),full:true,ph:'5 | María P. | Muy buena atención con mi perro.'})+
+      '</div><p class="cfg-hint">Estos datos se muestran en la página de turnos. Las reseñas las copiás de Google Maps a mano: las que quieras mostrar, con su autor y la cantidad de estrellas.</p></section>'+
     '<section class="panel"><h2>Horario de atención</h2><p class="cfg-hint">Un día puede tener más de un horario, por ejemplo de 08:00 a 12:00 y de 16:00 a 19:00. Al anotar un turno fuera de estos horarios, la agenda te avisa antes de guardarlo.</p>'+
       '<div class="hours" id="cfghours">'+WEEK_ORDER.map(hourDayHTML).join('')+'</div></section>'+
     '<section class="panel"><h2>Medios de pago</h2><p class="cfg-hint">Los que marques son los que aparecen al cobrar y al registrar ingresos o egresos.</p>'+
@@ -1310,7 +1316,20 @@ async function saveConfig(){
   var methods=Array.prototype.map.call(f.querySelectorAll('[name="methods"]:checked'),function(x){return x.value;});
   var msg=!name.value.trim()?'Escribí el nombre de la veterinaria.':h.error||(!methods.length?'Dejá habilitado al menos un medio de pago.':'');
   if(msg){err.textContent=msg;throw new Error(msg);}
-  var body=Object.assign({},S.settings,{shopName:name.value.trim(),hours:h.hours,methods:methods});
+  // Reseñas: una por línea, "estrellas | autor | texto". Las líneas vacías se ignoran.
+  var reviews=[],revErr='';
+  f.querySelector('[name="reviews"]').value.split('\n').forEach(function(line){
+    if(!line.trim()||revErr)return;
+    var parts=line.split('|').map(function(x){return x.trim();});
+    if(parts.length<3){revErr='Cada reseña va en una línea: estrellas | autor | texto.';return;}
+    var stars=Number(parts[0]);
+    if(!(stars>=1&&stars<=5)){revErr='Las estrellas de cada reseña tienen que ser un número del 1 al 5.';return;}
+    reviews.push({stars:stars,author:parts[1],text:parts.slice(2).join('|')});
+  });
+  if(revErr){err.textContent=revErr;throw new Error(revErr);}
+  var body=Object.assign({},S.settings,{shopName:name.value.trim(),hours:h.hours,methods:methods,
+    professionalName:f.querySelector('[name="professionalName"]').value.trim(),
+    mapsUrl:f.querySelector('[name="mapsUrl"]').value.trim(),reviews:reviews});
   delete body.emailReady;
   var r;
   try{r=await api('/settings',{method:'PUT',body:body});}
@@ -2054,8 +2073,22 @@ function appointmentDetails(a){
     '<p><b>Tipo:</b> '+esc(APPT_LABEL[a.type]||a.type)+'</p>'+
     '<p><b>Cuándo:</b> '+fmtDate(a.date)+' de '+a.time.slice(0,5)+' a '+a.endTime+' hs <small>('+a.duration+' min)</small></p>'+
     (a.description?'<p><b>Descripción:</b> '+esc(a.description)+'</p>':'')+
-    '<div class="actions"><button type="button" class="btn danger-o" data-x="del">Eliminar turno</button><button type="button" class="btn" data-x="ficha">Ver ficha</button><button type="button" class="btn ghost" data-close>Cerrar</button><button type="button" class="btn primary" data-x="edit">Editar</button></div></form>';
+    (a.status==='pendiente'?'<p class="cfg-hint"><b>Pedido desde la página de turnos.</b> Todavía no lo aceptaste: mientras esté pendiente, ese horario queda reservado.</p>'+
+      '<div class="actions"><button type="button" class="btn danger-o" data-x="reject">Rechazar</button><button type="button" class="btn ghost" data-close>Cerrar</button><button type="button" class="btn primary" data-x="accept">Aceptar turno</button></div></form>':
+    '<div class="actions"><button type="button" class="btn danger-o" data-x="del">Eliminar turno</button><button type="button" class="btn" data-x="ficha">Ver ficha</button><button type="button" class="btn ghost" data-close>Cerrar</button><button type="button" class="btn primary" data-x="edit">Editar</button></div></form>');
   dlg.querySelector('[data-close]').addEventListener('click',function(){dlg.close();});
+  if(a.status==='pendiente'){
+    dlg.querySelector('[data-x="accept"]').addEventListener('click',async function(){
+      await api('/appointments/'+a.id+'/status',{method:'POST',body:{status:'confirmado'}});dlg.close();await reloadCal();toast('Turno aceptado y agregado a la agenda');
+    });
+    dlg.querySelector('[data-x="reject"]').addEventListener('click',function(){
+      confirmForm('Rechazar turno','Se rechaza el pedido de '+esc(a.patientName)+' para el '+fmtDate(a.date)+' a las '+a.time.slice(0,5)+' hs. El horario queda libre para otro pedido.','Rechazar',async function(){
+        await api('/appointments/'+a.id+'/status',{method:'POST',body:{status:'rechazado'}});await reloadCal();toast('Pedido rechazado');
+      });
+    });
+    if(!dlg.open)dlg.showModal();
+    return;
+  }
   dlg.querySelector('[data-x="edit"]').addEventListener('click',function(){dlg.close();appointmentForm(a);});
   dlg.querySelector('[data-x="ficha"]').addEventListener('click',function(){
     dlg.close();ui.sel=a.patientId;ui.detail=null;ui.filter='all';ui.q='';go('pacientes');
