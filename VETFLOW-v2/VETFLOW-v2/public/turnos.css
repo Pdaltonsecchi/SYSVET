@@ -35,6 +35,8 @@ h4 { font-size: 0.95rem; margin: 18px 0 4px; }
   padding: 18px;
   margin: 14px 0;
 }
+/* Lo que está oculto (atributo hidden) no se muestra aunque otra regla le ponga display. */
+[hidden] { display: none !important; }
 form { display: block; }
 label { display: block; font-weight: 600; margin: 12px 0 4px; }
 input, select {

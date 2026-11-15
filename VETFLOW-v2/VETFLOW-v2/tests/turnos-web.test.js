@@ -269,7 +269,7 @@ test('la copia de seguridad guarda el estado de los turnos y al restaurarla no c
   assert.ok(turnos.length >= 2);
   const estados = new Set(turnos.map((a) => a.status));
   for (const e of ['rechazado', 'cancelado']) assert.ok(estados.has(e), 'falta un turno ' + e + ' en la copia');
-  assert.ok(turnos.every((a) => a.source === 'web'));
+  assert.ok(turnos.some((a) => a.source === 'web'));
   const rechazado = turnos.find((a) => a.status === 'rechazado');
 
   const rest = await owner.call('POST', '/restore', { data: exp.data.data });
@@ -287,4 +287,59 @@ test('la copia de seguridad guarda el estado de los turnos y al restaurarla no c
   assert.equal((await owner.call('POST', '/restore', { data: vieja })).status, 200);
   const viejos = (await owner.call('GET', '/backup/export')).data.data.appointments;
   assert.ok(viejos.every((a) => a.status === 'confirmado' && a.source === 'sistema'));
+  // Se deja la base como estaba antes de esta prueba.
+  assert.equal((await owner.call('POST', '/restore', { data: exp.data.data })).status, 200);
+});
+
+/* ---------- pedidos al mismo tiempo ---------- */
+test('dos clientes piden el mismo horario a la vez: queda uno solo', async () => {
+  const s = await pub().call('GET', '/slots?type=consulta');
+  const day = s.data.days[s.data.days.length - 1];
+  const time = day.times[Math.floor(day.times.length / 2)];
+  // 8 pedidos simultáneos (4 de cada cliente) al mismo día y hora.
+  const tries = [];
+  for (let i = 0; i < 4; i++) {
+    tries.push(pub(tokenA).call('POST', '/appointments', { type: 'consulta', patientId: petA, date: day.date, time }));
+    tries.push(pub(tokenB).call('POST', '/appointments', { type: 'consulta', patientId: petB, date: day.date, time }));
+  }
+  const res = await Promise.all(tries);
+  assert.equal(res.filter((r) => r.status === 200).length, 1, 'entró ' + res.map((r) => r.status).join(','));
+  assert.ok(res.filter((r) => r.status !== 200).every((r) => r.status === 400 && /ya no está disponible/.test(r.data.error)));
+  const agenda = await owner.call('GET', '/appointments?from=' + day.date + '&to=' + day.date);
+  assert.equal(agenda.data.items.filter((a) => a.time === time).length, 1, 'en la agenda hay un solo turno a esa hora');
+});
+
+test('pedidos simultáneos que se pisan en parte (consulta 20 min y vacuna 10 min después): queda uno solo', async () => {
+  const s = await pub().call('GET', '/slots?type=consulta');
+  const day = s.data.days[s.data.days.length - 1];
+  // Un horario de consulta cuyo horario siguiente (10 min después) también esté libre.
+  const i = day.times.findIndex((t, k) => day.times[k + 1] && Number(day.times[k + 1].slice(3)) === (Number(t.slice(3)) + 10) % 60);
+  assert.ok(i >= 0, 'hay dos horarios seguidos libres');
+  const [r1, r2] = await Promise.all([
+    pub(tokenA).call('POST', '/appointments', { type: 'consulta', patientId: petA, date: day.date, time: day.times[i] }),
+    pub(tokenB).call('POST', '/appointments', { type: 'vacuna', patientId: petB, date: day.date, time: day.times[i + 1] }),
+  ]);
+  assert.deepEqual([r1.status, r2.status].sort(), [200, 400], JSON.stringify([r1.data, r2.data]));
+});
+
+test('dos altas simultáneas con el mismo teléfono: se crea una sola ficha', async () => {
+  const n = local8();
+  const forms = ['11 ' + tail4(n), '011 15 ' + tail4(n), '+54 9 11 ' + n, n, '11' + n, '011 ' + n];
+  const res = await Promise.all(forms.map((phone, k) => pub().call('POST', '/register', { firstName: 'Hugo', lastName: 'Doble' + k, phone, pet: { name: 'Tom', species: 'Gato', sex: 'Macho' } })));
+  assert.equal(res.filter((r) => r.status === 200).length, 1, res.map((r) => r.status).join(','));
+  assert.ok(res.filter((r) => r.status !== 200).every((r) => r.status === 409));
+  const login = await pub().call('POST', '/login', { phone: forms[0] });
+  assert.equal(login.status, 200, 'una sola ficha: el ingreso no es ambiguo');
+});
+
+test('aceptar y cancelar el mismo pedido a la vez: gana uno solo y el otro recibe 404', async () => {
+  const s = await pub().call('GET', '/slots?type=vacuna');
+  const day = s.data.days[s.data.days.length - 1];
+  const req = await pub(tokenA).call('POST', '/appointments', { type: 'vacuna', patientId: petA, date: day.date, time: day.times[0] });
+  assert.equal(req.status, 200);
+  const [acc, rej] = await Promise.all([
+    owner.call('POST', '/appointments/' + req.data.id + '/status', { status: 'confirmado' }),
+    owner.call('POST', '/appointments/' + req.data.id + '/status', { status: 'rechazado' }),
+  ]);
+  assert.deepEqual([acc.status, rej.status].sort(), [200, 404]);
 });

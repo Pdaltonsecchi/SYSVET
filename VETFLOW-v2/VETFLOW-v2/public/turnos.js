@@ -398,7 +398,8 @@
       f.hidden = true;
       state.pets = summary.pets || [];
       renderPets();
-      $('pet').value = String(state.pets[state.pets.length - 1].id);
+      // La lista viene ordenada por nombre: la recién agregada es la de número más alto.
+      $('pet').value = String(Math.max.apply(null, state.pets.map(function (p) { return p.id; })));
       status('Mascota agregada. Ya podés elegir un horario.');
       loadSlots();
     }).catch(function (err) { status(err.message, true); });
