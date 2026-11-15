@@ -435,18 +435,56 @@ test('entrar bien con tu número nunca te bloquea (solo cuentan los intentos fal
   for (let i = 0; i < 14; i++) assert.equal((await pub().call('POST', '/login', { phone: '011 15 ' + tail4(n) })).status, 200, 'ingreso ' + (i + 1));
 });
 
-test('el aviso de pedidos para aceptar cuenta los pendientes y pide sesión', async () => {
-  assert.equal((await client().call('GET', '/appointments/pending')).status, 401);
-  const antes = (await owner.call('GET', '/appointments/pending')).data;
-  assert.ok(antes.count >= 1 && /^\d{4}-\d{2}-\d{2}$/.test(antes.first), JSON.stringify(antes));
-  assert.equal((await owner.call('GET', '/bootstrap')).data.pendingWeb.count, antes.count);
+test('el resumen de pedidos para confirmar pide sesión y cuenta solo los pendientes', async () => {
+  const resumen = async () => (await owner.call('GET', '/appointments/pending-summary')).data;
+  assert.equal((await client().call('GET', '/appointments/pending-summary')).status, 401, 'sin sesión no se ve');
+  const antes = await resumen();
+  assert.ok(antes.count >= 1 && /^\d{4}-\d{2}-\d{2}$/.test(antes.first) && /^\d{2}:\d{2}$/.test(antes.firstTime), JSON.stringify(antes));
+  assert.deepEqual((await owner.call('GET', '/bootstrap')).data.pendingWeb, antes);
+
+  // Tres pedidos nuevos: uno se acepta, otro se rechaza y el tercero lo cancela el cliente. Ninguno de los tres cuenta al final.
   const c = await clienteNuevo('Olga');
+  assert.equal((await client().call('GET', '/appointments/pending-summary', undefined, { 'X-Cliente-Token': c.token })).status, 401, 'un cliente de la página pública tampoco lo ve');
   const days = await diasLibres('vacuna');
-  const req = await pub(c.token).call('POST', '/appointments', { type: 'vacuna', patientId: c.pet, date: days[0].date, time: days[0].times[days[0].times.length - 1] });
-  assert.equal(req.status, 200, JSON.stringify(req.data));
-  assert.equal((await owner.call('GET', '/appointments/pending')).data.count, antes.count + 1);
-  assert.equal((await owner.call('POST', '/appointments/' + req.data.id + '/status', { status: 'rechazado' })).status, 200);
-  assert.equal((await owner.call('GET', '/appointments/pending')).data.count, antes.count);
+  const ids = [];
+  for (let i = 0; i < 3; i++) {
+    const p = i === 0 ? c.pet : (await pub(c.token).call('POST', '/pets', { pet: { name: 'Otra' + i, species: 'Gato', sex: 'Hembra' } })).data.pets.find((x) => x.name === 'Otra' + i).id;
+    const req = await pub(c.token).call('POST', '/appointments', { type: 'vacuna', patientId: p, date: days[0].date, time: days[0].times[days[0].times.length - 1 - i] });
+    assert.equal(req.status, 200, JSON.stringify(req.data));
+    ids.push(req.data.id);
+  }
+  assert.equal((await resumen()).count, antes.count + 3);
+  assert.equal((await owner.call('POST', '/appointments/' + ids[0] + '/status', { status: 'confirmado' })).status, 200);
+  assert.equal((await resumen()).count, antes.count + 2, 'el aceptado ya no cuenta');
+  assert.equal((await owner.call('POST', '/appointments/' + ids[1] + '/status', { status: 'rechazado' })).status, 200);
+  assert.equal((await resumen()).count, antes.count + 1, 'el rechazado no cuenta');
+  assert.equal((await pub(c.token).call('POST', '/appointments/' + ids[2] + '/cancel')).status, 200);
+  assert.deepEqual(await resumen(), antes, 'el cancelado no cuenta');
+});
+
+test('el resumen cuenta también los pedidos con fecha pasada, y apunta primero al más próximo por venir', async () => {
+  const { Pool } = require('pg');
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  try {
+    const resumen = async () => (await owner.call('GET', '/appointments/pending-summary')).data;
+    const antes = await resumen();
+    const c = await clienteNuevo('Pasado');
+    const ins = await pool.query(
+      "INSERT INTO appointments (patient_id, title, description, appointment_date, appointment_time, appointment_type, duration_min, status, source) VALUES ($1, 'Vacuna', '', '2020-01-15', '10:30', 'vacuna', 20, 'pendiente', 'web') RETURNING id",
+      [c.pet]
+    );
+    const con = await resumen();
+    assert.equal(con.count, antes.count + 1, 'el pedido viejo cuenta');
+    assert.equal(con.past, antes.past + 1);
+    assert.equal(con.first, antes.first, 'mientras haya pedidos por venir, se apunta al más próximo');
+    // Sin ningún pedido por venir, se apunta al pasado para que no quede olvidado.
+    await pool.query("UPDATE appointments SET status = 'rechazado' WHERE status = 'pendiente' AND id <> $1", [ins.rows[0].id]);
+    assert.deepEqual(await resumen(), { count: 1, past: 1, first: '2020-01-15', firstTime: '10:30' });
+    assert.equal((await owner.call('POST', '/appointments/' + ins.rows[0].id + '/status', { status: 'rechazado' })).status, 200);
+    assert.deepEqual(await resumen(), { count: 0, past: 0, first: null, firstTime: null });
+  } finally {
+    await pool.end();
+  }
 });
 
 /* ---------- segunda revisión de seguridad ---------- */

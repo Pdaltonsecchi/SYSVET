@@ -486,8 +486,13 @@ Agregado en la rama `turnos-web`. Guía para el dueño: `INSTRUCTIVO-TURNOS-WEB.
   pruebas los suben en `tests/helpers.js`; `tests/turnos-limites.test.js` prueba los valores reales).
   Las IPv6 se cuentan por bloque /64. La IP sale de `CF-Connecting-IP` (Render está detrás de Cloudflare) y, si no viene, de `X-Forwarded-For`; como esa
   cabecera se puede falsificar, la protección real son los topes totales, que no dependen de la IP.
-- **Sistema interno:** el calendario muestra "Pendiente · …" y permite aceptar o rechazar; `GET /api/appointments/pending`
-  y `bootstrap.pendingWeb` alimentan el aviso de "Para revisar" (se consulta cada 2 minutos con la pestaña visible).
+- **Sistema interno:** el calendario muestra "Pendiente · …" (borde naranja punteado y etiqueta "falta confirmar" en la
+  vista Día) y permite aceptar o rechazar. `GET /api/appointments/pending-summary` (solo con sesión) y
+  `bootstrap.pendingWeb` devuelven `{count, past, first, firstTime}`: cuentan TODOS los pendientes (también los de fechas
+  pasadas) y la fecha del más próximo. Alimentan el aviso **naranja** de "Para revisar" (`--dot-pedido`, primero de la
+  lista). El navegador consulta solo ese resumen cada 60 segundos con la pestaña visible y al volver a ella
+  (`checkPendingWeb` en `app.js`); si entró un pedido nuevo muestra un cartel. En celular, el punto del botón "Más" es
+  naranja cuando hay pedidos por confirmar y rojo si solo hay otros avisos.
   Configuración → Página pública: profesional, teléfono, dirección, enlace de Maps (solo https) y reseñas.
 - **Copias de seguridad:** `appointments` incluye `status` y `source`; una copia vieja se restaura como
   `confirmado`/`sistema`. La configuración (tabla de ajustes) no entra en las copias, igual que antes.

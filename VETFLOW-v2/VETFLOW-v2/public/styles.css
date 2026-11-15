@@ -16,7 +16,14 @@
   /* Estados: éxito, advertencia, error e información, con fondos suaves. */
   --ok:#15803D; --ok-bg:#DCFCE7; --warn:#B45309; --warn-bg:#FEF3C7; --bad:#B91C1C; --bad-bg:#FEE2E2; --info:#1D4ED8; --info-bg:#DBEAFE;
   /* Puntos de aviso sobre el menú grafito (claros a propósito: ≥3:1 contra --side) */
-  --dot-vencida:#F87171; --dot-porvencer:#FBBF24; --dot-stock:#60A5FA; --dot-copia:#9CA3AF; --dot-pedido:#A78BFA;
+  --dot-vencida:#F87171; --dot-porvencer:#FBBF24; --dot-stock:#60A5FA; --dot-copia:#9CA3AF;
+  /* Turnos pedidos desde la web (esperan que la veterinaria confirme o rechace): naranja propio, distinto del amarillo
+     de "vacuna por vencer" (--dot-porvencer) y del ámbar de --warn.
+     --dot-pedido #FB923C: 4,5:1 contra el menú grafito (--side). --pedido-strong #C2410C: 5,2:1 contra el panel blanco
+     (punto de la barra inferior en celular; el naranja claro ahí daba 2,3:1). */
+  --dot-pedido:#FB923C; --pedido-strong:#C2410C;
+  /* Etiqueta "falta confirmar" en la agenda: texto #9A3412 sobre #FFEDD5 = 6,4:1 */
+  --pedido-ink:#9A3412; --pedido-bg:#FFEDD5;
   /* Colores de los turnos del calendario: reservados SOLO para identificar eventos (no se usan como decoración).
      Todos dan ≥4,8:1 con texto blanco (el verde #16A34A daba 3,3:1). */
   --appt-consulta:#2563EB; --appt-vacuna:#15803D; --appt-cirugia:#DC2626; --appt-otro:#6B7280;
@@ -80,8 +87,9 @@ body[data-state="error"] #login, body[data-state="error"] #app{display:none}
 .alerts h3{font-size:.95rem;color:var(--side-muted);font-family:var(--f-body);font-weight:500;margin-bottom:.15rem}
 .al{display:flex;gap:.55rem;align-items:flex-start;text-align:left;background:transparent;border:0;padding:.35rem .5rem;border-radius:8px;color:var(--side-ink);font-size:.92rem;width:100%}
 .al:hover{background:var(--side-hover)}
+.al.pedido{font-weight:600}.al small{font-weight:400;color:var(--side-muted);font-size:inherit}
 .dot{flex:none;width:.6rem;height:.6rem;border-radius:50%;margin-top:.45rem}
-.dot.vencida{background:var(--dot-vencida)}.dot.porvencer{background:var(--dot-porvencer)}.dot.stock{background:var(--dot-stock)}.dot.copia{background:var(--dot-copia)}.dot.pedido{background:var(--dot-pedido)}.dot.ok{background:var(--brand-tint)}
+.dot.vencida{background:var(--dot-vencida)}.dot.porvencer{background:var(--dot-porvencer)}.dot.stock{background:var(--dot-stock)}.dot.copia{background:var(--dot-copia)}.dot.pedido{background:var(--dot-pedido);box-shadow:0 0 0 3px color-mix(in srgb,var(--dot-pedido) 28%,transparent)}.dot.ok{background:var(--brand-tint)}
 .side-foot{margin-top:auto;font-size:.85rem;color:var(--side-muted);display:flex;flex-direction:column;gap:.15rem;align-items:flex-start}
 .side-foot .who{margin-bottom:.4rem;display:flex;flex-direction:column}
 .side-foot .who b{color:var(--side-ink)}
@@ -107,6 +115,9 @@ main{min-width:0}
 .chip.bad{background:var(--bad-bg);color:var(--bad)}
 .chip.none{background:var(--brand-soft);color:var(--brand-dark)}
 .chip.info{background:var(--info-bg);color:var(--info)}
+.chip.pedido{background:var(--pedido-bg);color:var(--pedido-ink)}
+/* Turno pedido desde la web que falta confirmar: borde naranja punteado (además del texto "Pendiente"). */
+.appt.pendiente,.dv-appt.pendiente{outline:2px dashed var(--pedido-strong);outline-offset:1px}
 .seg{display:flex;flex-wrap:wrap;gap:.35rem}
 .segb{border:1px solid var(--line-strong);background:var(--panel);border-radius:99px;padding:.3rem .8rem;font-size:.88rem;font-weight:500}
 .segb[aria-pressed="true"]{background:var(--brand-soft);color:var(--brand-dark);border-color:var(--brand);font-weight:600}
@@ -622,6 +633,7 @@ body[data-stale] #app,body[data-stale] dialog{pointer-events:none;opacity:.55}
   .tabb[aria-current="page"]{color:var(--brand-dark)}
   .tabb[aria-current="page"]::before{content:"";position:absolute;top:0;left:22%;right:22%;height:3px;border-radius:0 0 3px 3px;background:var(--brand)}
   .tabb.has-alerts::after{content:"";position:absolute;top:.45rem;left:calc(50% + .55rem);width:.55rem;height:.55rem;border-radius:50%;background:var(--bad);box-shadow:0 0 0 2px var(--panel)}
+  .tabb.has-pedidos::after{background:var(--pedido-strong)}
 
   /* "Más": el menú lateral se abre como hoja desde abajo, sobre la barra */
   .side{display:none}

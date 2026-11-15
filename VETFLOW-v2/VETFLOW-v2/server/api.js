@@ -1894,16 +1894,26 @@ add('POST', '/api/cron/weekly-report', { public: true }, async (ctx) => {
   return weekly.weeklyTick();
 });
 
-// Cuántos pedidos de la web están esperando respuesta (para el aviso "Para revisar").
-// first = fecha del pedido más próximo, para abrir el calendario justo ahí.
+// Resumen de turnos pedidos desde la web que esperan respuesta (aviso naranja de "Para revisar").
+// count  = TODOS los pendientes, también los de fechas que ya pasaron, para que ninguno quede olvidado.
+// past   = cuántos de esos tienen una fecha anterior a hoy.
+// first / firstTime = día y hora del más próximo: el primero de hoy en adelante; si no queda ninguno por venir,
+//                     el más viejo de los pasados. Sirve para abrir el calendario justo ahí.
+// Es una sola consulta con agregados sobre los pendientes (son pocos): liviana para pedirla una vez por minuto.
 async function pendingWeb() {
+  const today = U.todayAR();
   const r = await db.query(
-    "SELECT COUNT(*) AS n, MIN(a.appointment_date) AS first FROM appointments a JOIN patients p ON p.id = a.patient_id WHERE a.status = 'pendiente' AND p.deleted_at IS NULL AND a.appointment_date >= $1",
-    [U.todayAR()]
+    "SELECT COUNT(*) AS n, COUNT(*) FILTER (WHERE a.appointment_date < $1) AS past, " +
+      "MIN(to_char(a.appointment_date, 'YYYY-MM-DD') || ' ' || to_char(a.appointment_time, 'HH24:MI')) FILTER (WHERE a.appointment_date >= $1) AS next, " +
+      "MIN(to_char(a.appointment_date, 'YYYY-MM-DD') || ' ' || to_char(a.appointment_time, 'HH24:MI')) AS oldest " +
+      "FROM appointments a JOIN patients p ON p.id = a.patient_id WHERE a.status = 'pendiente' AND p.deleted_at IS NULL",
+    [today]
   );
-  return { count: Number(r.rows[0].n), first: r.rows[0].first || null };
+  const row = r.rows[0];
+  const when = String(row.next || row.oldest || '');
+  return { count: Number(row.n), past: Number(row.past), first: when ? when.slice(0, 10) : null, firstTime: when ? when.slice(11, 16) : null };
 }
-add('GET', '/api/appointments/pending', async () => pendingWeb());
+add('GET', '/api/appointments/pending-summary', async () => pendingWeb());
 
 // La veterinaria acepta o rechaza un turno pedido desde la web (solo los pendientes).
 add('POST', '/api/appointments/:id/status', async (ctx) => {
