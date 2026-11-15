@@ -2591,7 +2591,8 @@ async function checkPendingWeb(force){
 }
 setInterval(checkPendingWeb,120000);
 document.addEventListener('keydown',function(e){if(e.key==='Escape'&&document.body.dataset.more){setMore(false);var b=$('#tabbar [data-action="more"]');if(b)b.focus();}});
-document.addEventListener('click',function(e){if(document.body.dataset.more&&e.target.closest('#side button:not([data-action="nav"])'))setMore(false);});
+// En la fase de captura: corre antes de que la acción vuelva a dibujar el menú (si no, el botón tocado ya no está en la página y "Más" quedaba abierto).
+document.addEventListener('click',function(e){if(document.body.dataset.more&&e.target.closest('#side button:not([data-action="nav"])'))setMore(false);},true);
 
 /* Tablas en celular: cada celda lleva como etiqueta el título de su columna (data-label), así la fila se puede
    mostrar como tarjeta apilada sin scroll horizontal. En pantallas medianas, si la tabla igual no entra, se avisa

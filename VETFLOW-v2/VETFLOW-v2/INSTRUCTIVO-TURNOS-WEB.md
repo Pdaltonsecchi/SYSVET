@@ -61,8 +61,9 @@ Ejemplo:
 
 1. Entra a la página y escribe **su teléfono** (el que le dio a la veterinaria). No importa si lo escribe con 011, con 15, con +54 9, con espacios o con guiones.
 2. Si es cliente nuevo, toca **Cliente nuevo** y carga su nombre, apellido, teléfono y su mascota. Queda guardado como cliente en tu sistema.
-3. Elige **consulta** o **vacuna**, la mascota y un horario libre de los próximos 14 días.
-4. Ve sus turnos y puede **cancelarlos**. Para cambiar un turno, lo cancela y pide otro.
+3. Elige **consulta** o **vacuna**, la mascota, el día (de los próximos 14) y un horario libre.
+4. Ve sus turnos. Los que pidió por la página los puede **cancelar** él mismo; para cambiar uno, lo cancela y pide otro.
+   Los turnos que cargaste vos (por ejemplo una cirugía) los ve, pero no los puede cancelar desde la página: le dice que llame.
 
 Las cirugías no se pueden pedir por la página: las seguís agendando vos.
 
@@ -70,15 +71,28 @@ Si el teléfono no está registrado, o figura en la ficha de más de un cliente,
 
 ## 3. Aceptar o rechazar un pedido
 
-1. Abrí **Calendario**. Los pedidos de la web aparecen con la palabra **"Pendiente"** adelante.
+1. Cuando hay pedidos esperando, en el menú aparece un aviso en **"Para revisar"**: *"2 turnos pedidos por la web para aceptar"*. Tocalo y te lleva al calendario. En el celular, el aviso está dentro de **Más** (el botón queda marcado con un punto rojo).
+   En el **Calendario**, los pedidos de la web tienen la palabra **"Pendiente"** adelante.
 2. Tocá el pedido. Vas a ver la mascota, el dueño con su teléfono, el tipo y el horario.
 3. Elegí:
-   - **Aceptar turno**: pasa a la agenda como cualquier otro turno. El cliente lo ve como "Confirmado".
+   - **Aceptar turno**: pasa a la agenda como cualquier otro turno. El cliente lo ve como "Confirmado". Si ya tenías otro turno confirmado a esa hora, el sistema te avisa antes de aceptar.
    - **Rechazar**: el pedido desaparece y el horario queda libre para otra persona.
 
 Mientras un pedido está pendiente, **ese horario queda reservado**: nadie más lo puede pedir.
 
-El sistema no manda avisos por email ni por WhatsApp. Conviene mirar el calendario una o dos veces por día para aceptar o rechazar lo que haya llegado. Si rechazás un pedido, llamá al cliente: en su página el turno simplemente deja de aparecer.
+El sistema no manda avisos por email ni por WhatsApp. El aviso de "Para revisar" se actualiza solo cada dos minutos mientras tengas el sistema abierto. Si rechazás un pedido, llamá al cliente: en su página el turno simplemente deja de aparecer.
+
+## Topes para que nadie abuse de la página
+
+La página es pública, así que tiene límites. Un cliente normal no los nota:
+
+- Una mascota puede tener **un turno por día**.
+- Cada cliente puede tener hasta **3 pedidos esperando** tu confirmación. Cuando aceptás o rechazás alguno, puede pedir otro.
+- Cada cliente puede cargar hasta **10 mascotas** desde la página.
+- Si alguien prueba muchos teléfonos que no existen, la página deja de aceptar ingresos por unos minutos y muestra "llamá a la veterinaria".
+- Se aceptan hasta **20 clientes nuevos por día** desde la página, y hasta **60 pedidos sin responder** en total. Si se llega a alguno de esos topes, la página pide llamar.
+
+Si ves muchos pedidos raros juntos, rechazalos: al bajar la cantidad de pendientes, la página vuelve a aceptar pedidos.
 
 ## Preguntas comunes
 
