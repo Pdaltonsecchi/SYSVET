@@ -44,9 +44,9 @@ bloques 1–1,5 rem; dentro de una tarjeta 1,1–1,25 rem.
 ## Componentes
 
 - **Botones** (`.btn`): 40 px de alto (44 px en celular y pantallas táctiles), radio 12. *Principal* (`.primary`): verde
-  lleno, uno por pantalla o ventana. *Común*: blanco con borde. *Fantasma* (`.ghost`): solo texto verde oscuro, para
-  Cerrar/Cancelar. *Peligro* (`.danger`, `.danger-o`): rojo. Hover oscurece; presionado se achica a 97 %; deshabilitado
-  al 50 % con cursor "no permitido". Foco: contorno verde de 3 px separado 2 px (en todo elemento enfocable).
+  lleno, uno por pantalla o ventana. *Común*: blanco con borde. *Fantasma* (`.ghost`): texto verde oscuro sin borde (con fondo
+  apenas gris dentro de las ventanas), para Cerrar/Cancelar. *Peligro* (`.danger`, `.danger-o`): rojo. Hover oscurece; presionado se achica a 97 %; deshabilitado
+  al 50 % con cursor "no permitido". Foco: contorno verde de 3 px separado 2 px (en todo elemento enfocable; verde claro sobre el menú oscuro).
 - **Campos**: blancos, borde `--line-strong`, radio 12, 40/44 px. Al enfocar: borde verde + halo suave. Las listas
   desplegables llevan su flechita. Etiqueta siempre arriba, en negrita chica.
 - **Tarjetas** (`.panel`, `.tbl-wrap`, `.summary`, `.cstrip`, `.rep-kpis`, días del calendario): blancas, radio 16,

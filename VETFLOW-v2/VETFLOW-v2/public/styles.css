@@ -54,6 +54,8 @@ h1{font-size:1.75rem;letter-spacing:-.022em} h2{font-size:1.4rem} h3{font-size:1
 button{font:inherit;color:inherit;cursor:pointer}
 button:disabled{opacity:.5;cursor:not-allowed}
 :focus-visible{outline:3px solid var(--brand);outline-offset:2px}
+/* Sobre el menú oscuro el verde de marca daba 2,5:1: ahí el foco usa el verde claro (5,5:1) */
+.side :focus-visible{outline-color:var(--brand-tint)}
 small{color:var(--muted)}
 a{color:var(--brand-dark);text-underline-offset:2px}
 /* Íconos SVG inline: toman el color del texto (currentColor) */
@@ -78,7 +80,7 @@ body[data-state="error"] #login, body[data-state="error"] #app{display:none}
 .loginbox .btn{min-height:3rem;font-size:1.02rem;margin-top:.15rem}
 .err{margin:0;color:var(--bad);font-size:.92rem;min-height:1.2em}
 
-.app{display:grid;grid-template-columns:244px 1fr;min-height:100vh}
+.app{display:grid;grid-template-columns:236px 1fr;min-height:100vh}
 .side{background:var(--side);color:var(--side-ink);padding:1.25rem .85rem;display:flex;flex-direction:column;gap:1.1rem;
   position:sticky;top:0;align-self:start;height:100vh;overflow:auto;
   padding-top:calc(1.25rem + env(safe-area-inset-top,0px))}
@@ -141,6 +143,7 @@ main{min-width:0}
 .chip.pedido{background:var(--pedido-bg);color:var(--pedido-ink)}
 /* Turno pedido desde la web que falta confirmar: borde naranja punteado (además del texto "Pendiente"). */
 .appt.pendiente,.dv-appt.pendiente{outline:2px dashed var(--pedido-strong);outline-offset:1px}
+.appt.pendiente:focus-visible,.dv-appt.pendiente:focus-visible{outline:3px solid var(--brand);outline-offset:3px}
 /* Filtros y vistas (.seg): pastillas; la elegida se marca con fondo verde suave, borde verde y texto más pesado */
 .seg{display:flex;flex-wrap:wrap;gap:.4rem}
 .segb{border:1px solid var(--line-strong);background:var(--panel);border-radius:99px;padding:.36rem .9rem;font-size:.9rem;font-weight:500;transition:background-color .15s,border-color .15s}
@@ -171,12 +174,12 @@ textarea{resize:vertical}
 .avatar{flex:none;width:2.6rem;height:2.6rem;border-radius:50%;background:var(--brand-soft);color:var(--brand-dark);display:grid;place-items:center}
 .avatar .ico{width:58%;height:58%}
 .avatar--lg{width:3.75rem;height:3.75rem}
-.pac-detail{padding:1.75rem clamp(1rem,3vw,2.5rem) 3rem;min-width:0}
+.pac-detail{padding:1.75rem clamp(1rem,3vw,2.25rem) 3rem;min-width:0}
 .empty{color:var(--muted);padding:1.5rem 0;max-width:46ch}
 .back{display:none;margin-bottom:1rem}
 /* Encabezado de la ficha: identidad + franja clínica + acciones. En celular, una columna. */
 .phead{display:flex;flex-wrap:wrap;align-items:center;gap:1rem 1.5rem;padding-bottom:1.25rem;border-bottom:1px solid var(--line)}
-.phead-id{flex:1 1 16rem;display:flex;gap:.9rem;align-items:center;min-width:0}
+.phead-id{flex:1 1 22rem;display:flex;gap:.9rem;align-items:center;min-width:0}
 .phead .info{flex:1;min-width:0}
 .phead h2{overflow-wrap:anywhere}
 .phead .pactions{order:3;flex:1 1 100%}
@@ -196,7 +199,7 @@ textarea{resize:vertical}
   .cstrip>div:nth-child(n+2){border-left:1px solid var(--line)}
   .cstrip>div:nth-child(n+3){border-top:0}
 }
-.meta{margin:.25rem 0 0;color:var(--muted)}
+.meta{margin:.25rem 0 0;color:var(--muted);overflow-wrap:anywhere}
 .pactions{display:flex;gap:.5rem;flex-wrap:wrap}
 .note{margin:1rem 0 0;padding:.6rem .85rem;background:var(--warn-bg);color:var(--warn);border-radius:var(--r);font-size:.95rem}
 .sec{padding:1.5rem 0;border-bottom:1px solid var(--line)}
@@ -228,7 +231,7 @@ textarea{resize:vertical}
 .sum{display:flex;justify-content:flex-end;gap:.6rem;padding-top:.6rem;font-weight:600}
 
 /* farmacia, caja, reportes */
-.farm{padding:1.75rem clamp(1rem,3vw,2.5rem) 3rem}
+.farm{padding:1.75rem clamp(1rem,3vw,2.25rem) 3rem}
 .summary{display:grid;grid-template-columns:repeat(3,1fr);margin:1.25rem 0;border:1px solid var(--line);border-radius:var(--r-lg);background:var(--panel);box-shadow:var(--sh-1)}
 .summary>div{padding:.9rem 1.1rem}
 .summary>div+div{border-left:1px solid var(--line)}
@@ -243,10 +246,10 @@ textarea{resize:vertical}
 .toolbar{display:flex;justify-content:space-between;gap:.75rem;flex-wrap:wrap;align-items:center;margin-bottom:.9rem}
 .tbl-wrap{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--sh-1)}
 .tbl{width:100%;border-collapse:collapse}
-.tbl th{text-align:left;font-size:.82rem;font-weight:600;color:var(--muted);padding:.7rem 1rem;border-bottom:1px solid var(--line);background:var(--fill-soft)}
-.tbl td{padding:.7rem 1rem;border-top:1px solid var(--line);vertical-align:middle}
+.tbl th{text-align:left;font-size:.82rem;font-weight:600;color:var(--muted);padding:.65rem .85rem;border-bottom:1px solid var(--line);background:var(--fill-soft)}
+.tbl td{padding:.65rem .85rem;border-top:1px solid var(--line);vertical-align:middle}
 .tbl tr:first-child td{border-top:0}
-.tbl .num{text-align:right;font-variant-numeric:tabular-nums}
+.tbl .num{white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}
 .tbl .act{text-align:right;white-space:nowrap}
 .stk{display:inline-flex;align-items:center;gap:.5rem}
 .stk button{width:1.9rem;height:1.9rem;border-radius:var(--r-sm);border:1px solid var(--line-strong);background:var(--panel);font-weight:700;line-height:1}
@@ -474,6 +477,7 @@ dialog::backdrop{background:rgba(20,28,24,.48)}
   #print .sign div{flex:1;text-align:center;font-size:10pt}
   #print .sign span{display:block;border-top:1px solid #000;margin-bottom:.3em}
   #print tr{break-inside:avoid}
+  #print h1,#print h2,#print h3{letter-spacing:normal}
 }
 
 /* H: adjuntos de estudios */
@@ -525,6 +529,7 @@ dialog:has(.preview){width:min(900px,calc(100% - 1rem))}
 .filterpanel summary::-webkit-details-marker{display:none}
 .filterpanel summary::before{content:"▸";color:var(--muted);transition:transform .15s}
 .filterpanel[open] summary::before{transform:rotate(90deg)}
+@media (prefers-reduced-motion:reduce){.filterpanel summary::before{transition:none}}
 .badge{display:inline-grid;place-items:center;min-width:1.4rem;height:1.4rem;padding:0 .35rem;border-radius:99px;background:var(--brand);color:var(--brand-ink);font-size:.8rem}
 .fbody{padding:.2rem .9rem .9rem;display:flex;flex-direction:column;gap:.7rem;border-top:1px solid var(--line)}
 .frow{display:flex;flex-wrap:wrap;gap:.5rem .8rem;align-items:center;padding-top:.6rem}
@@ -728,7 +733,7 @@ body[data-stale] #app,body[data-stale] dialog{pointer-events:none;opacity:.55}
 /* Tablet/escritorio: si una tabla igual no entra, se dice claramente que hay más columnas */
 .scrollhint{margin:0 0 .35rem;font-size:.85rem;color:var(--muted)}
 .tbl-wrap.is-scroll{box-shadow:inset -14px 0 12px -12px rgba(38,48,43,.35)}
-@media (min-width:641px) and (max-width:1100px){.tbl th,.tbl td{padding:.6rem .6rem}}
+@media (min-width:641px) and (max-width:1300px){.tbl th,.tbl td{padding:.6rem .45rem}.tbl th:first-child,.tbl td:first-child{padding-left:.85rem}}
 
 /* Objetivos táctiles de 44 px en pantallas táctiles o angostas */
 @media (max-width:820px),(pointer:coarse){
@@ -747,6 +752,8 @@ body[data-stale] #app,body[data-stale] dialog{pointer-events:none;opacity:.55}
   .cal-chip,.cal-more{min-height:2.75rem;font-size:.85rem}
   .appt{min-height:2.75rem}
   .pitem{min-height:3.25rem}
+  .fld.check,.checkgrid .check{min-height:2.75rem}
+  .dform p a{display:inline-flex;align-items:center;min-height:2.75rem}
 }
 
 /* Textos que no deben cortarse en 360 px */
@@ -775,6 +782,11 @@ body[data-stale] #app,body[data-stale] dialog{pointer-events:none;opacity:.55}
 /* Pestañas en celular: ocupan todo el ancho en una sola fila (Configuración, con cuatro, va en 2×2) */
 @media (max-width:640px){
   .tabs{display:flex;flex-wrap:nowrap}
-  .tabs .tab{flex:1 1 0;min-width:0;padding:.4rem .35rem;font-size:.88rem;line-height:1.15}
+  .tabs .tab{flex:1 1 auto;min-width:0;padding:.4rem .35rem;font-size:.88rem;line-height:1.15}
   .cfg-tabs{display:grid}
 }
+/* En celular, lo que recibe el foco no queda escondido detrás de la barra inferior */
+@media (max-width:820px){html{scroll-padding-bottom:calc(4.5rem + env(safe-area-inset-bottom,0px))}}
+/* "Cancelar/Cerrar" dentro de una ventana: fondo apenas marcado para que se lea como botón */
+.actions .btn.ghost{background:var(--fill-soft)}
+.actions .btn.ghost:hover:not(:disabled),.actions .btn.ghost:active:not(:disabled){background:var(--fill)}
