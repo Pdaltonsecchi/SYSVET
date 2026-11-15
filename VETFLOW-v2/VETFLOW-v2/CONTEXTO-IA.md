@@ -481,10 +481,10 @@ Agregado en la rama `turnos-web`. Guía para el dueño: `INSTRUCTIVO-TURNOS-WEB.
   `POST /api/public/appointments/:id/cancel`. Nunca devuelven datos de otro cliente.
 - **Topes** (`booking.LIMITS`, contadores en memoria por proceso con `booking.limit/hit/blocked`; los que dependen de
   datos se cuentan en la base): 120 pedidos por IP cada 10 min; ingresos fallidos: 20 por IP por hora, 10 por teléfono
-  cada 15 min y 30 en total cada 15 min; altas: 5 por IP por hora y 20 por día; 10 mascotas por cliente; un turno por
+  cada 15 min y 60 en total cada 15 min (el intento se anota antes de consultar la base y se devuelve si el ingreso salió bien: entrar bien nunca bloquea); altas: 5 por IP por hora y 20 por día; 10 mascotas por cliente; un turno por
   mascota por día; 3 pendientes por cliente; 60 pendientes web en total. Se ajustan con variables `TURNOS_*` (las
   pruebas los suben en `tests/helpers.js`; `tests/turnos-limites.test.js` prueba los valores reales).
-  La IP sale de `CF-Connecting-IP` (Render está detrás de Cloudflare) y, si no viene, de `X-Forwarded-For`; como esa
+  Las IPv6 se cuentan por bloque /64. La IP sale de `CF-Connecting-IP` (Render está detrás de Cloudflare) y, si no viene, de `X-Forwarded-For`; como esa
   cabecera se puede falsificar, la protección real son los topes totales, que no dependen de la IP.
 - **Sistema interno:** el calendario muestra "Pendiente · …" y permite aceptar o rechazar; `GET /api/appointments/pending`
   y `bootstrap.pendingWeb` alimentan el aviso de "Para revisar" (se consulta cada 2 minutos con la pestaña visible).
