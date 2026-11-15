@@ -118,3 +118,44 @@ test('phoneTail y phoneLimitKey: iguales para todas las formas de escribir un n�
   for (const v of forms) assert.equal(booking.phoneTail(v), booking.phoneKey(v).slice(-6), v);
   assert.equal(booking.phoneLimitKey('011 15 5555-1234'), booking.phoneLimitKey('+54 9 11 5555-1234'));
 });
+
+/* ---------- límites: no se vacían ni se inflan ---------- */
+test('blocked y hit: se puede contar solo lo que falla, sin sumar al consultar', () => {
+  const key = 'prueba-a:' + Math.random();
+  assert.equal(booking.blocked(key, 2), false);
+  booking.hit(key, 60000);
+  assert.equal(booking.blocked(key, 2), false);
+  booking.hit(key, 60000);
+  assert.equal(booking.blocked(key, 2), true);
+  assert.equal(booking.blocked(key, 2), true, 'consultar no cambia nada');
+});
+
+test('llenar un grupo de claves no desbloquea a nadie ni toca los otros grupos', () => {
+  const g = 'prueba-b' + Math.floor(Math.random() * 1e9);
+  const otro = 'prueba-c' + Math.floor(Math.random() * 1e9) + ':x';
+  assert.equal(booking.limit(g + ':víctima', 1, 60000), true);
+  assert.equal(booking.limit(g + ':víctima', 1, 60000), false, 'ya está bloqueada');
+  assert.equal(booking.limit(otro, 1, 60000), true);
+  for (let i = 0; i < 12000; i++) booking.limit(g + ':relleno-' + i, 1, 60000);
+  assert.equal(booking.limit(g + ':víctima', 1, 60000), false, 'sigue bloqueada después de 12.000 claves nuevas');
+  assert.equal(booking.limit(otro, 1, 60000), false, 'el otro grupo conserva su cuenta');
+  // Con el grupo lleno, las claves nuevas comparten un solo contador: no pasan gratis.
+  assert.equal(booking.limit(g + ':nueva-1', 1, 60000), false);
+});
+
+test('las claves larguísimas se recortan (no se puede inflar la memoria)', () => {
+  const g = 'prueba-d' + Math.floor(Math.random() * 1e9) + ':';
+  const largo = 'a'.repeat(64);
+  assert.equal(booking.limit(g + largo + 'x'.repeat(20000), 1, 60000), true);
+  assert.equal(booking.limit(g + largo + 'y'.repeat(20000), 1, 60000), false, 'misma clave una vez recortada');
+});
+
+test('la IP del visitante: CF-Connecting-IP primero, y nunca un texto que no sea una IP', () => {
+  const U = require('../server/util');
+  const req = (h) => ({ headers: h, socket: { remoteAddress: '10.0.0.9' } });
+  assert.equal(U.clientIp(req({ 'cf-connecting-ip': '203.0.113.7', 'x-forwarded-for': '1.2.3.4' })), '203.0.113.7');
+  assert.equal(U.clientIp(req({ 'x-forwarded-for': '198.51.100.4, 10.0.0.1' })), '198.51.100.4');
+  assert.equal(U.clientIp(req({ 'x-forwarded-for': 'cualquier cosa ' + 'x'.repeat(5000) })), '10.0.0.9');
+  assert.equal(U.clientIp(req({ 'cf-connecting-ip': 'no-es-ip', 'x-forwarded-for': '2001:db8::1' })), '2001:db8::1');
+  assert.equal(U.clientIp(req({})), '10.0.0.9');
+});

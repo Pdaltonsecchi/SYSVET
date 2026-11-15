@@ -311,7 +311,7 @@ test('dos clientes piden el mismo horario a la vez: queda uno solo', async () =>
 
 test('pedidos simultáneos que se pisan en parte (consulta 20 min y vacuna 10 min después): queda uno solo', async () => {
   const s = await pub().call('GET', '/slots?type=consulta');
-  const day = s.data.days[s.data.days.length - 1];
+  const day = s.data.days[s.data.days.length - 2];
   // Un horario de consulta cuyo horario siguiente (10 min después) también esté libre.
   const i = day.times.findIndex((t, k) => day.times[k + 1] && Number(day.times[k + 1].slice(3)) === (Number(t.slice(3)) + 10) % 60);
   assert.ok(i >= 0, 'hay dos horarios seguidos libres');
@@ -334,12 +334,117 @@ test('dos altas simultáneas con el mismo teléfono: se crea una sola ficha', as
 
 test('aceptar y cancelar el mismo pedido a la vez: gana uno solo y el otro recibe 404', async () => {
   const s = await pub().call('GET', '/slots?type=vacuna');
-  const day = s.data.days[s.data.days.length - 1];
+  const day = s.data.days[s.data.days.length - 3];
   const req = await pub(tokenA).call('POST', '/appointments', { type: 'vacuna', patientId: petA, date: day.date, time: day.times[0] });
-  assert.equal(req.status, 200);
+  assert.equal(req.status, 200, JSON.stringify(req.data));
   const [acc, rej] = await Promise.all([
     owner.call('POST', '/appointments/' + req.data.id + '/status', { status: 'confirmado' }),
     owner.call('POST', '/appointments/' + req.data.id + '/status', { status: 'rechazado' }),
   ]);
   assert.deepEqual([acc.status, rej.status].sort(), [200, 404]);
+});
+
+/* ---------- topes y validaciones que salieron de la revisión de seguridad ---------- */
+// Un cliente y una mascota nuevos, para que estas pruebas no dependan de lo que dejaron las anteriores.
+async function clienteNuevo(nombre) {
+  const r = await pub().call('POST', '/register', { firstName: nombre, lastName: 'Tope', phone: '11 ' + tail4(local8()), pet: { name: 'Uno', species: 'Perro', sex: 'Macho' } });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  return { token: r.data.token, id: r.data.client.id, pet: r.data.pets[0].id };
+}
+const diasLibres = async (type) => (await pub().call('GET', '/slots?type=' + type)).data.days;
+
+test('una mascota no puede tener dos turnos el mismo día, y un cliente no pasa de 3 pedidos sin confirmar', async () => {
+  const c = await clienteNuevo('Iris');
+  const days = await diasLibres('vacuna');
+  const pedir = (pet, d, k) => pub(c.token).call('POST', '/appointments', { type: 'vacuna', patientId: pet, date: days[d].date, time: days[d].times[k] });
+  assert.equal((await pedir(c.pet, 0, 0)).status, 200);
+  const mismoDia = await pedir(c.pet, 0, 2);
+  assert.equal(mismoDia.status, 400);
+  assert.match(mismoDia.data.error, /ya tiene un turno ese día/);
+  assert.equal((await pedir(c.pet, 1, 0)).status, 200);
+  assert.equal((await pedir(c.pet, 2, 0)).status, 200);
+  const cuarto = await pedir(c.pet, 3, 0);
+  assert.equal(cuarto.status, 400);
+  assert.match(cuarto.data.error, /3 pedidos esperando confirmación/);
+  // Con otra mascota tampoco: el tope es por cliente.
+  const pets = await pub(c.token).call('POST', '/pets', { pet: { name: 'Dos', species: 'Gato', sex: 'Hembra' } });
+  const otra = pets.data.pets.find((p) => p.name === 'Dos').id;
+  assert.equal((await pedir(otra, 3, 0)).status, 400);
+  // Cuando la veterinaria confirma uno, puede pedir otro.
+  const me = await pub(c.token).call('GET', '/me');
+  assert.equal((await owner.call('POST', '/appointments/' + me.data.appointments[0].id + '/status', { status: 'confirmado' })).status, 200);
+  assert.equal((await pedir(otra, 3, 0)).status, 200);
+});
+
+test('un cliente no puede cargar más de 10 mascotas desde la página', async () => {
+  const c = await clienteNuevo('Juan');
+  for (let i = 2; i <= 10; i++) assert.equal((await pub(c.token).call('POST', '/pets', { pet: { name: 'Mascota ' + i, species: 'Perro', sex: 'Macho' } })).status, 200, 'mascota ' + i);
+  const once = await pub(c.token).call('POST', '/pets', { pet: { name: 'Mascota 11', species: 'Perro', sex: 'Macho' } });
+  assert.equal(once.status, 400);
+  assert.match(once.data.error, /10 mascotas/);
+});
+
+test('lo que agendó la veterinaria no se cancela desde la página; lo pedido por la web sí', async () => {
+  const c = await clienteNuevo('Karen');
+  const days = await diasLibres('consulta');
+  const cir = await owner.call('POST', '/appointments', { patientId: c.pet, title: 'Castración', description: '', date: days[1].date, time: '08:00', type: 'cirugia', duration: 90 });
+  assert.equal(cir.status, 200, JSON.stringify(cir.data));
+  const web = await pub(c.token).call('POST', '/appointments', { type: 'consulta', patientId: c.pet, date: days[2].date, time: days[2].times[0] });
+  assert.equal(web.status, 200);
+  const me = await pub(c.token).call('GET', '/me');
+  assert.equal(me.data.appointments.find((a) => a.id === cir.data.id).canCancel, false);
+  assert.equal(me.data.appointments.find((a) => a.id === web.data.id).canCancel, true);
+  const no = await pub(c.token).call('POST', '/appointments/' + cir.data.id + '/cancel', {});
+  assert.equal(no.status, 409);
+  assert.match(no.data.error, /llamá a la veterinaria/);
+  const agenda = await owner.call('GET', '/appointments?from=' + days[1].date + '&to=' + days[1].date);
+  assert.ok(agenda.data.items.some((a) => a.id === cir.data.id), 'la cirugía sigue en la agenda');
+  assert.equal((await pub(c.token).call('POST', '/appointments/' + web.data.id + '/cancel', {})).status, 200);
+  // Otro cliente no puede cancelar ni enterarse de ese turno.
+  assert.equal((await pub(tokenB).call('POST', '/appointments/' + cir.data.id + '/cancel', {})).status, 404);
+});
+
+test('horas con segundos y números de turno o mascota enormes dan error de validación, no un error interno', async () => {
+  const c = await clienteNuevo('Leo');
+  const days = await diasLibres('consulta');
+  const seg = await pub(c.token).call('POST', '/appointments', { type: 'consulta', patientId: c.pet, date: days[0].date, time: days[0].times[0] + ':59' });
+  assert.equal(seg.status, 400);
+  for (const patientId of [1e20, 2147483648, -1, 1.5, 'abc', null, [c.pet, c.pet], { id: c.pet }]) {
+    const r = await pub(c.token).call('POST', '/appointments', { type: 'consulta', patientId, date: days[0].date, time: days[0].times[0] });
+    assert.equal(r.status, 400, JSON.stringify(patientId));
+  }
+  assert.equal((await pub(c.token).call('POST', '/appointments/99999999999/cancel', {})).status, 400);
+  assert.equal((await owner.call('POST', '/appointments/99999999999/status', { status: 'confirmado' })).status, 400);
+});
+
+test('si la veterinaria cambia el teléfono del cliente, su sesión abierta deja de valer', async () => {
+  const c = await clienteNuevo('Mara');
+  assert.equal((await pub(c.token).call('GET', '/me')).status, 200);
+  const nuevo = '11 ' + tail4(local8());
+  const put = await owner.call('PUT', '/clients/' + c.id, { firstName: 'Mara', lastName: 'Tope', phone: nuevo, email: '', address: '' });
+  assert.equal(put.status, 200, JSON.stringify(put.data));
+  assert.equal((await pub(c.token).call('GET', '/me')).status, 401);
+  assert.equal((await pub(c.token).call('POST', '/pets', { pet: { name: 'X', species: 'Perro', sex: 'Macho' } })).status, 401);
+  assert.equal((await pub().call('POST', '/login', { phone: nuevo })).status, 200, 'con el número nuevo entra');
+});
+
+test('entrar bien con tu número nunca te bloquea (solo cuentan los intentos fallidos)', async () => {
+  const n = local8();
+  const reg = await pub().call('POST', '/register', { firstName: 'Nora', lastName: 'Tope', phone: '11 ' + tail4(n), pet: { name: 'Uno', species: 'Gato', sex: 'Hembra' } });
+  assert.equal(reg.status, 200);
+  for (let i = 0; i < 14; i++) assert.equal((await pub().call('POST', '/login', { phone: '011 15 ' + tail4(n) })).status, 200, 'ingreso ' + (i + 1));
+});
+
+test('el aviso de pedidos para aceptar cuenta los pendientes y pide sesión', async () => {
+  assert.equal((await client().call('GET', '/appointments/pending')).status, 401);
+  const antes = (await owner.call('GET', '/appointments/pending')).data;
+  assert.ok(antes.count >= 1 && /^\d{4}-\d{2}-\d{2}$/.test(antes.first), JSON.stringify(antes));
+  assert.equal((await owner.call('GET', '/bootstrap')).data.pendingWeb.count, antes.count);
+  const c = await clienteNuevo('Olga');
+  const days = await diasLibres('vacuna');
+  const req = await pub(c.token).call('POST', '/appointments', { type: 'vacuna', patientId: c.pet, date: days[0].date, time: days[0].times[days[0].times.length - 1] });
+  assert.equal(req.status, 200, JSON.stringify(req.data));
+  assert.equal((await owner.call('GET', '/appointments/pending')).data.count, antes.count + 1);
+  assert.equal((await owner.call('POST', '/appointments/' + req.data.id + '/status', { status: 'rechazado' })).status, 200);
+  assert.equal((await owner.call('GET', '/appointments/pending')).data.count, antes.count);
 });

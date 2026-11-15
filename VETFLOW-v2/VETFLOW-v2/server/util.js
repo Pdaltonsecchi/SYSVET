@@ -1,4 +1,5 @@
 'use strict';
+const net = require('net');
 
 class HttpError extends Error {
   // expose: un 502/503 con mensaje pensado para el usuario (ej.: email no configurado) se muestra tal cual.
@@ -172,7 +173,8 @@ function oneOf(v, list, label) {
 }
 function idParam(s) {
   const n = Number(s);
-  if (!Number.isInteger(n) || n < 1) throw bad('Identificador inválido');
+  // Tope del tipo INTEGER de Postgres: un número más grande daría un error interno en vez de "no encontrado".
+  if (!Number.isInteger(n) || n < 1 || n > 2147483647) throw bad('Identificador inválido');
   return n;
 }
 function checkEmail(s) {
@@ -248,9 +250,16 @@ function parseCookies(header) {
   return out;
 }
 
+/**
+ * IP de quien hace el pedido. Detrás de Render (que usa Cloudflare) la IP real viene en CF-Connecting-IP, que el
+ * visitante no puede inventar; X-Forwarded-For sí lo puede escribir el visitante, así que queda como segunda opción.
+ * Siempre se valida que sea una IP: nunca se usa como clave un texto arbitrario.
+ */
 function clientIp(req) {
-  const xf = req.headers['x-forwarded-for'];
-  if (xf) return String(xf).split(',')[0].trim();
+  const cf = String(req.headers['cf-connecting-ip'] || '').trim();
+  if (net.isIP(cf)) return cf;
+  const xf = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  if (net.isIP(xf)) return xf;
   return req.socket.remoteAddress || 'desconocida';
 }
 

@@ -4,7 +4,7 @@
 
   var TOKEN_KEY = 'turnos-cliente-token';
   var TZ = 'America/Argentina/Buenos_Aires';
-  var state = { token: null, info: null, client: null, pets: [], appointments: [], type: 'consulta' };
+  var state = { token: null, info: null, client: null, pets: [], appointments: [], type: 'consulta', day: null };
   var $ = function (id) { return document.getElementById(id); };
 
   function el(tag, text, cls) {
@@ -50,6 +50,10 @@
   function fmtDayShort(iso) {
     var d = new Date(iso + 'T12:00:00');
     return d.toLocaleDateString('es-AR', { day: 'numeric', month: 'short', timeZone: TZ });
+  }
+  function fmtWeekday(iso) {
+    var d = new Date(iso + 'T12:00:00');
+    return d.toLocaleDateString('es-AR', { weekday: 'short', timeZone: TZ }).replace('.', '');
   }
   var STATUS_LABEL = { pendiente: 'Pendiente de confirmación', confirmado: 'Confirmado' };
 
@@ -317,6 +321,12 @@
       title.appendChild(badge);
       li.appendChild(title);
       li.appendChild(when);
+      if (!a.canCancel) {
+        // Lo agendó la veterinaria: desde la página no se cancela.
+        li.appendChild(el('div', 'Para cambiar o cancelar este turno, llamá a la veterinaria.', 'muted small-text'));
+        list.appendChild(li);
+        return;
+      }
       var cancel = el('button', 'Cancelar turno', 'btn danger small');
       cancel.type = 'button';
       cancel.addEventListener('click', function () {
@@ -343,8 +353,16 @@
         msg.hidden = false;
         return;
       }
-      res.days.forEach(function (day) {
-        var wrap = el('div', null, 'day');
+      // Primero se elige el día; abajo se ven solo los horarios de ese día.
+      if (!res.days.some(function (d) { return d.date === state.day; })) state.day = res.days[0].date;
+      var tabs = el('div', null, 'day-tabs');
+      tabs.setAttribute('role', 'group');
+      tabs.setAttribute('aria-label', 'Elegí el día');
+      var wrap = el('div', null, 'day');
+      function showDay(day) {
+        state.day = day.date;
+        Array.prototype.forEach.call(tabs.children, function (b) { b.setAttribute('aria-pressed', String(b.dataset.date === day.date)); });
+        wrap.textContent = '';
         wrap.appendChild(el('p', fmtDay(day.date), 'day-title'));
         var grid = el('div', null, 'slots-grid');
         day.times.forEach(function (t) {
@@ -355,8 +373,22 @@
           grid.appendChild(b);
         });
         wrap.appendChild(grid);
-        box.appendChild(wrap);
+      }
+      res.days.forEach(function (day) {
+        var b = el('button', null, 'day-tab');
+        b.type = 'button';
+        b.dataset.date = day.date;
+        b.appendChild(el('span', fmtWeekday(day.date), 'day-tab-name'));
+        b.appendChild(el('span', fmtDayShort(day.date), 'day-tab-date'));
+        b.setAttribute('aria-label', fmtDay(day.date) + ', ' + day.times.length + (day.times.length === 1 ? ' horario libre' : ' horarios libres'));
+        b.addEventListener('click', function () { showDay(day); });
+        tabs.appendChild(b);
       });
+      box.appendChild(tabs);
+      box.appendChild(wrap);
+      showDay(res.days.filter(function (d) { return d.date === state.day; })[0]);
+      var on = tabs.querySelector('[aria-pressed="true"]');
+      if (on && on.offsetLeft > tabs.clientWidth - on.offsetWidth) tabs.scrollLeft = on.offsetLeft - 8;
     }).catch(function (err) {
       msg.textContent = err.message;
       msg.hidden = false;

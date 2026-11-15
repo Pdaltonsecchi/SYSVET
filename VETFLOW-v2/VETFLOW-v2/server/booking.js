@@ -102,23 +102,79 @@ const phoneTail = (v) => String(v == null ? '' : v).replace(/\D/g, '').slice(-6)
 const phoneLimitKey = (v) => phoneKey(v).slice(-8);
 
 /* ---------- límite de pedidos (en memoria, por proceso) ---------- */
-const hits = new Map();
-/** true si la clave todavía no superó `max` pedidos dentro de `windowMs`. */
-function limit(key, max, windowMs) {
+// Las claves tienen la forma "grupo:valor" (por ejemplo "ip:1.2.3.4"). Cada grupo tiene su propio mapa con tope de
+// tamaño: llenar uno no borra los contadores de los demás. Si un grupo se llena, las claves nuevas comparten un
+// solo contador ("*"): nunca se vacía todo de golpe (eso dejaría pasar a quien ya estaba bloqueado).
+const MAX_KEYS = 5000;
+const MAX_KEY_LEN = 64;
+const groups = new Map();
+function slot(key, windowMs, create) {
   const now = Date.now();
-  if (hits.size > 10000) hits.clear();
-  const h = hits.get(key) || { n: 0, t: now };
-  if (now - h.t > windowMs) {
-    h.n = 0;
-    h.t = now;
+  const k = String(key);
+  const i = k.indexOf(':');
+  const group = i > 0 ? k.slice(0, i) : 'general';
+  let map = groups.get(group);
+  if (!map) {
+    if (!create) return null;
+    map = new Map();
+    groups.set(group, map);
   }
+  let id = k.slice(i + 1, i + 1 + MAX_KEY_LEN);
+  let h = map.get(id);
+  if (h && now - h.t > h.w) {
+    map.delete(id);
+    h = null;
+  }
+  if (h || !create) return h;
+  if (map.size >= MAX_KEYS) {
+    for (const [kk, v] of map) if (now - v.t > v.w) map.delete(kk);
+    if (map.size >= MAX_KEYS) {
+      id = '*';
+      h = map.get(id);
+      if (h && now - h.t > h.w) h = null;
+      if (h) return h;
+    }
+  }
+  h = { n: 0, t: now, w: windowMs };
+  map.set(id, h);
+  return h;
+}
+/** Suma un pedido a la clave (la ventana de tiempo arranca con el primero). */
+function hit(key, windowMs) {
+  slot(key, windowMs, true).n += 1;
+}
+/** true si la clave ya llegó a `max` dentro de su ventana. No suma nada. */
+function blocked(key, max) {
+  const h = slot(key, 0, false);
+  return !!h && h.n >= max;
+}
+/** Suma un pedido y devuelve true si la clave todavía no superó `max` dentro de `windowMs`. */
+function limit(key, max, windowMs) {
+  const h = slot(key, windowMs, true);
   h.n += 1;
-  hits.set(key, h);
   return h.n <= max;
 }
 
+/* ---------- topes de uso de la página pública ---------- */
+// Se pueden ajustar con variables de entorno (las pruebas automáticas los suben para no chocar con ellos).
+const envInt = (name, def) => {
+  const n = Number(process.env[name]);
+  return Number.isInteger(n) && n > 0 ? n : def;
+};
+const LIMITS = {
+  ipRequests: envInt('TURNOS_PEDIDOS_POR_IP', 120), // pedidos por IP cada 10 minutos
+  failsPerIp: envInt('TURNOS_FALLOS_POR_IP', 20), // ingresos fallidos por IP por hora
+  failsPerPhone: 10, // ingresos fallidos con el mismo teléfono cada 15 minutos
+  failsGlobal: envInt('TURNOS_FALLOS_TOTAL', 30), // ingresos fallidos en total cada 15 minutos (frena el barrido de números)
+  signupsPerIp: envInt('TURNOS_ALTAS_POR_IP', 5), // clientes nuevos por IP por hora
+  signupsPerDay: envInt('TURNOS_ALTAS_POR_DIA', 20), // clientes nuevos por la web por día, en total
+  petsPerClient: 10, // mascotas por cliente (más que eso, por teléfono)
+  pendingPerClient: 3, // pedidos esperando confirmación por cliente
+  pendingGlobal: envInt('TURNOS_PENDIENTES_TOTAL', 60), // pedidos web esperando confirmación, en total
+};
+
 module.exports = {
   WEB_TYPES, BOOKABLE_STATUS, DAYS_AHEAD, STEP_MIN,
-  toMin, fromMin, rangesFor, webType, freeSlots, canBook, limit,
+  toMin, fromMin, rangesFor, webType, freeSlots, canBook, limit, hit, blocked, LIMITS,
   phoneKey, samePhone, phoneTail, phoneLimitKey,
 };

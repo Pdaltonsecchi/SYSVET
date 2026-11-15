@@ -156,7 +156,7 @@ function showLogin(msg){
   $('#lerror').textContent=msg||'';
 }
 function applyBootstrap(d){
-  S.clinic=d.clinic||'SYSVET';S.settings=d.settings||{};document.title=S.clinic;var sn=$('#shopname');if(sn)sn.textContent=S.clinic;S.attachments=!!d.attachments;S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.suppliers=d.suppliers||[];S.clients=d.clients||[];S.summary=d.summary||null;
+  S.clinic=d.clinic||'SYSVET';S.settings=d.settings||{};document.title=S.clinic;var sn=$('#shopname');if(sn)sn.textContent=S.clinic;S.attachments=!!d.attachments;S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.suppliers=d.suppliers||[];S.clients=d.clients||[];S.summary=d.summary||null;S.pendingWeb=Number(d.pendingWeb&&d.pendingWeb.count)||0;S.pendingWebFirst=(d.pendingWeb&&d.pendingWeb.first)||null;
 }
 async function start(){
   var d=await api('/bootstrap');
@@ -484,6 +484,7 @@ function renderAlerts(){
   var warn=S.patients.filter(function(p){return patientAlert(p)==='warn';}).length;
   var low=S.products.filter(lowStock).length;
   var h='';
+  if(S.pendingWeb)h+='<button class="al" data-action="goto-pedidos"><span class="dot pedido"></span><span>'+plural(S.pendingWeb,'turno pedido por la web para aceptar','turnos pedidos por la web para aceptar')+'</span></button>';
   if(bad)h+='<button class="al" data-action="goto-vac"><span class="dot vencida"></span><span>'+plural(bad,'paciente con vacuna vencida','pacientes con vacuna vencida')+'</span></button>';
   if(warn)h+='<button class="al" data-action="goto-vac"><span class="dot porvencer"></span><span>'+plural(warn,'paciente con vacuna por vencer','pacientes con vacuna por vencer')+'</span></button>';
   if(low)h+='<button class="al" data-action="goto-stock"><span class="dot stock"></span><span>'+plural(low,'producto con poco stock','productos con poco stock')+'</span></button>';
@@ -2082,11 +2083,18 @@ function appointmentDetails(a){
   dlg.querySelector('[data-close]').addEventListener('click',function(){dlg.close();});
   if(a.status==='pendiente'){
     dlg.querySelector('[data-x="accept"]').addEventListener('click',async function(){
-      await api('/appointments/'+a.id+'/status',{method:'POST',body:{status:'confirmado'}});dlg.close();await reloadCal();toast('Turno aceptado y agregado a la agenda');
+      var s0=toMin(a.time),e0=s0+a.duration;
+      var hit=(await api('/appointments?from='+a.date+'&to='+a.date)).items.find(function(x){var xs=toMin(x.time);return x.id!==a.id&&x.status==='confirmado'&&s0<xs+x.duration&&xs<e0;});
+      if(hit){
+        var ch=await choiceDialog('Turno superpuesto','<p>Ya hay un turno confirmado a esa hora: '+esc(hit.patientName)+' ('+esc(ownerLast(hit))+') – '+esc(hit.title)+'. ¿Aceptar igual?</p>',
+          [{label:'No aceptar',value:'no',cls:'ghost'},{label:'Aceptar igual',value:'ok',cls:'primary'}]);
+        if(ch!=='ok')return;
+      }
+      await api('/appointments/'+a.id+'/status',{method:'POST',body:{status:'confirmado'}});dlg.close();await reloadCal();await checkPendingWeb(true);toast('Turno aceptado y agregado a la agenda');
     });
     dlg.querySelector('[data-x="reject"]').addEventListener('click',function(){
       confirmForm('Rechazar turno','Se rechaza el pedido de '+esc(a.patientName)+' para el '+fmtDate(a.date)+' a las '+a.time.slice(0,5)+' hs. El horario queda libre para otro pedido.','Rechazar',async function(){
-        await api('/appointments/'+a.id+'/status',{method:'POST',body:{status:'rechazado'}});await reloadCal();toast('Pedido rechazado');
+        await api('/appointments/'+a.id+'/status',{method:'POST',body:{status:'rechazado'}});await reloadCal();await checkPendingWeb(true);toast('Pedido rechazado');
       });
     });
     if(!dlg.open)dlg.showModal();
@@ -2216,6 +2224,8 @@ var actions={
   'goto-vac':function(){ui.view='pacientes';ui.filter='alert';ui.sel=null;ui.detail=null;render();},
   'goto-stock':function(){ui.view='farmacia';ui.tab='stock';render();},
   'goto-backups':function(){return go('copias');},
+  // Pedidos de la web: abre el calendario en "2 semanas" a partir del pedido más próximo.
+  'goto-pedidos':function(){ui.cal.view='2weeks';ui.cal.anchor=S.pendingWebFirst||todayIso();return go('calendario');},
   'new-patient':function(){patientForm();},
   'edit-patient':function(){if(ui.detail)patientForm(ui.detail);},
   'del-patient':function(){
@@ -2564,7 +2574,22 @@ async function checkSession(){
     if(u&&S.user&&(u.id!==S.user.id||u.role!==S.user.role))showStaleSession(u);
   }catch(e){/* sin conexión: no se molesta al usuario */}
 }
-document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')checkSession();});
+document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible'){checkSession();checkPendingWeb();}});
+// Pedidos de turno hechos desde la página pública: se consulta cada dos minutos mientras la pestaña está a la vista,
+// así el aviso de "Para revisar" aparece solo. Si cambió la cantidad y se está mirando el calendario, se actualiza.
+var pendingCheckedAt=0;
+async function checkPendingWeb(force){
+  if(!S.user||document.body.dataset.stale||document.body.dataset.state!=='app'||document.visibilityState!=='visible')return;
+  var now=Date.now();if(!force&&now-pendingCheckedAt<60000)return;pendingCheckedAt=now;
+  try{
+    var p=await api('/appointments/pending'),n=Number(p.count)||0;
+    S.pendingWebFirst=p.first||null;
+    if(n===S.pendingWeb)return;
+    var more=n>S.pendingWeb;S.pendingWeb=n;renderAlerts();
+    if(more&&!force&&ui.view==='calendario'&&!document.querySelector('dialog[open]'))await reloadCal();
+  }catch(e){/* sin conexión: no se molesta al usuario */}
+}
+setInterval(checkPendingWeb,120000);
 document.addEventListener('keydown',function(e){if(e.key==='Escape'&&document.body.dataset.more){setMore(false);var b=$('#tabbar [data-action="more"]');if(b)b.focus();}});
 document.addEventListener('click',function(e){if(document.body.dataset.more&&e.target.closest('#side button:not([data-action="nav"])'))setMore(false);});
 
