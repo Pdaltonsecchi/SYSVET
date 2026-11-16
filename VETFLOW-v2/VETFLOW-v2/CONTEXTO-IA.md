@@ -502,3 +502,24 @@ Agregado en la rama `turnos-web`. Guía para el dueño: `INSTRUCTIVO-TURNOS-WEB.
   simultáneos) y `tests/turnos-limites.test.js`. Necesitan un Postgres de prueba con codificación UTF-8.
 - **Pendiente / ideas:** avisar al personal cuando un cliente cancela un turno ya confirmado; no hay recordatorios
   al cliente; los contadores en memoria se reinician si el servidor se reinicia (plan gratuito de Render).
+
+### Página pública después de las mejoras (rama `mejoras-turnos`)
+
+- **Sin cambios en el servidor.** Todo se resolvió con lo que `/api/public/*` ya devolvía.
+- **Orden de la página:** portada (marca, qué se atiende según `info.types`, "Sacar turno") → turnos → datos de la
+  clínica. Desde 940 px son dos columnas (turnos a la izquierda, datos al costado).
+- **Flujo:** ingresar → mascota → día → hora → confirmar, con una tira de pasos (`setStep`). Tocar un horario no pide el
+  turno: muestra el resumen (`#summary`) y recién "Confirmar pedido" llama a `POST /api/public/appointments`.
+- **Calendario** (`renderCalendar`, `dayCell`): mes de lunes a domingo, armado con los días que devuelve
+  `/api/public/slots`. No se va a meses pasados y hacia adelante se llega hasta el mes del último día con horarios (el
+  servidor ofrece 14 días). El día en que la mascota elegida ya tiene turno se marca "Ya tenés turno" (se saca de
+  `appointments` de `/api/public/me`); se puede tocar y explica qué turno hay.
+- **Mensajes:** los avisos van donde mira el cliente (`#notice`, `#mine-msg`, `#pet-msg`, `#day-msg`, `#done`) y el
+  foco del teclado se lleva ahí (`goTo`). Validación propia debajo de cada campo (`validate`, `fieldError`), sin
+  globitos del navegador. La cancelación se confirma dentro de la tarjeta, no con `confirm()`.
+- **Datos de la clínica:** nada inventado. Sin teléfono no hay ningún botón de llamar; sin dirección, teléfono ni mapa
+  no aparece "Dónde estamos".
+- **Diseño:** paleta propia de la página por decisión del dueño (verde azulado `#1f7a6d` solo para acciones, fondo
+  crema, ámbar solo en "Pendiente", rojo solo al cancelar), distinta de la del sistema interno (`DISENO.md`). Letra del
+  sistema, 17 px de base, nada por debajo de 14 px. El gesto propio es el talón del turno (`.ticket`). Sin modo oscuro.
+- **"Otra especie":** no se agregó porque el servidor solo acepta Perro y Gato (`webPetInput`).

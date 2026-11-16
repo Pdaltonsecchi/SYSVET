@@ -24,7 +24,7 @@
   --red: #9c3b30;
   --red-bg: #fbeeea;
   --focus: #0d3b35;
-  --r-card: 18px;
+  --r-card: 16px;
   --r-field: 14px;
   --shadow: 0 1px 2px rgba(70, 55, 20, 0.05), 0 10px 28px rgba(70, 55, 20, 0.06);
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -63,7 +63,7 @@ a { color: var(--brand-dark); text-underline-offset: 3px; }
 :focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
-  box-shadow: 0 0 0 2px #fff;
+  box-shadow: 0 0 0 7px #fff;
 }
 [tabindex="-1"]:focus { outline: none; box-shadow: none; }
 
@@ -77,7 +77,7 @@ a { color: var(--brand-dark); text-underline-offset: 3px; }
   background: var(--brand);
   color: #fff;
   padding: 28px 0 30px;
-  border-radius: 0 0 28px 28px;
+  border-radius: 0 0 16px 16px;
 }
 /* La huella, apenas visible, como marca de agua. */
 .hero::after {
@@ -98,13 +98,14 @@ a { color: var(--brand-dark); text-underline-offset: 3px; }
 .mark svg { width: 28px; height: 28px; }
 .hero h1 { font-size: clamp(1.75rem, 6.4vw, 2.6rem); font-weight: 800; line-height: 1.1; letter-spacing: -0.02em; overflow-wrap: anywhere; }
 .lead { font-size: 1.125rem; font-weight: 600; margin-top: 14px; }
-.hero-address { margin-top: 2px; color: #e3f1ee; }
+.hero-address { margin-top: 2px; color: #f2f9f7; }
 .hero-services { margin-top: 18px; }
-.hero-services > p { font-size: 0.9375rem; color: #e3f1ee; }
+.hero-services > p { font-size: 0.9375rem; color: #f2f9f7; }
 .services { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 8px 0 0; }
-.services li { display: inline-flex; align-items: baseline; gap: 8px; padding: 7px 14px; border-radius: 999px; background: rgba(255, 255, 255, 0.14); border: 1px solid rgba(255, 255, 255, 0.4); }
+/* La píldora oscurece el verde (no lo aclara): el texto blanco gana contraste. */
+.services li { display: inline-flex; align-items: baseline; gap: 8px; padding: 7px 14px; border-radius: 999px; background: rgba(8, 44, 39, 0.34); border: 1px solid rgba(255, 255, 255, 0.45); }
 .service-name { font-weight: 700; }
-.service-time { font-size: 0.9375rem; color: #e3f1ee; }
+.service-time { font-size: 0.9375rem; color: #fff; }
 .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
 @media (min-width: 700px) {
   .hero { padding: 44px 0 46px; }
@@ -252,7 +253,7 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 /* "Tus datos" y "Tu mascota": subtítulos de grupo, por debajo del título "Cliente nuevo". */
 #register-form fieldset { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
 #register-form legend { float: left; width: 100%; padding: 0; margin: 0; font-size: 1.0625rem; font-weight: 700; }
-#register-form legend + * { clear: both; }
+#register-form legend + * { clear: both; padding-top: 2px; }
 #login-form .btn { margin-top: 16px; }
 .new-client { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
 .sub-form { margin-top: 6px; padding: 4px 16px 16px; border-radius: var(--r-field); background: var(--bg); }
@@ -312,7 +313,7 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .stub-month { font-size: 0.9375rem; font-weight: 650; }
 .ticket-body { min-width: 0; padding: 14px 16px; }
 .tickets { list-style: none; display: grid; gap: 12px; padding: 0; margin: 10px 0 0; }
-.appt-title { font-weight: 700; }
+.appt-title { font-weight: 700; overflow-wrap: anywhere; }
 .appt-when { color: var(--muted); }
 .badge { display: inline-block; margin-top: 8px; padding: 3px 12px; border-radius: 999px; font-size: 0.875rem; font-weight: 650; color: var(--brand-dark); background: #fff; }
 .badge.pending { color: var(--amber-ink); background: var(--amber-bg); }
@@ -370,7 +371,7 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .cal-day.mine::after { content: ""; position: absolute; bottom: 6px; left: 50%; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%; background: var(--brand); }
 /* Hoy: aro oscuro, tenga o no horarios. */
 .cal-day.today { box-shadow: inset 0 0 0 2px var(--ink); }
-.cal-day.today:focus-visible, .cal-day.mine:focus-visible { box-shadow: inset 0 0 0 2px var(--ink), 0 0 0 2px #fff; }
+.cal-day.today:focus-visible, .cal-day.mine:focus-visible { box-shadow: inset 0 0 0 2px var(--ink), 0 0 0 7px #fff; }
 .cal-legend { list-style: none; display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 0; margin: 16px 0 0; font-size: 0.875rem; color: var(--muted); }
 .cal-legend li { display: flex; align-items: center; gap: 8px; }
 .key { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 7px; font-size: 0.875rem; line-height: 1; }
@@ -411,7 +412,7 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .summary > .muted { margin-top: 12px; }
 .summary-list div { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; }
 .summary-list dt { color: var(--muted); }
-.summary-list dd { font-weight: 700; text-align: right; }
+.summary-list dd { min-width: 0; font-weight: 700; text-align: right; overflow-wrap: anywhere; }
 
 /* ---------- datos de la clínica ---------- */
 .plain { list-style: none; padding: 0; margin: 0; }
@@ -474,3 +475,13 @@ html { scroll-behavior: smooth; }
 
 /* Un título de tarjeta y el texto que lo acompaña. */
 .card > h3 + p { margin-top: 4px; }
+
+/* Textos largos sin espacios (un nombre raro) nunca ensanchan la página. */
+#hello, #day-mine, #done-text, #recap, .notice, .review, .footer, .hero-address, .lead { overflow-wrap: anywhere; }
+.card-head > h3 { min-width: 0; }
+
+/* Celular: los días del calendario llegan a 44 px de ancho usando casi todo el ancho de la tarjeta. */
+@media (max-width: 559px) {
+  .cal { margin-left: -8px; margin-right: -8px; }
+  .cal-week, .cal-grid { gap: 3px; }
+}

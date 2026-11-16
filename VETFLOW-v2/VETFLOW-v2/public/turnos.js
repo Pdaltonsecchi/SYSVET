@@ -500,6 +500,7 @@
     closeRegister();
     show('use-phone', false);
     fieldError($('r-phone'), '');
+    $('register-form').reset();
     $('phone').value = phone;
     goTo($('login-submit'), { block: 'center' });
   });
@@ -692,6 +693,7 @@
         cancel.focus();
       };
       cancel.addEventListener('click', function () {
+        notice('notice', '');
         notice('mine-msg', '');
         err.hidden = true;
         cancel.hidden = true;
@@ -833,16 +835,17 @@
     return b;
   }
 
-  $('cal-prev').addEventListener('click', function () {
-    state.month = shiftMonth(state.month, -1);
+  function turnMonth(by) {
+    state.month = shiftMonth(state.month, by);
     renderCalendar();
-    animate($('cal-grid'), true);
-  });
-  $('cal-next').addEventListener('click', function () {
-    state.month = shiftMonth(state.month, 1);
-    renderCalendar();
-    animate($('cal-grid'));
-  });
+    animate($('cal-grid'), by < 0);
+    // Si la flecha tocada quedó desactivada (se llegó al primer o al último mes), el foco pasa a la otra.
+    var used = $(by < 0 ? 'cal-prev' : 'cal-next');
+    var other = $(by < 0 ? 'cal-next' : 'cal-prev');
+    if (used.disabled) (other.disabled ? $('cal-heading') : other).focus();
+  }
+  $('cal-prev').addEventListener('click', function () { turnMonth(-1); });
+  $('cal-next').addEventListener('click', function () { turnMonth(1); });
 
   function showCalendar(focus) {
     state.day = null;
@@ -876,6 +879,7 @@
     show('day-view', true);
     show('summary', false);
     setStep(4);
+    if (!opts.keepFocus) notice('notice', '');
     if (!opts.keepFocus) animate($('day-view'));
     if (!opts.keepMsg) show('day-msg', false);
     setText('day-title', cap(fmtDay(iso)));
@@ -989,7 +993,10 @@
       show('summary', false);
       show('cal-view', true);
       goTo($('done'), { block: 'center' });
-      return refresh().catch(function () { /* el pedido ya quedó hecho; la lista se actualiza al volver a entrar */ });
+      return refresh().catch(function () { /* el pedido ya quedó hecho; la lista se actualiza al volver a entrar */ }).then(function () {
+        // "Tus turnos" acaba de crecer con el turno nuevo y empuja el aviso: se vuelve a centrar.
+        if (!$('done').hidden) goTo($('done'), { block: 'center' });
+      });
     }, function (err) {
       if (expired(err)) return;
       // El error se muestra arriba de los horarios, donde el cliente está mirando, y se vuelven a pedir los horarios.
@@ -1029,9 +1036,15 @@
     state.token = saved;
     api('/api/public/me').then(function (summary) {
       enter(summary, null, '');
-    }).catch(function () {
+    }).catch(function (err) {
       state.token = null;
       try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* nada que borrar */ }
+      if (err && err.status === 401) {
+        setText('login-error-text', err.message);
+        show('login-help', false);
+        show('call-link', false);
+        show('login-error', true);
+      }
     });
   });
 })();
