@@ -107,6 +107,44 @@
 
   var STATUS_LABEL = { pendiente: 'Pendiente de confirmación', confirmado: 'Confirmado' };
 
+  /* ---------- en qué paso está el cliente: 1 ingresar, 2 mascota, 3 día, 4 hora, 5 confirmar (6 = terminado) ---------- */
+  function setStep(n) {
+    Array.prototype.forEach.call($('steps').children, function (li, i) {
+      var name = li.querySelector('.step-name').textContent;
+      var isDone = i < n - 1;
+      var isNow = i === n - 1;
+      li.classList.toggle('is-done', isDone);
+      if (isNow) li.setAttribute('aria-current', 'step');
+      else li.removeAttribute('aria-current');
+      li.setAttribute('aria-label', 'Paso ' + (i + 1) + ' de 5: ' + name + (isDone ? ', listo' : isNow ? ', paso actual' : ''));
+    });
+  }
+
+  /** Entrada suave de la vista que aparece: hacia adelante o de vuelta. Sin movimiento si el sistema lo pide. */
+  function animate(node, back) {
+    if (reduceMotion()) return;
+    node.classList.remove('in', 'in-back');
+    void node.offsetWidth; // reinicia la animación si se repite
+    node.classList.add(back ? 'in-back' : 'in');
+  }
+
+  /** La parte izquierda del talón: el día en grande y el mes. Es un adorno: la fecha completa va en texto al lado. */
+  function fillStub(dayNode, monthNode, iso) {
+    var p = ymd(iso);
+    dayNode.textContent = String(p.d);
+    monthNode.textContent = MONTHS[p.m - 1].slice(0, 3);
+  }
+  function stubOf(iso) {
+    var box = el('div', null, 'stub');
+    box.setAttribute('aria-hidden', 'true');
+    var d = el('span', null, 'stub-day');
+    var m = el('span', null, 'stub-month');
+    fillStub(d, m, iso);
+    box.appendChild(d);
+    box.appendChild(m);
+    return box;
+  }
+
   /* ---------- avisos cortos ("Listo, entraste.") ---------- */
   function notice(id, msg) {
     var n = $(id);
@@ -208,7 +246,7 @@
     (types || []).forEach(function (t) {
       var li = el('li');
       li.appendChild(el('span', t.label, 'service-name'));
-      li.appendChild(el('span', 'Turno de ' + t.duration + ' minutos', 'muted small-text'));
+      li.appendChild(el('span', t.duration + ' min', 'service-time'));
       ul.appendChild(li);
     });
     show('services-card', ul.children.length > 0);
@@ -218,10 +256,16 @@
   function renderHours(hours) {
     var ul = $('hours');
     ul.textContent = '';
+    var todayDow = weekdayOf(todayAR());
     DAY_ORDER.forEach(function (d) {
       var ranges = rangesOf(hours, d);
       var li = el('li');
-      li.appendChild(el('span', cap(WEEKDAYS[d]), 'day-name'));
+      var name = el('span', cap(WEEKDAYS[d]), 'day-name');
+      if (d === todayDow) {
+        li.className = 'today';
+        name.appendChild(el('span', 'Hoy', 'today-tag'));
+      }
+      li.appendChild(name);
       var box = el('span', null, 'day-hours' + (ranges.length ? '' : ' muted'));
       if (!ranges.length) box.textContent = 'Cerrado';
       ranges.forEach(function (r) { box.appendChild(el('span', r[0] + ' a ' + r[1] + ' hs')); });
@@ -355,6 +399,7 @@
     show('login', false);
     show('register', false);
     show('home', true);
+    if (message) animate($('home'));
     setText('hello', 'Hola, ' + state.client.firstName);
     renderPets();
     renderAppointments();
@@ -377,6 +422,8 @@
     show('home', false);
     show('register', false);
     show('login', true);
+    animate($('login'), true);
+    setStep(1);
     $('phone').value = '';
     clearLoginError();
     notice('notice', message || '');
@@ -428,6 +475,7 @@
     notice('notice', '');
     show('login', false);
     show('register', true);
+    animate($('register'));
     if (!$('r-phone').value) $('r-phone').value = $('phone').value.trim();
     goTo($('r-first'), { scroll: false });
     $('register').scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'start' });
@@ -437,6 +485,7 @@
   function closeRegister() {
     show('register', false);
     show('login', true);
+    animate($('login'), true);
     show('register-error', false);
   }
   $('register-cancel').addEventListener('click', function () {
@@ -595,19 +644,22 @@
     var items = state.appointments;
     $('no-appts').hidden = items.length > 0;
     items.forEach(function (a) {
-      var li = el('li');
+      var item = el('li', null, 'ticket');
+      item.appendChild(stubOf(a.date));
+      var li = el('div', null, 'ticket-body');
+      item.appendChild(li);
       var title = el('div', null, 'appt-title');
       title.appendChild(el('span', a.typeLabel + ' con ' + a.patientName));
-      title.appendChild(el('span', STATUS_LABEL[a.status] || a.status, 'badge' + (a.status === 'pendiente' ? ' pending' : '')));
       li.appendChild(title);
-      li.appendChild(el('div', cap(fmtDay(a.date)) + ' a las ' + a.time + ' hs', 'muted small-text'));
+      li.appendChild(el('div', cap(fmtDay(a.date)) + ' a las ' + a.time + ' hs', 'appt-when'));
+      li.appendChild(el('span', STATUS_LABEL[a.status] || a.status, 'badge' + (a.status === 'pendiente' ? ' pending' : '')));
       if (!a.canCancel) {
         // Lo agendó la veterinaria (o ya empezó): desde la página no se cancela.
         li.appendChild(el('div', 'Para cambiar o cancelar este turno, ' + (state.info && state.info.phone ? 'llamá a la veterinaria.' : 'avisale a la veterinaria.'), 'muted small-text'));
-        list.appendChild(li);
+        list.appendChild(item);
         return;
       }
-      var cancel = el('button', 'Cancelar turno', 'btn danger small');
+      var cancel = el('button', 'Cancelar turno', 'btn text danger');
       cancel.type = 'button';
       cancel.setAttribute('aria-label', 'Cancelar el turno de ' + a.patientName + ' del ' + fmtDay(a.date) + ' a las ' + a.time + ' hs');
       li.appendChild(cancel);
@@ -644,6 +696,7 @@
         err.hidden = true;
         cancel.hidden = true;
         ask.hidden = false;
+        animate(ask);
         no.focus();
       });
       no.addEventListener('click', close);
@@ -665,7 +718,7 @@
           err.hidden = false;
         }));
       });
-      list.appendChild(li);
+      list.appendChild(item);
     });
   }
 
@@ -783,10 +836,12 @@
   $('cal-prev').addEventListener('click', function () {
     state.month = shiftMonth(state.month, -1);
     renderCalendar();
+    animate($('cal-grid'), true);
   });
   $('cal-next').addEventListener('click', function () {
     state.month = shiftMonth(state.month, 1);
     renderCalendar();
+    animate($('cal-grid'));
   });
 
   function showCalendar(focus) {
@@ -795,13 +850,16 @@
     show('day-view', false);
     show('summary', false);
     show('day-msg', false);
+    show('pick', true);
     show('cal-view', true);
+    setStep(state.pets.length ? 3 : 2);
     renderCalendar();
     if (focus) goTo(focus, { block: 'center' });
   }
   $('back-to-cal').addEventListener('click', function () {
     var date = state.day;
     showCalendar();
+    animate($('cal-view'), true);
     // El foco vuelve al día que se había abierto (o al título, si ese día ya no se puede tocar).
     var cell = date && document.querySelector('.cal-day[data-date="' + date + '"]:not([disabled])');
     goTo(cell || $('cal-heading'), { block: 'center' });
@@ -814,10 +872,15 @@
     state.time = null;
     state.month = iso.slice(0, 7);
     show('cal-view', false);
+    show('pick', false);
     show('day-view', true);
     show('summary', false);
+    setStep(4);
+    if (!opts.keepFocus) animate($('day-view'));
     if (!opts.keepMsg) show('day-msg', false);
     setText('day-title', cap(fmtDay(iso)));
+    var who = petOf($('pet').value);
+    setText('recap', typeText(state.type) + (who ? ' para ' + who.name : '') + '.');
 
     var box = $('slots');
     box.textContent = '';
@@ -881,7 +944,10 @@
     setText('sum-pet', pet.name);
     setText('sum-day', cap(fmtDay(state.day)));
     setText('sum-time', time + ' hs');
+    fillStub($('sum-stub-day'), $('sum-stub-month'), state.day);
     show('summary', true);
+    animate($('summary'));
+    setStep(5);
     goTo($('summary'), { block: 'center' });
   }
 
@@ -890,6 +956,7 @@
     state.time = null;
     markTime(null);
     show('summary', false);
+    setStep(4);
     var chip = time && document.querySelector('#slots .slot[data-time="' + time + '"]');
     goTo(chip || $('day-title'), { block: 'center' });
   }
@@ -914,6 +981,8 @@
         ' hs. Queda pendiente hasta que la veterinaria lo confirme.');
       show('book-flow', false);
       show('done', true);
+      animate($('done'));
+      setStep(6);
       state.day = null;
       state.time = null;
       show('day-view', false);
@@ -926,6 +995,7 @@
       // El error se muestra arriba de los horarios, donde el cliente está mirando, y se vuelven a pedir los horarios.
       state.time = null;
       show('summary', false);
+      setStep(4);
       setText('day-msg', err.message);
       show('day-msg', true);
       return refresh().catch(function () { /* se sigue con los horarios que había */ }).then(function () {
@@ -948,6 +1018,8 @@
       $('bar').hidden = entries[0].isIntersecting;
     }, { threshold: 0 }).observe($('reserva'));
   }
+
+  setStep(1);
 
   /* ---------- arranque: si ya había entrado en esta pestaña, sigue ---------- */
   loadInfo().then(function () {
