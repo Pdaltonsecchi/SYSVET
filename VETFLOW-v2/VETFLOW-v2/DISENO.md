@@ -1,6 +1,8 @@
 # Lenguaje visual de SYSVET
 
-Fuente de verdad del diseño del sistema interno (`public/styles.css`) y base de la página pública de turnos.
+Fuente de verdad del diseño del sistema interno (`public/styles.css`). La página pública de turnos (`public/turnos.css`)
+comparte la idea (calma, tarjetas blancas, controles grandes) pero tiene su propia paleta por decisión del dueño:
+verde azulado `#1f7a6d` y fondo crema. Sus reglas están al principio de `turnos.css` y en `CONTEXTO-IA.md`, sección 14.
 Si cambiás un valor acá, cambialo también en las variables de `:root`.
 
 **Idea:** una herramienta de trabajo calma y prolija, con aire "iOS": fondo gris muy claro, tarjetas blancas de

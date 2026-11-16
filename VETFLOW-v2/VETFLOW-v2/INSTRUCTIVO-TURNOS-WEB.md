@@ -60,14 +60,15 @@ Ejemplo:
 ## 2. Qué hace el cliente
 
 1. Entra a la página y escribe **su teléfono** (el que le dio a la veterinaria). No importa si lo escribe con 011, con 15, con +54 9, con espacios o con guiones.
-2. Si es cliente nuevo, toca **Cliente nuevo** y carga su nombre, apellido, teléfono y su mascota. Queda guardado como cliente en tu sistema.
-3. Elige **consulta** o **vacuna**, la mascota, el día (de los próximos 14) y un horario libre.
-4. Ve sus turnos. Los que pidió por la página los puede **cancelar** él mismo; para cambiar uno, lo cancela y pide otro.
+2. Si es cliente nuevo, toca **Soy cliente nuevo** y carga su nombre, apellido, teléfono y su mascota. Queda guardado como cliente en tu sistema.
+3. Elige **consulta** o **vacuna** y la mascota. Después elige el **día** en un calendario del mes (solo se pueden tocar los días con horarios libres, dentro de los próximos 14) y la **hora**, separada en mañana y tarde.
+4. Antes de pedirlo ve un **resumen** (servicio, mascota, día y hora) y toca **Confirmar pedido**. Recién ahí te llega el pedido.
+5. Ve sus turnos. Los que pidió por la página los puede **cancelar** él mismo; para cambiar uno, lo cancela y pide otro.
    Los turnos que cargaste vos (por ejemplo una cirugía) los ve, pero no los puede cancelar desde la página: le dice que llame.
 
 Las cirugías no se pueden pedir por la página: las seguís agendando vos.
 
-Si el teléfono no está registrado, o figura en la ficha de más de un cliente, la página no lo deja entrar y le muestra el teléfono de la veterinaria para que llame.
+Si el teléfono no está registrado, o figura en la ficha de más de un cliente, la página no lo deja entrar. Le sugiere revisar el código de área o anotarse como cliente nuevo y, si cargaste el teléfono de la veterinaria, le muestra el botón para llamar. **Sin teléfono cargado, la página no muestra ningún botón de llamar.**
 
 ## 3. Aceptar o rechazar un pedido
 
