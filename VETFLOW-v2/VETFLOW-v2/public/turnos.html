@@ -9,20 +9,29 @@
   <link rel="stylesheet" href="turnos.css">
 </head>
 <body>
+  <a class="skip" href="#reserva">Ir a sacar turno</a>
+
   <header class="hero">
     <div class="hero-inner">
       <p class="eyebrow">Veterinaria</p>
       <h1 id="clinic">Veterinaria</h1>
       <p id="professional" class="lead" hidden></p>
-      <p id="address" class="muted" hidden></p>
+      <p id="address" class="hero-address" hidden></p>
       <div class="row hero-actions">
-        <a id="call-btn" class="btn primary" href="#" hidden>Llamar</a>
-        <a class="btn primary" href="#reserva">Sacar turno</a>
+        <a class="btn primary" href="#reserva" data-book>Sacar turno</a>
+        <a id="call-btn" class="btn" href="#" hidden>Llamar</a>
       </div>
     </div>
   </header>
 
   <main>
+    <!-- Qué se atiende: sale de la lista de tipos de turno que manda el servidor -->
+    <section class="card" id="services-card" aria-labelledby="services-title" hidden>
+      <h2 id="services-title">Qué atendemos</h2>
+      <ul id="services" class="services"></ul>
+      <p class="muted small-text">Los turnos se piden desde esta página y la veterinaria los confirma.</p>
+    </section>
+
     <section class="info-grid" aria-label="Información de la veterinaria">
       <div class="card" id="hours-card">
         <h2>Horarios de atención</h2>
@@ -40,113 +49,210 @@
       <p id="all-reviews" class="muted" hidden></p>
     </section>
 
+    <!-- Dónde estamos: dirección, teléfono y mapa, solo los que estén cargados -->
     <section class="card" id="location-card" aria-labelledby="location-title" hidden>
-      <h2 id="location-title">Cómo llegar</h2>
-      <p id="location-text"></p>
+      <h2 id="location-title">Dónde estamos</h2>
+      <p id="location-address" hidden></p>
+      <p id="location-phone" hidden>Teléfono: <a id="phone-link" href="#"></a></p>
       <a id="maps-btn" class="btn" href="#" target="_blank" rel="noopener" hidden>Ver en Google Maps</a>
     </section>
 
     <!-- Turnos -->
-    <div id="reserva" class="booking-anchor">
-      <h2 class="section-title">Sacá tu turno</h2>
+    <section id="reserva" class="booking" aria-labelledby="reserva-title">
+      <h2 id="reserva-title" class="section-title">Sacá tu turno</h2>
+
+      <!-- Avisos cortos: "Listo, entraste.", "Listo, saliste." -->
+      <p id="notice" class="notice" role="status" aria-live="polite" hidden></p>
 
       <!-- Paso 1: entrar con el teléfono -->
       <section id="login" class="card" aria-labelledby="login-title">
-        <h3 id="login-title">Entrá con tu teléfono</h3>
+        <h3 id="login-title" tabindex="-1">Entrá con tu teléfono</h3>
         <p class="muted">Usá el número que le diste a la veterinaria.</p>
         <form id="login-form" novalidate>
-          <label for="phone">Teléfono</label>
-          <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="Ej: 11 5555-1234" required>
-          <button type="submit" class="btn primary">Entrar</button>
+          <div class="field">
+            <label for="phone">Teléfono</label>
+            <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="Ej: 11 5555-1234" aria-describedby="phone-err">
+            <p id="phone-err" class="field-error" hidden></p>
+          </div>
+          <button type="submit" class="btn primary" id="login-submit">Entrar</button>
         </form>
-        <div id="login-error" class="alert" role="alert" hidden>
+        <div id="login-error" class="alert" role="alert" tabindex="-1" hidden>
           <p id="login-error-text"></p>
+          <p id="login-help" hidden>Revisá que el número tenga el código de área (por ejemplo, 11). Si todavía no sos cliente, anotate como cliente nuevo.</p>
           <div class="row">
-            <button type="button" class="btn ghost" id="retry">Probar de nuevo</button>
+            <button type="button" class="btn" id="retry">Probar de nuevo</button>
             <a id="call-link" class="btn" href="#" hidden>Llamar a la veterinaria</a>
           </div>
         </div>
         <div class="new-client">
           <p>¿No sos cliente todavía?</p>
-          <button type="button" class="btn" id="show-register">Cliente nuevo</button>
+          <button type="button" class="btn" id="show-register">Soy cliente nuevo</button>
         </div>
       </section>
 
       <!-- Alta de cliente nuevo: datos del cliente y de su primera mascota -->
       <section id="register" class="card" aria-labelledby="register-title" hidden>
-        <h3 id="register-title">Cliente nuevo</h3>
+        <h3 id="register-title" tabindex="-1">Cliente nuevo</h3>
+        <p class="muted">Completá tus datos y los de tu mascota. Es una sola vez.</p>
         <form id="register-form" novalidate>
           <fieldset>
             <legend>Tus datos</legend>
-            <label for="r-first">Nombre</label>
-            <input id="r-first" name="firstName" autocomplete="given-name" required maxlength="100">
-            <label for="r-last">Apellido</label>
-            <input id="r-last" name="lastName" autocomplete="family-name" required maxlength="100">
-            <label for="r-phone">Teléfono</label>
-            <input id="r-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" required>
+            <div class="field">
+              <label for="r-first">Nombre</label>
+              <input id="r-first" name="firstName" autocomplete="given-name" maxlength="100" aria-describedby="r-first-err">
+              <p id="r-first-err" class="field-error" hidden></p>
+            </div>
+            <div class="field">
+              <label for="r-last">Apellido</label>
+              <input id="r-last" name="lastName" autocomplete="family-name" maxlength="100" aria-describedby="r-last-err">
+              <p id="r-last-err" class="field-error" hidden></p>
+            </div>
+            <div class="field">
+              <label for="r-phone">Teléfono</label>
+              <input id="r-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="Ej: 11 5555-1234" aria-describedby="r-phone-err">
+              <p id="r-phone-err" class="field-error" hidden></p>
+              <button type="button" class="btn small" id="use-phone" hidden>Entrar con este número</button>
+            </div>
           </fieldset>
           <fieldset>
             <legend>Tu mascota</legend>
-            <label for="r-pet-name">Nombre de la mascota</label>
-            <input id="r-pet-name" name="petName" required maxlength="100">
-            <label for="r-species">Especie</label>
-            <select id="r-species" name="species"><option value="Perro">Perro</option><option value="Gato">Gato</option></select>
-            <label for="r-sex">Sexo</label>
-            <select id="r-sex" name="sex"><option value="Macho">Macho</option><option value="Hembra">Hembra</option></select>
+            <div class="field">
+              <label for="r-pet-name">Nombre de la mascota</label>
+              <input id="r-pet-name" name="petName" maxlength="100" aria-describedby="r-pet-name-err">
+              <p id="r-pet-name-err" class="field-error" hidden></p>
+            </div>
+            <div class="field">
+              <label for="r-species">Especie</label>
+              <select id="r-species" name="species"><option value="Perro">Perro</option><option value="Gato">Gato</option></select>
+            </div>
+            <div class="field">
+              <label for="r-sex">Sexo</label>
+              <select id="r-sex" name="sex" aria-describedby="r-sex-err"><option value="">Elegí…</option><option value="Macho">Macho</option><option value="Hembra">Hembra</option></select>
+              <p id="r-sex-err" class="field-error" hidden></p>
+            </div>
           </fieldset>
-          <div id="register-error" class="alert" role="alert" hidden></div>
+          <div id="register-error" class="alert" role="alert" tabindex="-1" hidden></div>
           <div class="row">
             <button type="button" class="btn ghost" id="register-cancel">Volver</button>
-            <button type="submit" class="btn primary">Guardar y sacar turno</button>
+            <button type="submit" class="btn primary" id="register-submit">Guardar y sacar turno</button>
           </div>
         </form>
       </section>
 
       <!-- Paso 2: ya entró -->
       <section id="home" hidden>
-        <div class="card">
-          <h3 id="hello"></h3>
-          <h4>Tus turnos</h4>
+        <div class="card" id="mine-card">
+          <h3 id="hello" tabindex="-1"></h3>
+          <h4 id="mine-title" tabindex="-1">Tus turnos</h4>
+          <p id="mine-msg" class="notice" role="status" hidden></p>
           <ul id="my-appts" class="list"></ul>
           <p id="no-appts" class="muted" hidden>No tenés turnos pendientes ni confirmados.</p>
         </div>
 
-        <div class="card">
-          <h3>Pedir turno</h3>
-          <fieldset class="choice">
-            <legend>¿Para qué es?</legend>
-            <div id="types"></div>
-          </fieldset>
-          <label for="pet">Mascota</label>
-          <select id="pet"></select>
-          <button type="button" class="btn ghost small" id="toggle-add-pet">+ Agregar otra mascota</button>
+        <div class="card" id="book-card">
+          <h3 id="book-title" tabindex="-1">Pedir turno</h3>
 
-          <form id="add-pet-form" class="sub-form" novalidate hidden>
-            <label for="a-pet-name">Nombre de la mascota</label>
-            <input id="a-pet-name" name="petName" required maxlength="100">
-            <label for="a-species">Especie</label>
-            <select id="a-species" name="species"><option value="Perro">Perro</option><option value="Gato">Gato</option></select>
-            <label for="a-sex">Sexo</label>
-            <select id="a-sex" name="sex"><option value="Macho">Macho</option><option value="Hembra">Hembra</option></select>
-            <button type="submit" class="btn primary">Agregar mascota</button>
-          </form>
+          <!-- Resultado del pedido: aparece acá arriba, donde el cliente está mirando -->
+          <div id="done" class="done" role="status" tabindex="-1" hidden>
+            <p id="done-text"></p>
+            <button type="button" class="btn" id="done-again">Pedir otro turno</button>
+          </div>
 
-          <h4>Horarios libres</h4>
-          <p class="muted small-text">Elegí un horario. El pedido queda pendiente hasta que la veterinaria lo confirme.</p>
-          <div id="slots"></div>
-          <p id="slots-msg" class="muted" hidden></p>
+          <div id="book-flow">
+            <fieldset class="choice">
+              <legend>¿Para qué es?</legend>
+              <div id="types"></div>
+            </fieldset>
+
+            <div class="field">
+              <label for="pet">Mascota</label>
+              <select id="pet"></select>
+            </div>
+            <p id="pet-msg" class="notice" role="status" hidden></p>
+            <button type="button" class="btn small" id="toggle-add-pet" aria-expanded="false" aria-controls="add-pet-form">+ Agregar otra mascota</button>
+
+            <form id="add-pet-form" class="sub-form" novalidate hidden>
+              <div class="field">
+                <label for="a-pet-name">Nombre de la mascota</label>
+                <input id="a-pet-name" name="petName" maxlength="100" aria-describedby="a-pet-name-err">
+                <p id="a-pet-name-err" class="field-error" hidden></p>
+              </div>
+              <div class="field">
+                <label for="a-species">Especie</label>
+                <select id="a-species" name="species"><option value="Perro">Perro</option><option value="Gato">Gato</option></select>
+              </div>
+              <div class="field">
+                <label for="a-sex">Sexo</label>
+                <select id="a-sex" name="sex" aria-describedby="a-sex-err"><option value="">Elegí…</option><option value="Macho">Macho</option><option value="Hembra">Hembra</option></select>
+                <p id="a-sex-err" class="field-error" hidden></p>
+              </div>
+              <div id="add-pet-error" class="alert" role="alert" hidden></div>
+              <button type="submit" class="btn primary" id="add-pet-submit">Agregar mascota</button>
+            </form>
+
+            <!-- Día: calendario del mes -->
+            <div id="cal-view">
+              <h4 id="cal-heading" tabindex="-1">Elegí el día</h4>
+              <p id="cal-msg" class="muted" hidden></p>
+              <div id="cal" class="cal" hidden>
+                <div class="cal-nav">
+                  <button type="button" class="cal-arrow" id="cal-prev" aria-label="Mes anterior">‹</button>
+                  <p id="cal-month" class="cal-month" aria-live="polite"></p>
+                  <button type="button" class="cal-arrow" id="cal-next" aria-label="Mes siguiente">›</button>
+                </div>
+                <div class="cal-week" aria-hidden="true"><span>Lun</span><span>Mar</span><span>Mié</span><span>Jue</span><span>Vie</span><span>Sáb</span><span>Dom</span></div>
+                <div id="cal-grid" class="cal-grid"></div>
+                <ul class="cal-legend">
+                  <li><span class="key free" aria-hidden="true"></span>Con horarios libres</li>
+                  <li><span class="key mine" aria-hidden="true"></span>Ya tenés turno</li>
+                  <li><span class="key off" aria-hidden="true"></span>Sin turnos</li>
+                </ul>
+              </div>
+            </div>
+
+            <!-- Hora: los horarios del día elegido -->
+            <div id="day-view" hidden>
+              <button type="button" class="btn small" id="back-to-cal">← Volver al calendario</button>
+              <h4 id="day-title" tabindex="-1"></h4>
+              <div id="day-msg" class="alert" role="alert" tabindex="-1" hidden></div>
+              <p id="day-mine" class="note" hidden></p>
+              <div id="slots"></div>
+
+              <!-- Resumen antes de confirmar -->
+              <div id="summary" class="summary" tabindex="-1" aria-labelledby="summary-title" hidden>
+                <h4 id="summary-title">Revisá tu pedido</h4>
+                <dl class="summary-list">
+                  <div><dt>Servicio</dt><dd id="sum-type"></dd></div>
+                  <div><dt>Mascota</dt><dd id="sum-pet"></dd></div>
+                  <div><dt>Día</dt><dd id="sum-day"></dd></div>
+                  <div><dt>Hora</dt><dd id="sum-time"></dd></div>
+                </dl>
+                <p class="muted small-text">El pedido queda pendiente hasta que la veterinaria lo confirme.</p>
+                <div class="row">
+                  <button type="button" class="btn ghost" id="sum-change">Cambiar</button>
+                  <button type="button" class="btn primary" id="sum-confirm">Confirmar pedido</button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <button type="button" class="btn ghost" id="logout">Salir</button>
       </section>
-
-      <p id="status" role="status" class="status"></p>
-    </div>
+    </section>
   </main>
 
   <footer class="footer">
-    <p id="footer-text" class="muted"></p>
+    <p id="footer-name" class="footer-name"></p>
+    <p id="footer-address" hidden></p>
+    <p id="footer-phone" hidden>Tel: <a id="footer-phone-link" href="#"></a></p>
   </footer>
+
+  <!-- Celular: accesos fijos abajo mientras no se está en la sección de turnos -->
+  <nav id="bar" class="bar" aria-label="Accesos rápidos" hidden>
+    <a class="btn primary" href="#reserva" data-book>Sacar turno</a>
+    <a id="bar-call" class="btn" href="#" hidden>Llamar</a>
+  </nav>
 
   <script src="turnos.js"></script>
 </body>
