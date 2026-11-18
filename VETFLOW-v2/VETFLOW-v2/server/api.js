@@ -9,6 +9,7 @@ const settings = require('./settings');
 const report = require('./report');
 const weekly = require('./weekly');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const booking = require('./booking');
 const { HttpError } = U;
 
@@ -100,9 +101,33 @@ async function dispatch(req, res, url) {
    ============================================================ */
 // El dueño es un cliente (tabla clients): su contacto vive ahí una sola vez. Las columnas viejas de la mascota
 // (owner_name, phone, email) solo se usan como respaldo para registros que todavía no tengan cliente.
+// Fecha de hoy en Buenos Aires, dentro de una consulta.
+const TODAY_SQL = "(now() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date";
+/**
+ * "Tuvo una visita": la mascota (alias p) tiene algún cobro, consulta, vacuna, medicación o estudio, o un turno
+ * confirmado cuya fecha ya llegó. Un turno pendiente o futuro todavía no es una visita.
+ */
+const VISITED_SQL =
+  '(EXISTS (SELECT 1 FROM charges x WHERE x.patient_id = p.id AND x.deleted_at IS NULL AND x.on_date <= ' + TODAY_SQL + ')' +
+  ' OR EXISTS (SELECT 1 FROM diagnoses x WHERE x.patient_id = p.id AND x.deleted_at IS NULL AND x.on_date <= ' + TODAY_SQL + ')' +
+  ' OR EXISTS (SELECT 1 FROM vaccines x WHERE x.patient_id = p.id AND x.deleted_at IS NULL AND x.applied_on <= ' + TODAY_SQL + ')' +
+  ' OR EXISTS (SELECT 1 FROM medications x WHERE x.patient_id = p.id AND x.deleted_at IS NULL AND x.on_date <= ' + TODAY_SQL + ')' +
+  ' OR EXISTS (SELECT 1 FROM complementary_studies x WHERE x.patient_id = p.id AND x.deleted_at IS NULL AND x.on_date <= ' + TODAY_SQL + ')' +
+  " OR EXISTS (SELECT 1 FROM appointments x WHERE x.patient_id = p.id AND x.status = 'confirmado' AND x.appointment_date <= " + TODAY_SQL + '))';
 const PATIENT_SELECT =
   'p.id, p.hc_number, p.name, p.species, p.breed, p.sex, p.neutered, p.birth, p.weight, p.owner_name, p.phone, p.email, p.notes, p.client_id, ' +
-  'c.first_name AS c_first, c.last_name AS c_last, c.phone AS c_phone, c.email AS c_email';
+  'c.first_name AS c_first, c.last_name AS c_last, c.phone AS c_phone, c.email AS c_email, ' +
+  "p.source, to_char(p.created_at AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD') AS created_on";
+// web_new: se registró sola desde la página de turnos y todavía no tuvo ninguna visita (solo para las de origen web).
+// En la ficha de una mascota va en la misma consulta; en la lista se pide aparte (ver webNewIds), que es más liviano.
+const PATIENT_WEB_NEW = ", CASE WHEN p.source = 'web' THEN NOT " + VISITED_SQL + ' ELSE FALSE END AS web_new';
+/** Ids de las mascotas (o de los clientes) web que todavía no tuvieron ninguna visita. */
+async function webNewIds(kind) {
+  const r = kind === 'patients'
+    ? await db.query("SELECT p.id FROM patients p WHERE p.source = 'web' AND p.deleted_at IS NULL AND NOT " + VISITED_SQL)
+    : await db.query("SELECT c.id FROM clients c WHERE c.source = 'web' AND NOT EXISTS (SELECT 1 FROM patients p WHERE p.client_id = c.id AND p.deleted_at IS NULL AND " + VISITED_SQL + ')');
+  return new Set(r.rows.map((x) => x.id));
+}
 const PATIENT_FROM = ' FROM patients p LEFT JOIN clients c ON c.id = p.client_id';
 const fullName = (first, last) => (String(first || '') + ' ' + String(last || '')).trim();
 
@@ -121,6 +146,9 @@ const mapPatient = (r) => ({
   phone: r.c_first != null ? r.c_phone : r.phone,
   email: r.c_first != null ? r.c_email : r.email,
   notes: r.notes,
+  source: r.source || 'sistema',
+  webNew: !!r.web_new,
+  createdOn: r.created_on || '',
 });
 const mapVaccine = (r) => ({ id: r.id, name: r.name, date: r.applied_on, next: r.next_on || '', productId: r.product_id || null, stockQty: r.stock_qty || 0 });
 const mapProduct = (r) => ({ id: r.id, name: r.name, category: r.category, stock: r.stock, min: r.min_stock, price: Number(r.price), species: r.species || '', cost: r.cost == null ? null : Number(r.cost), supplierId: r.supplier_id || null, barcode: r.barcode || '' });
@@ -140,6 +168,8 @@ const mapAppointment = (r) => ({
   duration: r.duration_min || 30,
   status: r.status || 'confirmado',
   source: r.source || 'sistema',
+  // Mensaje que la veterinaria le dejó al cliente al confirmar un pedido web (vacío si no escribió nada).
+  clientMessage: r.client_message || '',
   endTime: addMinutes(String(r.appointment_time).slice(0, 5), r.duration_min || 30),
   patientOwner: r.c_first != null ? fullName(r.c_first, r.c_last) : r.owner_name || '',
   patientOwnerLast: r.c_first != null ? r.c_last || '' : '',
@@ -165,15 +195,16 @@ const mapCash = (r) => ({
 });
 
 async function listPatients() {
-  const [p, v] = await Promise.all([
+  const [p, v, fresh] = await Promise.all([
     db.query('SELECT ' + PATIENT_SELECT + PATIENT_FROM + ' WHERE p.deleted_at IS NULL ORDER BY lower(p.name), p.id'),
     db.query('SELECT id, patient_id, name, applied_on, next_on, product_id, stock_qty FROM vaccines WHERE deleted_at IS NULL ORDER BY applied_on DESC, id DESC'),
+    webNewIds('patients'),
   ]);
   const by = {};
   v.rows.forEach((x) => {
     (by[x.patient_id] = by[x.patient_id] || []).push(mapVaccine(x));
   });
-  return p.rows.map((r) => Object.assign(mapPatient(r), { vaccines: by[r.id] || [] }));
+  return p.rows.map((r) => Object.assign(mapPatient(Object.assign(r, { web_new: fresh.has(r.id) })), { vaccines: by[r.id] || [] }));
 }
 // C1: el costo unitario (último precio pagado en una compra) es información financiera: solo para el administrador.
 async function listProducts(admin) {
@@ -546,7 +577,7 @@ add('POST', '/api/patients', async (ctx) => {
 
 add('GET', '/api/patients/:id', async (ctx) => {
   const id = U.idParam(ctx.params.id);
-  const r = await db.query('SELECT ' + PATIENT_SELECT + PATIENT_FROM + ' WHERE p.id = $1 AND p.deleted_at IS NULL', [id]);
+  const r = await db.query('SELECT ' + PATIENT_SELECT + PATIENT_WEB_NEW + PATIENT_FROM + ' WHERE p.id = $1 AND p.deleted_at IS NULL', [id]);
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el paciente');
   const [v, d, m, c, s, ap, wt] = await Promise.all([
     db.query('SELECT id, name, applied_on, next_on, product_id, stock_qty FROM vaccines WHERE patient_id = $1 AND deleted_at IS NULL ORDER BY applied_on DESC, id DESC', [id]),
@@ -1469,6 +1500,87 @@ add('GET', '/api/reports/monthly', { admin: true }, async () => {
   return { months, today };
 });
 
+/* ---------- Clientes que hace mucho no vienen ----------
+   Última actividad de un cliente = la fecha más reciente, entre todas sus mascotas (sin contar las eliminadas), de:
+   cobros, consultas/diagnósticos, vacunas aplicadas, medicación, estudios, registros de peso y turnos confirmados
+   cuya fecha ya llegó. Si nunca tuvo nada de eso, se toma el día en que se creó la ficha del cliente.
+   No se listan los que tienen un turno por venir (pendiente o confirmado) ni los que tienen una vacuna con próxima
+   dosis a futuro: a esos se los espera de vuelta. La medicación no tiene fecha de fin (la duración es texto libre),
+   así que no se puede usar para excluir.
+   Solo lee: no borra, no archiva ni modifica nada. */
+const INACTIVE_KINDS = { consulta: 'Consulta', vacuna: 'Vacuna', cobro: 'Cobro', medicacion: 'Medicación', estudio: 'Estudio', turno: 'Turno', peso: 'Control de peso', alta: 'Alta de la ficha' };
+const INACTIVE_MONTHS = { 4: 120, 6: 180, 12: 365 };
+// Un máximo por tabla y por cliente (7 filas por cliente como mucho) y después se elige la más reciente.
+const lastOf = (table, col, kind, prio, extra) =>
+  'SELECT p.client_id, MAX(x.' + col + ") AS d, '" + kind + "'::text AS kind, " + prio + ' AS prio FROM ' + table + ' x JOIN pets p ON p.id = x.patient_id ' +
+  'WHERE x.' + col + ' <= $1' + (extra ? ' AND ' + extra : '') + ' GROUP BY p.client_id';
+const INACTIVE_SQL =
+  'WITH pets AS (SELECT id, client_id FROM patients WHERE client_id IS NOT NULL AND deleted_at IS NULL), ' +
+  'act AS (' +
+  [
+    lastOf('diagnoses', 'on_date', 'consulta', 1, 'x.deleted_at IS NULL'),
+    lastOf('vaccines', 'applied_on', 'vacuna', 2, 'x.deleted_at IS NULL'),
+    lastOf('charges', 'on_date', 'cobro', 3, 'x.deleted_at IS NULL'),
+    lastOf('medications', 'on_date', 'medicacion', 4, 'x.deleted_at IS NULL'),
+    lastOf('complementary_studies', 'on_date', 'estudio', 5, 'x.deleted_at IS NULL'),
+    lastOf('appointments', 'appointment_date', 'turno', 6, "x.status = 'confirmado'"),
+    lastOf('weights', 'fecha', 'peso', 7, ''),
+  ].join(' UNION ALL ') +
+  '), ' +
+  'last AS (SELECT DISTINCT ON (client_id) client_id, d, kind FROM act ORDER BY client_id, d DESC, prio), ' +
+  'alta AS (SELECT c.id AS client_id, (LEAST(c.created_at, (SELECT MIN(p.created_at) FROM patients p WHERE p.client_id = c.id)) ' +
+  "AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS d FROM clients c) " +
+  'SELECT c.id, c.first_name, c.last_name, c.phone, c.source, ' +
+  "COALESCE(l.d, a.d) AS last_date, COALESCE(l.kind, 'alta') AS last_kind, " +
+  // Cliente web que nunca tuvo una visita (un registro de peso solo no cuenta como visita).
+  "(c.source = 'web' AND NOT EXISTS (SELECT 1 FROM act v WHERE v.client_id = c.id AND v.kind <> 'peso')) AS web_no_visit, " +
+  // Todas sus mascotas están en la Papelera.
+  '(NOT EXISTS (SELECT 1 FROM pets p WHERE p.client_id = c.id) AND EXISTS (SELECT 1 FROM patients p WHERE p.client_id = c.id)) AS trash_only ' +
+  'FROM clients c JOIN alta a ON a.client_id = c.id LEFT JOIN last l ON l.client_id = c.id ' +
+  'WHERE COALESCE(l.d, a.d) < $2 ' +
+  "AND NOT EXISTS (SELECT 1 FROM appointments a JOIN pets p ON p.id = a.patient_id WHERE p.client_id = c.id AND a.status IN ('pendiente', 'confirmado') AND a.appointment_date >= $1) " +
+  'AND NOT EXISTS (SELECT 1 FROM vaccines v JOIN pets p ON p.id = v.patient_id WHERE p.client_id = c.id AND v.deleted_at IS NULL AND v.next_on >= $1) ' +
+  'ORDER BY last_date, c.id LIMIT $3';
+const INACTIVE_MAX = 500;
+add('GET', '/api/reports/inactive-clients', { admin: true }, async (ctx) => {
+  const raw = ctx.query.get('months');
+  const months = raw === null ? 4 : /^(4|6|12)$/.test(raw) ? Number(raw) : 0;
+  const days = INACTIVE_MONTHS[months];
+  if (!days) throw U.bad('El período tiene que ser de 4, 6 o 12 meses.');
+  const today = U.todayAR();
+  const r = await db.query(INACTIVE_SQL, [today, U.addDays(today, -days), INACTIVE_MAX + 1]);
+  const rows = r.rows.slice(0, INACTIVE_MAX);
+  const pets = {};
+  if (rows.length) {
+    const pr = await db.query('SELECT id, name, client_id FROM patients WHERE deleted_at IS NULL AND client_id = ANY($1::int[]) ORDER BY lower(name), id', [rows.map((x) => x.id)]);
+    pr.rows.forEach((x) => (pets[x.client_id] = pets[x.client_id] || []).push({ id: x.id, name: x.name }));
+  }
+  const dayNum = (iso) => Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10))) / 86400000;
+  return {
+    months,
+    days,
+    today,
+    more: r.rows.length > INACTIVE_MAX,
+    items: rows.map((x) => {
+      const since = dayNum(today) - dayNum(x.last_date);
+      return {
+        id: x.id,
+        name: fullName(x.first_name, x.last_name),
+        phone: x.phone,
+        source: x.source,
+        webNoVisit: !!x.web_no_visit,
+        trashOnly: !!x.trash_only,
+        pets: pets[x.id] || [],
+        lastDate: x.last_date,
+        lastKind: x.last_kind,
+        lastLabel: INACTIVE_KINDS[x.last_kind] || x.last_kind,
+        daysSince: since,
+        monthsSince: Math.floor(since / 30),
+      };
+    }),
+  };
+});
+
 add('GET', '/api/reports/services', { admin: true }, async (ctx) => {
   const { from, to, days } = reportRange(ctx.query);
   const r = await db.query(
@@ -1599,23 +1711,32 @@ const mapClient = (r, pets) => ({
   email: r.email,
   phone: r.phone,
   address: r.address,
+  source: r.source || 'sistema',
+  webNew: !!r.web_new,
+  createdOn: r.created_on || '',
   pets: pets || [],
 });
+const CLIENT_SELECT =
+  'c.id, c.first_name, c.last_name, c.email, c.phone, c.address, c.source, ' +
+  "to_char(c.created_at AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD') AS created_on";
+// web_new: el cliente se registró solo desde la página y ninguna de sus mascotas tuvo todavía una visita.
+const CLIENT_WEB_NEW = ", CASE WHEN c.source = 'web' THEN NOT EXISTS (SELECT 1 FROM patients p WHERE p.client_id = c.id AND p.deleted_at IS NULL AND " + VISITED_SQL + ') ELSE FALSE END AS web_new';
 async function listClients(db_) {
-  const [cl, pt] = await Promise.all([
-    db_.query('SELECT id, first_name, last_name, email, phone, address FROM clients ORDER BY lower(last_name), lower(first_name), id'),
+  const [cl, pt, fresh] = await Promise.all([
+    db_.query('SELECT ' + CLIENT_SELECT + ' FROM clients c ORDER BY lower(c.last_name), lower(c.first_name), c.id'),
     db_.query('SELECT id, hc_number, name, species, client_id FROM patients WHERE deleted_at IS NULL AND client_id IS NOT NULL ORDER BY lower(name), id'),
+    webNewIds('clients'),
   ]);
   const by = {};
   pt.rows.forEach((x) => (by[x.client_id] = by[x.client_id] || []).push({ id: x.id, hc: x.hc_number, name: x.name, species: x.species }));
-  return cl.rows.map((r) => mapClient(r, by[r.id]));
+  return cl.rows.map((r) => mapClient(Object.assign(r, { web_new: fresh.has(r.id) }), by[r.id]));
 }
 add('GET', '/api/clients', async () => ({ items: await listClients(db) }));
 
 // Ficha del cliente: contacto, mascotas y el historial de pagos de todas sus mascotas.
 add('GET', '/api/clients/:id', async (ctx) => {
   const id = U.idParam(ctx.params.id);
-  const r = await db.query('SELECT id, first_name, last_name, email, phone, address FROM clients WHERE id = $1', [id]);
+  const r = await db.query('SELECT ' + CLIENT_SELECT + CLIENT_WEB_NEW + ' FROM clients c WHERE c.id = $1', [id]);
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el cliente');
   const [pets, pays] = await Promise.all([
     db.query('SELECT id, hc_number, name, species, breed FROM patients WHERE client_id = $1 AND deleted_at IS NULL ORDER BY lower(name), id', [id]),
@@ -1839,10 +1960,16 @@ add('GET', '/api/appointments', async (ctx) => {
   const from = U.reqDate(ctx.query.get('from') || '', 'Desde');
   const to = U.reqDate(ctx.query.get('to') || '', 'Hasta');
   if (to < from) throw U.bad('El rango de fechas no es válido');
+  // ?cancelled=1 (lo usa solo el calendario): suma los turnos web que canceló el cliente, de hoy en adelante, para
+  // que la veterinaria vea "Cancelado por el cliente". Sin ese parámetro la respuesta es la de siempre (los chequeos de
+  // turnos superpuestos no los cuentan).
+  const withCancelled = ctx.query.get('cancelled') === '1';
   const r = await db.query(
-    'SELECT a.id, a.patient_id, p.name AS patient_name, p.owner_name, p.species, p.breed, p.phone, cl.first_name AS c_first, cl.last_name AS c_last, cl.phone AS c_phone, a.title, a.description, a.appointment_date, a.appointment_time, a.appointment_type, a.duration_min, a.status, a.source ' +
+    'SELECT a.id, a.patient_id, p.name AS patient_name, p.owner_name, p.species, p.breed, p.phone, cl.first_name AS c_first, cl.last_name AS c_last, cl.phone AS c_phone, a.title, a.description, a.appointment_date, a.appointment_time, a.appointment_type, a.duration_min, a.status, a.source, a.client_message ' +
       'FROM appointments a JOIN patients p ON p.id = a.patient_id LEFT JOIN clients cl ON cl.id = p.client_id ' +
-      "WHERE p.deleted_at IS NULL AND a.status NOT IN ('rechazado', 'cancelado') AND a.appointment_date BETWEEN $1 AND $2 ORDER BY a.appointment_date, a.appointment_time, a.id",
+      "WHERE p.deleted_at IS NULL AND (a.status NOT IN ('rechazado', 'cancelado')" +
+      (withCancelled ? " OR (a.status = 'cancelado' AND a.source = 'web' AND a.appointment_date >= " + TODAY_SQL + ')' : '') +
+      ') AND a.appointment_date BETWEEN $1 AND $2 ORDER BY a.appointment_date, a.appointment_time, a.id',
     [from, to]
   );
   return { items: r.rows.map(mapAppointment) };
@@ -1862,7 +1989,9 @@ add('PUT', '/api/appointments/:id', async (ctx) => {
   const a = appointmentInput(ctx.body);
   await mustExist('patients', a.patientId, 'No se encontró el paciente');
   const r = await db.query(
-    'UPDATE appointments SET patient_id = $1, title = $2, description = $3, appointment_date = $4, appointment_time = $5, appointment_type = $6, duration_min = $8 ' +
+    // Si el turno pasa a otra mascota, el mensaje para el cliente se borra: era para el dueño anterior.
+    'UPDATE appointments SET patient_id = $1, title = $2, description = $3, appointment_date = $4, appointment_time = $5, appointment_type = $6, duration_min = $8, ' +
+      "client_message = CASE WHEN patient_id = $1 THEN client_message ELSE '' END " +
       'WHERE id = $7 RETURNING id',
     [a.patientId, a.title, a.description, a.date, a.time, a.type, id, a.duration]
   );
@@ -1911,17 +2040,36 @@ async function pendingWeb() {
   );
   const row = r.rows[0];
   const when = String(row.next || row.oldest || '');
-  return { count: Number(row.n), past: Number(row.past), first: when ? when.slice(0, 10) : null, firstTime: when ? when.slice(11, 16) : null };
+  // Turnos de hoy y mañana que el cliente canceló desde la página (sin email ni WhatsApp: se ven en "Para revisar").
+  const c = await db.query(
+    "SELECT COUNT(*) AS n, MIN(to_char(a.appointment_date, 'YYYY-MM-DD')) AS first FROM appointments a JOIN patients p ON p.id = a.patient_id " +
+      "WHERE a.status = 'cancelado' AND a.source = 'web' AND p.deleted_at IS NULL AND a.appointment_date BETWEEN $1 AND $2",
+    [today, U.addDays(today, 1)]
+  );
+  return {
+    count: Number(row.n), past: Number(row.past), first: when ? when.slice(0, 10) : null, firstTime: when ? when.slice(11, 16) : null,
+    cancelled: Number(c.rows[0].n), cancelledFirst: c.rows[0].first || null,
+  };
 }
 add('GET', '/api/appointments/pending-summary', async () => pendingWeb());
 
-// La veterinaria acepta o rechaza un turno pedido desde la web (solo los pendientes).
+// Largo máximo del mensaje para el cliente que se puede dejar al aceptar un pedido.
+const CLIENT_MESSAGE_MAX = 300;
+// La veterinaria acepta o rechaza un turno pedido desde la web (solo los pendientes). Al aceptar puede dejarle un
+// mensaje al cliente (opcional), que el cliente ve debajo del turno confirmado. Al rechazar no se guarda mensaje.
 add('POST', '/api/appointments/:id/status', async (ctx) => {
   const id = U.idParam(ctx.params.id);
-  const status = U.oneOf(ctx.body && ctx.body.status, ['confirmado', 'rechazado'], 'Estado');
-  const r = await db.query("UPDATE appointments SET status = $1 WHERE id = $2 AND status = 'pendiente' RETURNING id", [status, id]);
+  const b = ctx.body || {};
+  const status = U.oneOf(b.status, ['confirmado', 'rechazado'], 'Estado');
+  if (b.message != null && (typeof b.message !== 'string' || b.message.includes(String.fromCharCode(0)))) throw U.bad('El mensaje para el cliente no es válido.');
+  const message = status === 'confirmado' ? String(b.message || '').trim() : '';
+  if (message.length > CLIENT_MESSAGE_MAX) throw U.bad('El mensaje para el cliente puede tener hasta ' + CLIENT_MESSAGE_MAX + ' caracteres.');
+  const r = await db.query(
+    "UPDATE appointments SET status = $1, status_at = now(), client_message = CASE WHEN $1 = 'confirmado' THEN $3 ELSE client_message END WHERE id = $2 AND status = 'pendiente' RETURNING id",
+    [status, id, message]
+  );
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró un turno pendiente con ese número.');
-  return { id, status };
+  return { id, status, message };
 });
 
 /* ============================================================
@@ -1930,8 +2078,19 @@ add('POST', '/api/appointments/:id/status', async (ctx) => {
    ============================================================ */
 const CLIENT_SESSION_MS = 2 * 3600 * 1000;
 const PUBLIC_IP_LIMIT_MSG = 'Hiciste muchos pedidos seguidos. Esperá unos minutos y probá de nuevo.';
-const PUBLIC_CLOSED_MSG = 'En este momento no se puede hacer eso desde la página. Llamá a la veterinaria.';
 const MIN = 60 * 1000;
+/**
+ * Cómo pedirle ayuda a la veterinaria en un mensaje: "llamá" solo si cargó un teléfono en Configuración (si no, el
+ * cliente no tiene a qué número llamar desde la página).
+ */
+async function askVet() {
+  const st = await settings.getSettings();
+  return st.phone ? 'llamá a la veterinaria' : 'consultalo en la veterinaria';
+}
+const capFirst = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+async function closedError() {
+  return new HttpError(429, 'En este momento no se puede hacer eso desde la página. ' + capFirst(await askVet()) + '.');
+}
 const L = booking.LIMITS;
 
 function publicIpLimit(ctx) {
@@ -1943,9 +2102,9 @@ function publicIpLimit(ctx) {
  * El intento se anota ANTES de consultar la base (si no, cien pedidos mandados a la vez pasarían todos el control) y
  * se devuelve con loginRelease si el ingreso salió bien: entrar con tu número nunca te bloquea.
  */
-function loginReserve(ctx) {
+async function loginReserve(ctx) {
   const ipKey = 'fallo-ip:' + U.clientIp(ctx.req);
-  if (booking.blocked('fallo-total:todos', L.failsGlobal)) throw new HttpError(429, PUBLIC_CLOSED_MSG);
+  if (booking.blocked('fallo-total:todos', L.failsGlobal)) throw await closedError();
   if (booking.blocked(ipKey, L.failsPerIp)) throw new HttpError(429, PUBLIC_IP_LIMIT_MSG);
   booking.hit('fallo-total:todos', 15 * MIN);
   booking.hit(ipKey, 60 * MIN);
@@ -1989,27 +2148,50 @@ async function petsOf(clientId) {
   const r = await db.query('SELECT id, name, species, breed FROM patients WHERE client_id = $1 AND deleted_at IS NULL ORDER BY name, id', [clientId]);
   return r.rows.map((x) => ({ id: x.id, name: x.name, species: x.species, breed: x.breed }));
 }
+// Cuántos días se le sigue mostrando al cliente un pedido que la veterinaria rechazó.
+const REJECTED_DAYS = 7;
 async function upcomingOf(clientId) {
   const r = await db.query(
-    "SELECT a.id, a.patient_id, p.name AS patient_name, a.appointment_type, a.appointment_date, to_char(a.appointment_time, 'HH24:MI') AS hhmm, a.status, a.source " +
+    "SELECT a.id, a.patient_id, p.name AS patient_name, a.appointment_type, a.appointment_date, to_char(a.appointment_time, 'HH24:MI') AS hhmm, a.status, a.source, a.duration_min, a.client_message " +
       'FROM appointments a JOIN patients p ON p.id = a.patient_id ' +
-      "WHERE p.client_id = $1 AND p.deleted_at IS NULL AND a.status IN ('pendiente', 'confirmado') AND a.appointment_date >= $2 " +
+      // Además de los que vienen, los pedidos web que la veterinaria rechazó en los últimos días: si no, el turno
+      // desaparecería de la lista sin explicación. Siempre filtrado por el cliente de la sesión.
+      "WHERE p.client_id = $1 AND p.deleted_at IS NULL AND ((a.status IN ('pendiente', 'confirmado') AND a.appointment_date >= $2) " +
+      "OR (a.status = 'rechazado' AND a.source = 'web' AND a.status_at >= now() - ($3 || ' days')::interval)) " +
       'ORDER BY a.appointment_date, a.appointment_time, a.id',
-    [clientId, U.todayAR()]
+    [clientId, U.todayAR(), String(REJECTED_DAYS)]
   );
   const now = nowAR();
   return r.rows.map((x) => ({
     id: x.id, patientId: x.patient_id, patientName: x.patient_name, type: x.appointment_type,
     typeLabel: U.APPT_LABELS[x.appointment_type] || x.appointment_type, date: x.appointment_date, time: x.hhmm, status: x.status,
+    duration: x.duration_min || 30,
+    // El mensaje de la veterinaria se muestra solo con el turno confirmado (un pendiente o rechazado nunca lo lleva).
+    message: x.status === 'confirmado' ? x.client_message || '' : '',
     // Desde la página se cancela solo lo que se pidió desde la página; lo que agendó la veterinaria, por teléfono.
-    canCancel: x.source === 'web' && (x.appointment_date > now.date || booking.toMin(x.hhmm) > now.min),
+    canCancel: x.status !== 'rechazado' && x.source === 'web' && (x.appointment_date > now.date || booking.toMin(x.hhmm) > now.min),
   }));
+}
+/**
+ * Si el cliente ya tuvo una atención: algún turno confirmado de sus mascotas que ya terminó. Sirve para preguntarle
+ * por la reseña en el momento justo (después de venir, no antes). Solo un sí o un no: no se dice qué turno fue.
+ */
+async function hadVisit(clientId) {
+  const now = nowAR();
+  const r = await db.query(
+    "SELECT 1 FROM appointments a JOIN patients p ON p.id = a.patient_id WHERE p.client_id = $1 AND p.deleted_at IS NULL AND a.status = 'confirmado' " +
+      // Fecha + hora + duración como fecha y hora completa: un turno de 23:50 termina al día siguiente.
+      "AND a.appointment_date + a.appointment_time + make_interval(mins => a.duration_min) <= ($2 || ' ' || $3)::timestamp LIMIT 1",
+    [clientId, now.date, booking.fromMin(now.min)]
+  );
+  return !!r.rows[0];
 }
 async function clientSummary(client, withToken) {
   const out = {
     client: { id: client.id, firstName: client.first_name },
     pets: await petsOf(client.id),
     appointments: await upcomingOf(client.id),
+    hadVisit: await hadVisit(client.id),
   };
   if (withToken) out.token = clientToken(client);
   return out;
@@ -2039,8 +2221,8 @@ const webPetInput = (p) => {
 };
 async function insertPet(q, clientId, ownerName, pet) {
   await q.query(
-    "INSERT INTO patients (name, species, breed, sex, neutered, birth, weight, owner_name, phone, email, notes, phone_norm, client_id) " +
-      "VALUES ($1, $2, '', $3, FALSE, NULL, NULL, $4, '', '', '', '', $5)",
+    "INSERT INTO patients (name, species, breed, sex, neutered, birth, weight, owner_name, phone, email, notes, phone_norm, client_id, source) " +
+      "VALUES ($1, $2, '', $3, FALSE, NULL, NULL, $4, '', '', '', '', $5, 'web')",
     [pet.name, pet.species, pet.sex, ownerName, clientId]
   );
 }
@@ -2048,11 +2230,12 @@ async function insertPet(q, clientId, ownerName, pet) {
 add('GET', '/api/public/info', { public: true }, async () => {
   const st = await settings.getSettings();
   return {
-    clinic: st.shopName,
+    clinic: st.publicName || 'Veterinaria',
     phone: st.phone,
     address: st.address,
     professionalName: st.professionalName,
     mapsUrl: st.mapsUrl,
+    reviewUrl: st.reviewUrl || '',
     reviews: st.reviews,
     hours: st.hours,
     methods: st.methods,
@@ -2061,28 +2244,48 @@ add('GET', '/api/public/info', { public: true }, async () => {
 });
 
 // Horarios libres de los próximos días, según el horario de atención y los turnos ya tomados.
+// Se calculan todos los días de una vez (una sola consulta a la base); con 90 días sigue siendo liviano (ver
+// tests/turnos-ronda2.test.js). La respuesta va comprimida si el navegador lo acepta (todos lo aceptan).
 add('GET', '/api/public/slots', { public: true }, async (ctx) => {
   publicIpLimit(ctx);
   const type = booking.webType(ctx.query.get('type'));
   const duration = U.APPT_DURATIONS[type];
+  const step = booking.stepFor(type);
   const now = nowAR();
   const st = await settings.getSettings();
-  const busy = await busyRows(db, now.date, U.addDays(now.date, booking.DAYS_AHEAD - 1));
+  const lastDate = U.addDays(now.date, booking.DAYS_AHEAD - 1);
+  const busy = await busyRows(db, now.date, lastDate);
   const days = [];
   for (let i = 0; i < booking.DAYS_AHEAD; i++) {
     const date = U.addDays(now.date, i);
-    const times = booking.freeSlots({ hours: st.hours, date, duration, busy: busy.get(date) || [], nowMin: i === 0 ? now.min : null });
+    const times = booking.freeSlots({ hours: st.hours, date, duration, busy: busy.get(date) || [], nowMin: i === 0 ? now.min : null, step });
     if (times.length) days.push({ date, times });
   }
-  return { type, duration, days };
+  return sendMaybeGzip(ctx, { type, duration, step, daysAhead: booking.DAYS_AHEAD, lastDate, days });
 });
+/** Responde JSON comprimido con gzip cuando el navegador lo acepta y vale la pena (más de 1 KB). */
+function sendMaybeGzip(ctx, obj) {
+  const body = JSON.stringify(obj);
+  const accepts = /\bgzip\b/.test(String(ctx.req.headers['accept-encoding'] || ''));
+  if (!accepts || body.length < 1024) return obj;
+  const gz = zlib.gzipSync(body);
+  ctx.res.writeHead(200, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'Content-Encoding': 'gzip',
+    Vary: 'Accept-Encoding',
+    'Content-Length': gz.length,
+  });
+  ctx.res.end(gz);
+  return U.HANDLED;
+}
 
 // Entrar con el teléfono: si está registrado, se devuelven sus mascotas y sus turnos.
 add('POST', '/api/public/login', { public: true }, async (ctx) => {
   publicIpLimit(ctx);
   const ph = U.optPhone(ctx.body && ctx.body.phone);
   if (!ph.norm) throw U.bad('Ingresá tu teléfono.');
-  const reserved = loginReserve(ctx);
+  const reserved = await loginReserve(ctx);
   let found;
   try {
     found = await clientsByPhone(db, ph.norm);
@@ -2097,9 +2300,14 @@ add('POST', '/api/public/login', { public: true }, async (ctx) => {
   // Insistir con un mismo número que no entra: tope propio. Solo se mira cuando el ingreso falló, así que nadie puede
   // dejar afuera a un cliente probando su número (ni uno parecido): el que entra bien, entra siempre.
   if (!booking.limit('fallo-tel:' + booking.phoneLimitKey(ph.norm), L.failsPerPhone, 15 * MIN)) throw new HttpError(429, PUBLIC_IP_LIMIT_MSG);
-  if (!found.length) throw new HttpError(404, 'Ese teléfono no está registrado. Probá de nuevo o llamá a la veterinaria.');
+  // Sin "llamá": la página ofrece ahí mismo anotarse como cliente nuevo.
+  if (!found.length) {
+    const e = new HttpError(404, 'No encontramos ese número. Revisá que tenga el código de área o, si es tu primera vez, anotate como cliente nuevo.');
+    e.code = 'no-registrado';
+    throw e;
+  }
   // El mismo teléfono en más de una ficha: no se entra a ninguna, para no mostrar los datos de otra persona.
-  throw new HttpError(404, 'No pudimos identificarte con ese teléfono. Llamá a la veterinaria y te ayudamos.');
+  throw new HttpError(404, 'No pudimos identificarte con ese teléfono. ' + capFirst(await askVet()) + ' y te ayudamos.');
 });
 
 add('GET', '/api/public/me', { public: true }, async (ctx) => {
@@ -2118,10 +2326,11 @@ add('POST', '/api/public/register', { public: true }, async (ctx) => {
   const pet = webPetInput(b.pet);
   const ipKey = 'alta-ip:' + U.clientIp(ctx.req);
   if (booking.blocked(ipKey, L.signupsPerIp)) throw new HttpError(429, PUBLIC_IP_LIMIT_MSG);
-  if (booking.blocked('alta-total:dia', L.signupsPerDay)) throw new HttpError(429, PUBLIC_CLOSED_MSG);
+  if (booking.blocked('alta-total:dia', L.signupsPerDay)) throw await closedError();
   // El alta también dice si un teléfono ya existe, así que comparte los topes del ingreso (por IP y total): el intento
   // se anota antes de consultar y solo queda anotado si el teléfono ya estaba registrado.
-  const reserved = loginReserve(ctx);
+  const closed = await closedError();
+  const reserved = await loginReserve(ctx);
   let dup = false;
   const client = await db.tx(async (c) => {
     // Con candado: dos altas simultáneas con el mismo teléfono no crean dos fichas.
@@ -2132,8 +2341,8 @@ add('POST', '/api/public/register', { public: true }, async (ctx) => {
     }
     // Se vuelve a mirar el tope con el candado tomado: varias altas a la vez no lo pasan.
     if (booking.blocked(ipKey, L.signupsPerIp)) throw new HttpError(429, PUBLIC_IP_LIMIT_MSG);
-    if (booking.blocked('alta-total:dia', L.signupsPerDay)) throw new HttpError(429, PUBLIC_CLOSED_MSG);
-    const r = await c.query("INSERT INTO clients (first_name, last_name, email, phone, phone_norm, address) VALUES ($1, $2, '', $3, $4, '') RETURNING id, first_name, last_name, phone_norm", [first, last, ph.phone, ph.norm]);
+    if (booking.blocked('alta-total:dia', L.signupsPerDay)) throw closed;
+    const r = await c.query("INSERT INTO clients (first_name, last_name, email, phone, phone_norm, address, source) VALUES ($1, $2, '', $3, $4, '', 'web') RETURNING id, first_name, last_name, phone_norm", [first, last, ph.phone, ph.norm]);
     await insertPet(c, r.rows[0].id, fullName(first, last), pet);
     booking.hit(ipKey, 60 * MIN);
     booking.hit('alta-total:dia', 24 * 60 * MIN);
@@ -2149,10 +2358,11 @@ add('POST', '/api/public/pets', { public: true }, async (ctx) => {
   publicIpLimit(ctx);
   const client = await clientFromRequest(ctx);
   const pet = webPetInput(ctx.body && ctx.body.pet);
+  const hint = await askVet();
   await db.tx(async (c) => {
     await c.query("SELECT pg_advisory_xact_lock(hashtext('turnos-web-alta'))");
     const n = await c.query('SELECT COUNT(*) AS n FROM patients WHERE client_id = $1', [client.id]);
-    if (Number(n.rows[0].n) >= L.petsPerClient) throw U.bad('Ya tenés ' + L.petsPerClient + ' mascotas cargadas. Para agregar otra, llamá a la veterinaria.');
+    if (Number(n.rows[0].n) >= L.petsPerClient) throw U.bad('Ya tenés ' + L.petsPerClient + ' mascotas cargadas. Para agregar otra, ' + hint + '.');
     await insertPet(c, client.id, fullName(client.first_name, client.last_name), pet);
   });
   return clientSummary(client, false);
@@ -2167,12 +2377,13 @@ add('POST', '/api/public/appointments', { public: true }, async (ctx) => {
   const type = booking.webType(b.type);
   const duration = U.APPT_DURATIONS[type];
   const date = U.reqDate(b.date, 'Fecha');
-  // Solo HH:MM: los horarios se ofrecen de a 10 minutos, sin segundos.
+  // Solo HH:MM: los horarios se ofrecen de a 10 o 20 minutos (según el tipo), sin segundos.
   if (typeof b.time !== 'string' || !/^\d{2}:\d{2}$/.test(b.time)) throw U.bad('Hora inválida: Hora');
   const time = U.reqTime(b.time, 'Hora');
   const patientId = U.idParam(b.patientId);
   if (date < U.todayAR()) throw U.bad('Ese día ya pasó. Elegí otra fecha.');
   if (date > U.addDays(U.todayAR(), booking.DAYS_AHEAD - 1)) throw U.bad('Solo se pueden pedir turnos para los próximos ' + booking.DAYS_AHEAD + ' días.');
+  const closed = await closedError();
   const id = await db.tx(async (c) => {
     await c.query("SELECT pg_advisory_xact_lock(hashtext('turnos-web'))");
     const own = await c.query('SELECT 1 FROM patients WHERE id = $1 AND client_id = $2 AND deleted_at IS NULL', [patientId, client.id]);
@@ -2180,7 +2391,7 @@ add('POST', '/api/public/appointments', { public: true }, async (ctx) => {
     const st = await settings.getSettings();
     const now = nowAR();
     const busy = (await busyRows(c, date, date)).get(date) || [];
-    if (!booking.canBook({ hours: st.hours, date, time, duration, busy, nowMin: date === now.date ? now.min : null })) {
+    if (!booking.canBook({ hours: st.hours, date, time, duration, busy, nowMin: date === now.date ? now.min : null, step: booking.stepFor(type) })) {
       throw U.bad('Ese horario ya no está disponible. Elegí otro.');
     }
     // Topes: un mismo cliente (o alguien que entró con su número) no puede llenar la agenda.
@@ -2194,7 +2405,7 @@ add('POST', '/api/public/appointments', { public: true }, async (ctx) => {
       throw U.bad('Ya tenés ' + L.pendingPerClient + ' pedidos esperando confirmación. Cuando la veterinaria los confirme vas a poder pedir más.');
     }
     const all = await c.query("SELECT COUNT(*) AS n FROM appointments WHERE status = 'pendiente' AND source = 'web' AND appointment_date >= $1", [now.date]);
-    if (Number(all.rows[0].n) >= L.pendingGlobal) throw new HttpError(429, PUBLIC_CLOSED_MSG);
+    if (Number(all.rows[0].n) >= L.pendingGlobal) throw closed;
     const r = await c.query(
       "INSERT INTO appointments (patient_id, title, description, appointment_date, appointment_time, appointment_type, duration_min, status, source) " +
         "VALUES ($1, $2, '', $3, $4, $5, $6, 'pendiente', 'web') RETURNING id",
@@ -2218,8 +2429,8 @@ add('POST', '/api/public/appointments/:id/cancel', { public: true }, async (ctx)
   );
   if (!cur.rows[0]) throw new HttpError(404, 'No encontramos ese turno para cancelar. Puede que ya haya pasado.');
   // Lo que agendó la veterinaria (por ejemplo una cirugía) no se cancela desde la página: se avisa por teléfono.
-  if (cur.rows[0].source !== 'web') throw new HttpError(409, 'Ese turno lo agendó la veterinaria. Para cancelarlo o cambiarlo, llamá a la veterinaria.');
-  const r = await db.query("UPDATE appointments SET status = 'cancelado' WHERE id = $1 AND source = 'web' AND status IN ('pendiente', 'confirmado') RETURNING id", [id]);
+  if (cur.rows[0].source !== 'web') throw new HttpError(409, 'Ese turno lo agendó la veterinaria. Para cancelarlo o cambiarlo, ' + (await askVet()) + '.');
+  const r = await db.query("UPDATE appointments SET status = 'cancelado', status_at = now() WHERE id = $1 AND source = 'web' AND status IN ('pendiente', 'confirmado') RETURNING id", [id]);
   if (!r.rows[0]) throw new HttpError(404, 'No encontramos ese turno para cancelar. Puede que ya haya pasado.');
   return { ok: true };
 });

@@ -33,6 +33,7 @@ const DEFAULT_SETTINGS = {
   // Datos para la página pública de la veterinaria.
   professionalName: '',
   mapsUrl: '',
+  reviewUrl: '',
   reviews: [],
 };
 
@@ -51,19 +52,22 @@ function checkReviews(list) {
     };
   });
 }
-/** El enlace a Google Maps tiene que ser una dirección https. Vacío = sin enlace. */
-function checkMapsUrl(s) {
+/** Un enlace que se muestra en la página pública tiene que ser una dirección https. Vacío = sin enlace. */
+function checkHttpsUrl(s, name) {
   const t = U.optStr(s, 300);
   if (!t) return '';
   let u;
   try {
     u = new URL(t);
   } catch (e) {
-    throw U.bad('El enlace de Google Maps no es válido.');
+    throw U.bad('El enlace ' + name + ' no es válido.');
   }
-  if (u.protocol !== 'https:') throw U.bad('El enlace de Google Maps tiene que empezar con https://');
+  if (u.protocol !== 'https:') throw U.bad('El enlace ' + name + ' tiene que empezar con https://');
   return u.toString();
 }
+const checkMapsUrl = (s) => checkHttpsUrl(s, 'de Google Maps');
+/** Enlace para dejar una reseña en Google (el que da "Pedir reseñas" en el Perfil de Empresa). */
+const checkReviewUrl = (s) => checkHttpsUrl(s, 'para dejar una reseña');
 
 let cache = null;
 function clearCache() {
@@ -81,6 +85,10 @@ async function getSettings(q) {
   const value = Object.assign({}, DEFAULT_SETTINGS, saved, { report: Object.assign({}, DEFAULT_SETTINGS.report, saved.report || {}) });
   value.hours = normHours(value.hours);
   if (!value.shopName) value.shopName = process.env.CLINIC_NAME || 'SYSVET';
+  // Nombre para la página pública: solo el que cargó el dueño (o CLINIC_NAME). Nunca el "SYSVET" de relleno del sistema
+  // interno; sin nombre, la página dice "Veterinaria".
+  const own = String(saved.shopName || process.env.CLINIC_NAME || '').trim();
+  value.publicName = own && own.toUpperCase() !== 'SYSVET' ? own : '';
   cache = { at: Date.now(), value };
   return value;
 }
@@ -128,7 +136,7 @@ function publicSettings(s, admin) {
   const out = {
     shopName: s.shopName, address: s.address, phone: s.phone, ticketText: s.ticketText, ticketWidth: s.ticketWidth, hours: s.hours, methods: s.methods,
     expiryDays: s.expiryDays, defaultMinStock: s.defaultMinStock,
-    professionalName: s.professionalName, mapsUrl: s.mapsUrl, reviews: s.reviews,
+    professionalName: s.professionalName, mapsUrl: s.mapsUrl, reviewUrl: s.reviewUrl || '', reviews: s.reviews,
   };
   if (admin) Object.assign(out, { fixedCategories: s.fixedCategories, fixedMonthly: s.fixedMonthly, lowMargin: s.lowMargin, lostDays: s.lostDays, report: s.report, emailReady: report.configured() });
   return out;
@@ -151,6 +159,7 @@ function validate(b, cur) {
     address: U.optStr(b.address, 200),
     professionalName: U.optStr(b.professionalName, 100),
     mapsUrl: checkMapsUrl(b.mapsUrl),
+    reviewUrl: checkReviewUrl(b.reviewUrl),
     reviews: checkReviews(Array.isArray(b.reviews) ? b.reviews : cur.reviews),
     phone: U.optPhone(b.phone).phone,
     ticketText: U.optStr(b.ticketText, 200),

@@ -156,7 +156,7 @@ function showLogin(msg){
   $('#lerror').textContent=msg||'';
 }
 function applyBootstrap(d){
-  S.clinic=d.clinic||'SYSVET';S.settings=d.settings||{};document.title=S.clinic;var sn=$('#shopname');if(sn)sn.textContent=S.clinic;S.attachments=!!d.attachments;S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.suppliers=d.suppliers||[];S.clients=d.clients||[];S.summary=d.summary||null;S.pendingWeb=Number(d.pendingWeb&&d.pendingWeb.count)||0;S.pendingWebFirst=(d.pendingWeb&&d.pendingWeb.first)||null;S.pendingWebPast=Number(d.pendingWeb&&d.pendingWeb.past)||0;
+  S.clinic=d.clinic||'SYSVET';S.settings=d.settings||{};document.title=S.clinic;var sn=$('#shopname');if(sn)sn.textContent=S.clinic;S.attachments=!!d.attachments;S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.suppliers=d.suppliers||[];S.clients=d.clients||[];S.summary=d.summary||null;S.pendingWeb=Number(d.pendingWeb&&d.pendingWeb.count)||0;S.pendingWebFirst=(d.pendingWeb&&d.pendingWeb.first)||null;S.pendingWebPast=Number(d.pendingWeb&&d.pendingWeb.past)||0;S.cancelledWeb=Number(d.pendingWeb&&d.pendingWeb.cancelled)||0;S.cancelledWebFirst=(d.pendingWeb&&d.pendingWeb.cancelledFirst)||null;
 }
 async function start(){
   var d=await api('/bootstrap');
@@ -221,7 +221,8 @@ function calRange(){
 }
 async function loadAppointments(){
   var r=calRange();
-  ui.appts=(await api('/appointments?from='+r[0]+'&to='+r[1])).items;
+  // cancelled=1: también los turnos web que canceló el cliente (de hoy en adelante), marcados "Cancelado por el cliente".
+  ui.appts=(await api('/appointments?from='+r[0]+'&to='+r[1]+'&cancelled=1')).items;
 }
 async function reloadCal(){
   try{await loadAppointments();}catch(e){toast(e.message);}
@@ -267,8 +268,8 @@ async function loadCash(){
 }
 async function loadReports(){
   var rq=ui.rfrom&&ui.rto?'from='+ui.rfrom+'&to='+ui.rto:'days='+ui.rep;
-  var r=await Promise.all([api('/reports/monthly'),api('/reports/services?'+rq),api('/reports/products?'+rq)]);
-  ui.rmonthly=r[0].months;ui.rtoday=r[0].today;ui.rservices=r[1].items;ui.rproducts=r[2].items;ui.rdays=r[2].days;
+  var r=await Promise.all([api('/reports/monthly'),api('/reports/services?'+rq),api('/reports/products?'+rq),api('/reports/inactive-clients?months='+(ui.rinact||4))]);
+  ui.rmonthly=r[0].months;ui.rtoday=r[0].today;ui.rservices=r[1].items;ui.rproducts=r[2].items;ui.rdays=r[2].days;ui.rinactive=r[3];
 }
 /* Después de guardar algo: vuelve a pedir los datos y redibuja. */
 async function reload(){
@@ -487,6 +488,8 @@ function renderAlerts(){
   // Turnos pedidos desde la web: va primero porque es lo único que espera una respuesta de la veterinaria (aceptar o rechazar).
   if(S.pendingWeb)h+='<button class="al pedido" data-action="goto-pedidos"><span class="dot pedido"></span><span>'+plural(S.pendingWeb,'turno pedido desde la web para confirmar','turnos pedidos desde la web para confirmar')+
     (S.pendingWebPast?' <small>('+(S.pendingWebPast===S.pendingWeb?(S.pendingWeb===1?'la fecha ya pasó':'las fechas ya pasaron'):S.pendingWebPast+' con fecha ya pasada')+')</small>':'')+'</span></button>';
+  // Turnos de hoy y mañana que el cliente canceló desde la página: el horario quedó libre (sin email ni WhatsApp).
+  if(S.cancelledWeb)h+='<button class="al" data-action="goto-cancelados"><span class="dot cancelado"></span><span>'+plural(S.cancelledWeb,'turno de hoy o mañana cancelado por el cliente','turnos de hoy o mañana cancelados por el cliente')+'</span></button>';
   if(bad)h+='<button class="al" data-action="goto-vac"><span class="dot vencida"></span><span>'+plural(bad,'paciente con vacuna vencida','pacientes con vacuna vencida')+'</span></button>';
   if(warn)h+='<button class="al" data-action="goto-vac"><span class="dot porvencer"></span><span>'+plural(warn,'paciente con vacuna por vencer','pacientes con vacuna por vencer')+'</span></button>';
   if(low)h+='<button class="al" data-action="goto-stock"><span class="dot stock"></span><span>'+plural(low,'producto con poco stock','productos con poco stock')+'</span></button>';
@@ -531,6 +534,20 @@ function filteredPatients(){
     return true;
   });
 }
+/* Etapa 3: clientes y mascotas que se registraron solos desde la página de turnos.
+   La etiqueta de origen queda siempre (es un dato); se resalta, y aparece la nota, mientras no hayan tenido una visita
+   (un cobro, consulta, vacuna, medicación, estudio o turno confirmado que ya llegó). Editar la ficha no la quita.
+   La nota la muestra el sistema: no se escribe en las notas de la veterinaria. */
+function webChip(x){
+  if(!x||x.source!=='web')return '';
+  return '<span class="chip web'+(x.webNew?' new':'')+'" title="'+(x.webNew?'Se registró desde la página de turnos y todavía no tuvo ninguna visita':'Se registró desde la página de turnos')+'">Creado desde la web</span>';
+}
+function webNote(x){
+  if(!x||x.source!=='web')return '';
+  var when=x.createdOn?' el '+fmtDate(x.createdOn):'';
+  return x.webNew?'<p class="note webnote"><b>Creado desde la web.</b> Se registró solo desde la página de turnos'+when+' y todavía no tuvo ninguna visita. Completá los datos si vuelve.</p>':
+    '<p class="note webnote seen"><b>Creado desde la web.</b> Se registró solo desde la página de turnos'+when+'.</p>';
+}
 function listHTML(){
   var L=filteredPatients();
   if(!L.length)return '<li class="empty">'+(S.patients.length?'No hay pacientes con ese filtro.':'Todavía no cargaste ningún paciente. Empezá con “Nuevo paciente”.')+'</li>';
@@ -539,7 +556,7 @@ function listHTML(){
     var chip=al==='bad'?'<span class="chip bad">Vacuna vencida</span>':al==='warn'?'<span class="chip warn">Vacuna por vencer</span>':'';
     return '<li><button class="pitem" data-action="select" data-id="'+p.id+'" aria-current="'+(p.id===ui.sel)+'">'+
       '<span class="avatar" aria-hidden="true">'+emo(p)+'</span>'+
-      '<span class="pi-main"><b>'+esc(p.name)+'</b><small>'+(p.hc?'<span class="hc">'+hcNum(p)+'</span> · ':'')+esc(p.breed||p.species)+' · '+esc(p.owner)+'</small></span>'+chip+'</button></li>';
+      '<span class="pi-main"><b>'+esc(p.name)+'</b><small>'+(p.hc?'<span class="hc">'+hcNum(p)+'</span> · ':'')+esc(p.breed||p.species)+' · '+esc(p.owner)+'</small>'+webChip(p)+'</span>'+chip+'</button></li>';
   }).join('');
 }
 var emptyPane=function(){return '<p class="empty">'+(S.patients.length?'Elegí un paciente de la lista para ver su historia clínica, o agregá uno nuevo.':'Cuando cargues el primer paciente vas a ver acá su historia clínica.')+'</p>';};
@@ -690,11 +707,12 @@ function detailHTML(p){
 
   return '<button class="btn back" data-action="back">Volver a la lista</button>'+
     '<header class="phead"><div class="phead-id"><div class="avatar avatar--lg" aria-hidden="true">'+emo(p)+'</div>'+
-    '<div class="info"><h2>'+esc(p.name)+(p.hc?' <span class="hcbadge" title="Número de historia clínica">'+hcLabel(p)+'</span>':'')+'</h2>'+
+    '<div class="info"><h2>'+esc(p.name)+(p.hc?' <span class="hcbadge" title="Número de historia clínica">'+hcLabel(p)+'</span>':'')+' '+webChip(p)+'</h2>'+
     '<p class="meta">Dueño: '+(p.clientId?'<button class="link ownerlink" data-action="open-client" data-id="'+p.clientId+'" title="Ver datos de contacto y mascotas del cliente">'+esc(p.owner)+'</button>':esc(p.owner))+'</p></div></div>'+
     clinicStrip(p)+
     '<div class="pactions"><button class="btn primary" data-action="charge">Cobrar servicio</button><button class="btn" data-action="edit-patient">Editar datos</button><button class="btn" data-action="print">Imprimir</button>'+
     (isAdmin()?'<button class="btn danger-o" data-action="del-patient">Eliminar</button>':'')+'</div></header>'+
+    webNote(p)+
     (p.notes?'<p class="note"><b>Notas:</b> '+esc(p.notes)+'</p>':'')+
     sec('Peso','add-weight','Registrar peso',weightHTML(p))+
     sec('Vacunas','add-vac','Agregar vacuna',vacHTML)+
@@ -970,6 +988,27 @@ function topList(key,items,rowFn,head,emptyMsg,allLabel){
   var more=items.all.length>Math.min(5,items.top.length)?'<button class="btn rep-more" data-action="rep-all" data-v="'+key+'" aria-expanded="'+open+'">'+(open?'Ver menos':'Ver todos ('+items.all.length+(allLabel||'')+')')+'</button>':'';
   return (shown.length?'<div class="tbl-wrap"><table class="tbl"><thead><tr>'+head+'</tr></thead><tbody>'+shown.map(rowFn).join('')+'</tbody></table></div>':'<p class="empty">'+emptyMsg+'</p>')+more;
 }
+// Clientes sin actividad hace 4, 6 o 12 meses. Solo informa: cada fila abre la ficha del cliente para revisarla.
+function repInactive(){
+  var R=ui.rinactive;if(!R)return '';
+  var label={4:'4 meses',6:'6 meses',12:'un año'}[R.months]||R.months+' meses';
+  var row=function(x){
+    var pets=x.pets.length?x.pets.map(function(p){return esc(p.name);}).join(', '):'<span class="mut">Sin mascotas</span>';
+    var ago=x.monthsSince>=1?plural(x.monthsSince,'mes','meses'):plural(x.daysSince,'día','días');
+    return '<tr'+(x.webNoVisit?' class="inact-web"':'')+'><td><button class="link" data-action="open-client" data-id="'+x.id+'" title="Abrir la ficha de '+esc(x.name)+'"><b>'+esc(x.name)+'</b></button>'+
+      (x.source==='web'?'<br>'+webChip({source:'web',webNew:x.webNoVisit}):'')+(x.webNoVisit?'<br><small>Se anotó por la web y nunca tuvo una visita.</small>':'')+'</td>'+
+      '<td>'+(x.phone?esc(x.phone):'<span class="mut">Sin teléfono</span>')+'</td><td>'+pets+'</td>'+
+      '<td>'+fmtDate(x.lastDate)+'<br><small>'+(x.trashOnly?'Sus mascotas están en la Papelera':esc(x.lastLabel))+'</small></td><td class="num">'+ago+'</td></tr>';
+  };
+  var nWeb=R.items.filter(function(x){return x.webNoVisit;}).length;
+  return '<section class="repsec" id="rep-inactive"><div class="toolbar"><h2>Clientes que hace mucho no vienen</h2>'+segHTML('rinact',[['4','4 meses'],['6','6 meses'],['12','1 año']],String(R.months))+'</div>'+
+    '<p class="rep-hint">Clientes sin actividad desde hace más de '+label+'. La <b>última actividad</b> es la fecha más reciente entre cobros, consultas, vacunas, medicación, estudios, registros de peso y turnos confirmados de cualquiera de sus mascotas; si nunca tuvo nada, es el día en que se cargó su primera ficha. '+
+      'No aparecen los que tienen un turno por venir ni una vacuna con próxima dosis a futuro.</p>'+
+    (R.items.length?'<p class="rep-hint"><b>'+plural(R.items.length,'cliente','clientes')+'</b>'+(nWeb?', de los cuales '+plural(nWeb,'se anotó','se anotaron')+' por la web y nunca '+(nWeb===1?'vino':'vinieron')+' (los más claros para revisar)':'')+'. Del que más tiempo lleva al que menos.</p>':'')+
+    topList('inact',{top:R.items,all:R.items},row,'<th>Cliente</th><th>Teléfono</th><th>Mascotas</th><th>Última actividad</th><th class="num">Hace</th>','No hay clientes sin actividad desde hace más de '+label+'.')+
+    (R.more?'<p class="rep-hint">Se muestran los 500 que más tiempo llevan.</p>':'')+
+    '<p class="rep-hint">Este listado no borra ni cambia nada. Tocá un nombre para abrir su ficha y decidir. Para eliminar una ficha: primero la mascota, desde su historia clínica (queda 30 días en la Papelera), y después el cliente.</p></section>';
+}
 function viewReportes(){
   if(!ui.rmonthly||!ui.rservices||!ui.rproducts)return '<section class="farm"><div class="head"><h1>Reportes</h1></div><p class="empty">Cargando…</p></section>';
   ui.repAll=ui.repAll||{};
@@ -987,7 +1026,7 @@ function viewReportes(){
     return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small></td><td><div class="bars"><div class="bar" data-w="'+Math.max(4,Math.round(x.units/maxU*90))+'px"></div><span>'+x.units+'</span></div></td><td class="num">'+x.stock+'</td><td>'+st+'</td></tr>';
   };
   var head='<section class="farm rep"><div class="head"><h1>Reportes</h1><button class="btn" data-action="rep-export">Exportar movimientos (CSV)</button></div>';
-  if(!R.M.length)return head+'<p class="empty">Todavía no hay ingresos ni egresos para mostrar. Cuando cobres o registres movimientos en la caja, acá vas a ver cómo va el negocio.</p></section>';
+  if(!R.M.length)return head+'<p class="empty">Todavía no hay ingresos ni egresos para mostrar. Cuando cobres o registres movimientos en la caja, acá vas a ver cómo va el negocio.</p>'+repInactive()+'</section>';
   return head+repKpis(R)+
     '<section class="panel rep-chart"><div class="rep-chart-head"><h2>Ingresos y egresos por mes</h2>'+
       '<div class="legend"><span><i class="sw-in"></i>Ingresos</span><span><i class="sw-line"></i>Egresos</span><span><i class="sw-est"></i>Estimado</span></div></div>'+
@@ -996,7 +1035,7 @@ function viewReportes(){
     '<section class="repsec"><h2>Mes por mes</h2>'+repTable(R)+'</section>'+
     '<section class="repsec"><div class="toolbar"><h2>Servicios y productos '+period+'</h2>'+segHTML('rep',[['30','30 días'],['90','3 meses'],['365','1 año']],ui.rfrom&&ui.rto?'':ui.rep)+rangeHTML('rfrom','rto',ui.rfrom,ui.rto)+'</div>'+
       '<div class="rep-cols"><div class="grp"><h3>Servicios más cobrados</h3>'+topList('svc',{top:ui.rservices,all:ui.rservices},svRow,'<th>Servicio</th><th>Veces</th><th class="num">Total</th>','No hay servicios cobrados en este período.')+'</div>'+
-      '<div class="grp"><h3>Productos que más rotan</h3>'+topList('prod',{top:moved,all:ui.rproducts},prRow,'<th>Producto</th><th>Unidades</th><th class="num">Stock</th><th>Cuánto dura</th>','Ningún producto se vendió ni se usó en este período.',', con los que no rotaron')+'</div></div></section></section>';
+      '<div class="grp"><h3>Productos que más rotan</h3>'+topList('prod',{top:moved,all:ui.rproducts},prRow,'<th>Producto</th><th>Unidades</th><th class="num">Stock</th><th>Cuánto dura</th>','Ningún producto se vendió ni se usó en este período.',', con los que no rotaron')+'</div></div></section>'+repInactive()+'</section>';
 }
 
 /* ============================================================
@@ -1015,7 +1054,7 @@ function clientListHTML(){
   if(!L.length)return '<li class="empty">'+(S.clients.length?'No hay clientes con esa búsqueda.':'Todavía no hay clientes. Se crean al cargar una mascota o con “Nuevo cliente”.')+'</li>';
   return L.map(function(c){
     return '<li><button class="pitem" data-action="select-client" data-id="'+c.id+'" aria-current="'+(c.id===ui.csel)+'"><span class="avatar" aria-hidden="true">'+ico('user')+'</span>'+
-      '<span class="pi-main"><b>'+esc(c.name)+'</b><small>'+plural(c.pets.length,'mascota','mascotas')+(c.phone?' · '+esc(c.phone):'')+'</small></span></button></li>';
+      '<span class="pi-main"><b>'+esc(c.name)+'</b><small>'+plural(c.pets.length,'mascota','mascotas')+(c.phone?' · '+esc(c.phone):'')+'</small>'+webChip(c)+'</span></button></li>';
   }).join('');
 }
 function clientDetailHTML(c){
@@ -1031,10 +1070,11 @@ function clientDetailHTML(c){
     return '<tr><td>'+fmtDate(x.date)+'</td><td><button class="link" data-action="open-patient" data-id="'+x.patientId+'">'+esc(x.patient)+'</button></td><td>'+esc(x.concept)+'</td><td>'+esc(x.method||'—')+'</td><td class="num">'+money(x.amount)+'</td></tr>';
   }).join('')+'</tbody><tfoot><tr><td colspan="5"><b>Total pagado por todas sus mascotas:</b> '+money(c.totalPaid)+'</td></tr></tfoot></table></div>':'<p class="empty">Todavía no se cobró nada a las mascotas de este cliente.</p>';
   return '<button class="btn back" data-action="back-client">Volver a la lista</button>'+
-    '<header class="phead"><div class="avatar avatar--lg" aria-hidden="true">'+ico('user')+'</div><div class="info"><h2>'+esc(c.name)+'</h2>'+
+    '<header class="phead"><div class="avatar avatar--lg" aria-hidden="true">'+ico('user')+'</div><div class="info"><h2>'+esc(c.name)+' '+webChip(c)+'</h2>'+
     '<p class="meta">'+contact.join(' · ')+'</p><p class="meta">'+(c.address?esc(c.address):'<span class="mut">Sin dirección</span>')+'</p></div>'+
     '<div class="pactions"><button class="btn primary" data-action="add-pet">Agregar mascota</button><button class="btn" data-action="edit-client">Editar datos</button>'+
     (isAdmin()?'<button class="btn danger-o" data-action="del-client">Eliminar</button>':'')+'</div></header>'+
+    webNote(c)+
     '<section class="sec"><div class="sec-head"><h3>Mascotas ('+c.pets.length+')</h3></div>'+pets+'</section>'+
     '<section class="sec"><div class="sec-head"><h3>Historial de pagos</h3></div>'+pay+'</section>';
 }
@@ -1157,7 +1197,9 @@ var WEEKDAYS=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
 // Texto de un turno en la grilla: "10:00 · Luna (Gómez)" (el apellido distingue pacientes homónimos).
 var ownerLast=function(a){return a.patientOwnerLast||surname(a.patientOwner);};
 // Los pedidos hechos desde la página de turnos llevan "Pendiente" hasta que se acepten.
-var apptLabel=function(a){return a.time.slice(0,5)+' · '+(a.status==='pendiente'?'Pendiente · ':'')+esc(a.patientName)+' ('+esc(ownerLast(a))+')';};
+// Los que canceló el cliente desde la página quedan a la vista (apagados) con "Cancelado por el cliente".
+var apptLabel=function(a){return a.time.slice(0,5)+' · '+(a.status==='pendiente'?'Pendiente · ':a.status==='cancelado'?'Cancelado por el cliente · ':'')+esc(a.patientName)+' ('+esc(ownerLast(a))+')';};
+var apptState=function(a){return a.status==='pendiente'?' pendiente':a.status==='cancelado'?' cancelado':'';};
 function dayAppts(iso){return (ui.appts||[]).filter(function(a){return a.date===iso;}).sort(function(a,b){return a.time.localeCompare(b.time);});}
 function calDayColumn(iso){
   var list=dayAppts(iso);
@@ -1165,7 +1207,7 @@ function calDayColumn(iso){
   // E3: en la vista Semana el alto del bloque refleja la duración del turno.
   var blocks=list.map(function(a){
     var h=ui.cal.view==='week'?' data-mh="'+Math.round(Math.min(Math.max(38,a.duration*0.9),180))+'px"':'';
-    return '<button class="appt '+a.type+(a.status==='pendiente'?' pendiente':'')+'"'+h+' data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'<small>'+esc(a.title)+'</small></button>';
+    return '<button class="appt '+a.type+apptState(a)+'"'+h+' data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'<small>'+esc(a.title)+'</small></button>';
   }).join('');
   return '<div class="cal-day'+(isToday?' today':'')+'"><div class="cal-day-head"><span>'+WEEKDAYS[(d.getDay()+6)%7]+'</span><b>'+d.getDate()+'</b>'+
     '<button class="cal-add" data-action="cal-add-day" data-v="'+iso+'" aria-label="Agregar turno este día">+</button></div>'+blocks+'</div>';
@@ -1176,7 +1218,7 @@ function calMonthGrid(){
     var list=dayAppts(d);
     var out=ui.cal.view==='month'&&d.slice(0,7)!==curMonth,isToday=d===todayIso();
     var shown=list.slice(0,3).map(function(a){
-      return '<button class="cal-chip '+a.type+'" data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'</button>';
+      return '<button class="cal-chip '+a.type+apptState(a)+'" data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'</button>';
     }).join('');
     var more=list.length>3?'<button class="cal-more" data-action="cal-day-list" data-v="'+d+'">+'+(list.length-3)+' más</button>':'';
     cells+='<div class="cal-mday'+(out?' out':'')+(isToday?' today':'')+(list.length||isToday?' has':'')+'"><div class="mhead"><span>'+WEEKDAYS[(parse(d).getDay()+6)%7]+' '+Number(d.slice(8,10))+'</span>'+
@@ -1191,11 +1233,11 @@ function calDayAgenda(){
   var inHours=function(a){var s=toMin(a.time),e=s+Number(a.duration||0);return open.some(function(r){return s>=toMin(r[0])&&e<=toMin(r[1]);});};
   var rows=list.map(function(a){
     return '<li class="dv-row"><span class="dv-time"><b>'+a.time.slice(0,5)+'</b><small>'+esc(a.endTime||'')+'</small></span>'+
-      '<button class="dv-appt '+a.type+(a.status==='pendiente'?' pendiente':'')+'" data-action="appt-view" data-id="'+a.id+'">'+
-      (a.status==='pendiente'?'<span class="chip pedido">Pedido desde la web · falta confirmar</span>':'')+
+      '<button class="dv-appt '+a.type+apptState(a)+'" data-action="appt-view" data-id="'+a.id+'">'+
+      (a.status==='pendiente'?'<span class="chip pedido">Pedido desde la web · falta confirmar</span>':a.status==='cancelado'?'<span class="chip cancelado">Cancelado por el cliente</span>':'')+
       '<span class="dv-what"><b>'+esc(a.title||APPT_LABEL[a.type]||'')+'</b><span class="dv-type">'+(APPT_LABEL[a.type]||'')+'</span></span>'+
       '<span class="dv-who">'+esc(a.patientName)+' ('+esc(ownerLast(a))+')'+'</span>'+(a.patientPhone?'<span class="dv-phone">'+esc(a.patientPhone)+'</span>':'')+
-      (open.length&&!inHours(a)?'<span class="chip warn">Fuera de horario</span>':'')+'</button></li>';
+      (open.length&&!inHours(a)&&a.status!=='cancelado'?'<span class="chip warn">Fuera de horario</span>':'')+'</button></li>';
   }).join('');
   return '<div class="cal-dayview"><p class="dv-hours">'+(open.length?'Horario de atención: '+rangesText(open)+'.':'Este día el negocio figura cerrado.')+'</p>'+
     (rows?'<ol class="dv-list">'+rows+'</ol>':'<div class="dv-empty"><p>No hay turnos para este día.</p><button class="btn" data-action="cal-add-day" data-v="'+iso+'">Agregar turno este día</button></div>')+'</div>';
@@ -1204,7 +1246,7 @@ function calDayAgenda(){
 function dayListDialog(iso){
   var list=dayAppts(iso);
   var rows=list.map(function(a){
-    return '<button type="button" class="appt '+a.type+'" data-id="'+a.id+'">'+apptLabel(a)+'<small>'+esc(a.title)+' · hasta las '+a.endTime+'</small></button>';
+    return '<button type="button" class="appt '+a.type+apptState(a)+'" data-id="'+a.id+'">'+apptLabel(a)+'<small>'+esc(a.title)+' · hasta las '+a.endTime+'</small></button>';
   }).join('');
   dlg.innerHTML='<form class="dform"><h2>Turnos del '+fmtDate(iso)+'</h2><div class="daylist">'+(rows||'<p class="empty">No hay turnos este día.</p>')+'</div>'+
     '<div class="actions"><button type="button" class="btn ghost" data-close>Cerrar</button><button type="button" class="btn primary" data-x="add">Agregar turno</button></div></form>';
@@ -1280,8 +1322,10 @@ function configGeneral(){
       fld('Teléfono de la veterinaria','clinicPhone',{type:'tel',value:st.phone||'',maxlength:50,pattern:PHONE_PAT,title:'Solo números, espacios, + , - y paréntesis (mínimo 6 dígitos)',ph:'Ej: 11 4444-5555'})+
       fld('Dirección','clinicAddress',{value:st.address||'',maxlength:200,ph:'Calle, número, localidad'})+
       fld('Enlace de Google Maps','mapsUrl',{value:st.mapsUrl||'',maxlength:300,full:true,ph:'https://maps.app.goo.gl/...'})+
+      fld('Enlace para dejar una reseña en Google','reviewUrl',{value:st.reviewUrl||'',maxlength:300,full:true,ph:'https://g.page/r/.../review'})+
       fld('Reseñas (una por línea: estrellas | autor | texto)','reviews',{type:'textarea',value:(st.reviews||[]).map(function(r){return r.stars+' | '+r.author+' | '+r.text;}).join('\n'),full:true,ph:'5 | María P. | Muy buena atención con mi perro.'})+
-      '</div><p class="cfg-hint">Estos datos se muestran en la página de turnos. El teléfono es el del botón "Llamar" y el que ve un cliente cuando la página no lo reconoce. Las reseñas las copiás de Google Maps a mano: las que quieras mostrar, con su autor y la cantidad de estrellas.</p></section>'+
+      '</div><p class="cfg-hint">Estos datos se muestran en la página de turnos. El teléfono es el del botón "Llamar" y el que ve un cliente cuando la página no lo reconoce. Las reseñas las copiás de Google Maps a mano: las que quieras mostrar, con su autor y la cantidad de estrellas.</p>'+
+      '<p class="cfg-hint"><b>Enlace para dejar una reseña:</b> es distinto del de Google Maps. Lo conseguís en tu Perfil de Empresa de Google: buscá tu veterinaria en Google con tu cuenta, tocá “Pedir reseñas” (o “Conseguir más reseñas”) y copiá el enlace que te da. Si lo cargás, cuando un cliente termina de pedir un turno la página le pregunta si quiere dejar una reseña. Si lo dejás vacío, no se pregunta nada.</p></section>'+
     '<section class="panel"><h2>Horario de atención</h2><p class="cfg-hint">Un día puede tener más de un horario, por ejemplo de 08:00 a 12:00 y de 16:00 a 19:00. Al anotar un turno fuera de estos horarios, la agenda te avisa antes de guardarlo.</p>'+
       '<div class="hours" id="cfghours">'+WEEK_ORDER.map(hourDayHTML).join('')+'</div></section>'+
     '<section class="panel"><h2>Medios de pago</h2><p class="cfg-hint">Los que marques son los que aparecen al cobrar y al registrar ingresos o egresos.</p>'+
@@ -1339,7 +1383,7 @@ async function saveConfig(){
   var body=Object.assign({},S.settings,{shopName:name.value.trim(),hours:h.hours,methods:methods,
     professionalName:f.querySelector('[name="professionalName"]').value.trim(),
     phone:f.querySelector('[name="clinicPhone"]').value.trim(),address:f.querySelector('[name="clinicAddress"]').value.trim(),
-    mapsUrl:f.querySelector('[name="mapsUrl"]').value.trim(),reviews:reviews});
+    mapsUrl:f.querySelector('[name="mapsUrl"]').value.trim(),reviewUrl:f.querySelector('[name="reviewUrl"]').value.trim(),reviews:reviews});
   delete body.emailReady;
   var r;
   try{r=await api('/settings',{method:'PUT',body:body});}
@@ -2074,6 +2118,7 @@ function appointmentForm(a,presetDate){
 }
 // Modal de detalle con acciones propias (Editar / Eliminar / Ver ficha), por eso arma el diálogo a
 // mano en vez de usar openForm (pensado para un único botón de guardar).
+var CLIENT_MSG_MAX=300; // igual que CLIENT_MESSAGE_MAX en server/api.js
 function appointmentDetails(a){
   var tel=String(a.patientPhone||'').replace(/[^\d+]/g,'');
   var kind=[a.patientSpecies,a.patientBreed].filter(Boolean).map(esc).join(' · ');
@@ -2083,20 +2128,38 @@ function appointmentDetails(a){
     '<p><b>Tipo:</b> '+esc(APPT_LABEL[a.type]||a.type)+'</p>'+
     '<p><b>Cuándo:</b> '+fmtDate(a.date)+' de '+a.time.slice(0,5)+' a '+a.endTime+' hs <small>('+a.duration+' min)</small></p>'+
     (a.description?'<p><b>Descripción:</b> '+esc(a.description)+'</p>':'')+
-    (a.status==='pendiente'?'<p class="cfg-hint"><b>Pedido desde la página de turnos.</b> Todavía no lo aceptaste: mientras esté pendiente, ese horario queda reservado.</p>'+
+    (a.status==='confirmado'&&a.clientMessage?'<p class="appt-msg"><b>Mensaje para el cliente:</b> '+esc(a.clientMessage)+'</p>':'')+
+    (a.status==='pendiente'?'<p class="cfg-hint"><b>Pedido desde la página de turnos: '+esc(APPT_LABEL[a.type]||a.type)+'.</b> Todavía no lo aceptaste: mientras esté pendiente, ese horario queda reservado.</p>'+
+      // Mensaje opcional que el cliente ve debajo del turno confirmado, cuando vuelve a entrar con su teléfono.
+      '<label class="fld full appt-msg-fld"><span>Mensaje para el cliente (opcional)</span>'+
+      '<textarea name="clientMessage" rows="3" maxlength="'+CLIENT_MSG_MAX+'" placeholder="Ej.: Traer al perro en ayunas." aria-describedby="appt-msg-hint"></textarea>'+
+      '<small class="hint" id="appt-msg-hint">Lo ve el cliente en la página de turnos cuando el turno está confirmado. Hasta '+CLIENT_MSG_MAX+' caracteres.</small></label>'+
+      '<p class="err" role="alert"></p>'+
       '<div class="actions"><button type="button" class="btn danger-o" data-x="reject">Rechazar</button><button type="button" class="btn ghost" data-close>Cerrar</button><button type="button" class="btn primary" data-x="accept">Aceptar turno</button></div></form>':
+    a.status==='cancelado'?'<p class="cfg-hint"><b>Cancelado por el cliente</b> desde la página de turnos. El horario quedó libre.</p>'+
+      '<div class="actions"><button type="button" class="btn" data-x="ficha">Ver ficha</button><button type="button" class="btn primary" data-close>Cerrar</button></div></form>':
     '<div class="actions"><button type="button" class="btn danger-o" data-x="del">Eliminar turno</button><button type="button" class="btn" data-x="ficha">Ver ficha</button><button type="button" class="btn ghost" data-close>Cerrar</button><button type="button" class="btn primary" data-x="edit">Editar</button></div></form>');
   dlg.querySelector('[data-close]').addEventListener('click',function(){dlg.close();});
   if(a.status==='pendiente'){
-    dlg.querySelector('[data-x="accept"]').addEventListener('click',async function(){
-      var s0=toMin(a.time),e0=s0+a.duration;
-      var hit=(await api('/appointments?from='+a.date+'&to='+a.date)).items.find(function(x){var xs=toMin(x.time);return x.id!==a.id&&x.status==='confirmado'&&s0<xs+x.duration&&xs<e0;});
-      if(hit){
-        var ch=await choiceDialog('Turno superpuesto','<p>Ya hay un turno confirmado a esa hora: '+esc(hit.patientName)+' ('+esc(ownerLast(hit))+') – '+esc(hit.title)+'. ¿Aceptar igual?</p>',
-          [{label:'No aceptar',value:'no',cls:'ghost'},{label:'Aceptar igual',value:'ok',cls:'primary'}]);
-        if(ch!=='ok')return;
-      }
-      await api('/appointments/'+a.id+'/status',{method:'POST',body:{status:'confirmado'}});dlg.close();pendingWebResolved(a);await reloadCal();toast('Turno aceptado y agregado a la agenda');
+    var acceptBtn=dlg.querySelector('[data-x="accept"]'),msgBox=dlg.querySelector('[name="clientMessage"]'),errBox=dlg.querySelector('.err');
+    acceptBtn.addEventListener('click',async function(){
+      // El texto se toma antes del aviso de turno superpuesto: ese aviso abre otra ventana y el mensaje no se pierde.
+      var message=msgBox.value.trim();
+      errBox.textContent='';
+      if(message.length>CLIENT_MSG_MAX){errBox.textContent='El mensaje puede tener hasta '+CLIENT_MSG_MAX+' caracteres.';msgBox.focus();return;}
+      acceptBtn.disabled=true;
+      try{
+        var s0=toMin(a.time),e0=s0+a.duration;
+        var hit=(await api('/appointments?from='+a.date+'&to='+a.date)).items.find(function(x){var xs=toMin(x.time);return x.id!==a.id&&x.status==='confirmado'&&s0<xs+x.duration&&xs<e0;});
+        if(hit){
+          var ch=await choiceDialog('Turno superpuesto','<p>Ya hay un turno confirmado a esa hora: '+esc(hit.patientName)+' ('+esc(ownerLast(hit))+') – '+esc(hit.title)+'. ¿Aceptar igual?</p>',
+            [{label:'No aceptar',value:'no',cls:'ghost'},{label:'Aceptar igual',value:'ok',cls:'primary'}]);
+          if(ch!=='ok'){msgBox.focus();return;}
+        }
+        await api('/appointments/'+a.id+'/status',{method:'POST',body:{status:'confirmado',message:message}});
+      }catch(e){errBox.textContent=e.message;return;}
+      finally{acceptBtn.disabled=false;}
+      dlg.close();pendingWebResolved(a);await reloadCal();toast(message?'Turno aceptado. El cliente va a ver tu mensaje':'Turno aceptado y agregado a la agenda');
     });
     dlg.querySelector('[data-x="reject"]').addEventListener('click',function(){
       confirmForm('Rechazar turno','Se rechaza el pedido de '+esc(a.patientName)+' para el '+fmtDate(a.date)+' a las '+a.time.slice(0,5)+' hs. El horario queda libre para otro pedido.','Rechazar',async function(){
@@ -2106,10 +2169,11 @@ function appointmentDetails(a){
     if(!dlg.open)dlg.showModal();
     return;
   }
-  dlg.querySelector('[data-x="edit"]').addEventListener('click',function(){dlg.close();appointmentForm(a);});
   dlg.querySelector('[data-x="ficha"]').addEventListener('click',function(){
     dlg.close();ui.sel=a.patientId;ui.detail=null;ui.filter='all';ui.q='';go('pacientes');
   });
+  if(a.status==='cancelado'){if(!dlg.open)dlg.showModal();return;}
+  dlg.querySelector('[data-x="edit"]').addEventListener('click',function(){dlg.close();appointmentForm(a);});
   dlg.querySelector('[data-x="del"]').addEventListener('click',function(){
     confirmForm('Eliminar turno','Se elimina el turno de '+esc(a.patientName)+' ("'+esc(a.title)+'") del '+fmtDate(a.date)+'.','Eliminar',async function(){
       await api('/appointments/'+a.id,{method:'DELETE'});await reloadCal();toast('Turno eliminado');
@@ -2233,6 +2297,7 @@ var actions={
   // Pedidos de la web: abre el calendario en "2 semanas" a partir del pedido más próximo.
   // Abre la agenda del día del pedido más próximo: ahí se lo toca para aceptarlo o rechazarlo.
   'goto-pedidos':function(){ui.cal.view='day';ui.cal.anchor=S.pendingWebFirst||todayIso();return go('calendario');},
+  'goto-cancelados':function(){ui.cal.view='day';ui.cal.anchor=S.cancelledWebFirst||todayIso();return go('calendario');},
   'new-patient':function(){patientForm();},
   'edit-patient':function(){if(ui.detail)patientForm(ui.detail);},
   'del-patient':function(){
@@ -2328,6 +2393,7 @@ var actions={
   cashf:function(id,b){ui.cashf=b.dataset.v;return refreshView();},
   cashm:function(id,b){ui.cashm=b.dataset.v;return refreshView();},
   rep:function(id,b){ui.rep=b.dataset.v;ui.rfrom='';ui.rto='';return refreshView();},
+  rinact:function(id,b){ui.rinact=Number(b.dataset.v);return refreshView();},
   'rep-all':function(id,b){ui.repAll=ui.repAll||{};ui.repAll[b.dataset.v]=!ui.repAll[b.dataset.v];render();},
   'rep-export':function(){
     var from=ui.rfrom&&ui.rto?ui.rfrom:shiftDays(-Number(ui.rep)),to=ui.rfrom&&ui.rto?ui.rto:todayIso();
@@ -2588,15 +2654,22 @@ document.addEventListener('visibilitychange',function(){if(document.visibilitySt
 // calendario se vuelve a pedir solo si se lo está mirando y la cantidad cambió (nunca en cada consulta).
 var pendingCheckedAt=0;
 function setPendingWeb(p){
-  S.pendingWeb=Math.max(0,Number(p.count)||0);S.pendingWebPast=Math.min(S.pendingWeb,Math.max(0,Number(p.past)||0));S.pendingWebFirst=p.first||null;renderAlerts();
+  S.pendingWeb=Math.max(0,Number(p.count)||0);S.pendingWebPast=Math.min(S.pendingWeb,Math.max(0,Number(p.past)||0));S.pendingWebFirst=p.first||null;
+  if(p.cancelled!=null){S.cancelledWeb=Math.max(0,Number(p.cancelled)||0);S.cancelledWebFirst=p.cancelledFirst||null;}
+  renderAlerts();
 }
 async function checkPendingWeb(force){
   if(!S.user||document.body.dataset.stale||document.body.dataset.state!=='app'||document.visibilityState!=='visible')return;
   var now=Date.now();if(!force&&now-pendingCheckedAt<20000)return;pendingCheckedAt=now;
   try{
     var p=await api('/appointments/pending-summary'),n=Number(p.count)||0,before=S.pendingWeb;
-    if(n===before&&(p.first||null)===S.pendingWebFirst&&(Number(p.past)||0)===S.pendingWebPast)return;
+    var cancelledBefore=S.cancelledWeb;
+    if(n===before&&(p.first||null)===S.pendingWebFirst&&(Number(p.past)||0)===S.pendingWebPast&&(Number(p.cancelled)||0)===S.cancelledWeb)return;
     setPendingWeb(p);
+    if((Number(p.cancelled)||0)>cancelledBefore&&!force){
+      toast('Un cliente canceló un turno de hoy o mañana desde la página');
+      if(ui.view==='calendario'&&!document.querySelector('dialog[open]'))await reloadCal();
+    }
     if(n>before&&!force){
       toast(n-before===1?'Entró un turno pedido desde la web para confirmar':'Entraron '+(n-before)+' turnos pedidos desde la web para confirmar');
       if(ui.view==='calendario'&&!document.querySelector('dialog[open]'))await reloadCal();

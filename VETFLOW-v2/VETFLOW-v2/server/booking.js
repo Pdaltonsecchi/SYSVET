@@ -5,11 +5,19 @@ const U = require('./util');
 
 // Desde la web solo se pueden pedir consultas y vacunas. Las cirugías las agenda la veterinaria.
 const WEB_TYPES = ['consulta', 'vacuna'];
-// Los horarios se ofrecen cada 10 minutos. Un turno ocupa su duración completa.
-const STEP_MIN = 10;
+// Cada cuántos minutos se ofrece un horario, según el tipo de turno (pedido del dueño): la consulta (20 min) cada 20
+// minutos (:00, :20, :40) y la vacuna (10 min) cada 10. Los horarios caen siempre en múltiplos del paso contados desde
+// la hora en punto, no desde el último turno: si un turno cargado por la veterinaria deja un hueco "torcido" (por
+// ejemplo de 9:30 a 10:00), la consulta se ofrece a las 9:40 y nunca a las 9:30. Un turno ocupa su duración completa.
+const STEP_MIN = 10; // paso para cualquier otro tipo
+const WEB_STEPS = { consulta: 20, vacuna: 10 };
+const stepFor = (type) => WEB_STEPS[type] || STEP_MIN;
 // Turnos que ocupan lugar en la agenda (rechazados y cancelados no).
 const BOOKABLE_STATUS = ['pendiente', 'confirmado'];
-const DAYS_AHEAD = 14;
+// Cuántos días hacia adelante se pueden pedir turnos desde la página (hoy incluido). Antes eran 14; el dueño pidió
+// poder pasar de mes en el calendario (por ejemplo, de noviembre a diciembre), así que se subió a 90 (unos 3 meses).
+// Para cambiarlo, alcanza con este número: el servidor, la página y los mensajes lo toman de acá.
+const DAYS_AHEAD = 90;
 
 const toMin = (hhmm) => {
   const [h, m] = String(hhmm).slice(0, 5).split(':').map(Number);
@@ -40,10 +48,12 @@ function webType(v) {
  * Horarios libres de un día. busy = [[inicioMin, finMin], ...] de los turnos ya tomados ese día.
  * nowMin (opcional) descarta los horarios que ya pasaron, cuando el día pedido es hoy.
  */
-function freeSlots({ hours, date, duration, busy, nowMin }) {
+function freeSlots({ hours, date, duration, busy, nowMin, step }) {
   const out = [];
+  const st = Number.isInteger(step) && step > 0 ? step : STEP_MIN;
   for (const [a, b] of rangesFor(hours, date)) {
-    for (let t = a; t + duration <= b; t += STEP_MIN) {
+    // Primer múltiplo del paso dentro de la franja (contado desde la medianoche: :00, :20, :40 para la consulta).
+    for (let t = Math.ceil(a / st) * st; t + duration <= b; t += st) {
       if (nowMin != null && t < nowMin) continue;
       const end = t + duration;
       if (busy.some(([s, e]) => t < e && s < end)) continue;
@@ -53,9 +63,12 @@ function freeSlots({ hours, date, duration, busy, nowMin }) {
   return out;
 }
 
-/** Si un turno a esa hora entra dentro del horario de atención y no pisa otro. */
-function canBook({ hours, date, time, duration, busy, nowMin }) {
-  return freeSlots({ hours, date, duration, busy, nowMin }).includes(fromMin(toMin(time)));
+/**
+ * Si un turno a esa hora entra dentro del horario de atención y no pisa otro. Usa el mismo paso que freeSlots: lo
+ * que se valida es exactamente lo que se ofrece.
+ */
+function canBook({ hours, date, time, duration, busy, nowMin, step }) {
+  return freeSlots({ hours, date, duration, busy, nowMin, step }).includes(fromMin(toMin(time)));
 }
 
 /* ---------- teléfonos ---------- */
@@ -179,7 +192,7 @@ const LIMITS = {
 };
 
 module.exports = {
-  WEB_TYPES, BOOKABLE_STATUS, DAYS_AHEAD, STEP_MIN,
+  WEB_TYPES, BOOKABLE_STATUS, DAYS_AHEAD, STEP_MIN, WEB_STEPS, stepFor,
   toMin, fromMin, rangesFor, webType, freeSlots, canBook, limit, hit, unhit, blocked, LIMITS,
   phoneKey, samePhone, phoneTail, phoneLimitKey,
 };

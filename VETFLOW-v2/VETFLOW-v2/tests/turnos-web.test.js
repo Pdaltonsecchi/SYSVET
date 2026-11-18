@@ -39,7 +39,9 @@ test('la información pública no pide sesión y solo ofrece consultas y vacunas
 test('un teléfono no registrado da error, sin entrar', async () => {
   const r = await pub().call('POST', '/login', { phone: phoneA });
   assert.equal(r.status, 404);
-  assert.match(r.data.error, /no está registrado/);
+  assert.match(r.data.error, /No encontramos ese número/);
+  assert.equal(r.data.code, 'no-registrado');
+  assert.doesNotMatch(r.data.error, /llam/i, 'para un número que no está no se dice "llamá"');
   assert.equal(r.data.token, undefined);
 });
 
@@ -131,7 +133,10 @@ test('la veterinaria rechaza un pedido: el horario vuelve a quedar libre', async
   const sameDay = again.data.days.find((d) => d.date === day.date);
   assert.ok(sameDay && sameDay.times.includes(time), 'el horario rechazado vuelve a estar libre');
   const meB = await pub(tokenB).call('GET', '/me');
-  assert.ok(!meB.data.appointments.some((a) => a.id === req.data.id), 'el rechazado no aparece en los turnos del cliente');
+  // Etapa 3: el rechazo reciente queda a la vista del cliente, marcado como rechazado (ya no como turno activo).
+  const visto = meB.data.appointments.find((a) => a.id === req.data.id);
+  assert.ok(visto && visto.status === 'rechazado' && visto.canCancel === false, 'el rechazado se le muestra al cliente como rechazado');
+  assert.ok(!meB.data.appointments.some((a) => a.id === req.data.id && a.status !== 'rechazado'));
 });
 
 test('el cliente cancela su turno y deja de aparecer', async () => {
@@ -239,7 +244,7 @@ test('teléfono en más de una ficha: no entra a ninguna y no devuelve datos', a
   for (const phone of ['11 ' + tail4(n), '+54 9 11 ' + n, n]) {
     const r = await pub().call('POST', '/login', { phone });
     assert.equal(r.status, 404, phone);
-    assert.match(r.data.error, /Llamá a la veterinaria/);
+    assert.match(r.data.error, /(Llamá a|Consultalo en) la veterinaria/);
     assert.deepEqual(Object.keys(r.data), ['error'], 'la respuesta no trae token, mascotas ni turnos');
   }
   // Tampoco se puede dar de alta como cliente nuevo con ese número.
@@ -255,11 +260,11 @@ test('el límite de intentos por teléfono cuenta igual para todas las formas de
   assert.equal(r.status, 429);
 });
 
-test('no se puede pedir un turno para más allá de los próximos 14 días', async () => {
-  const lejos = new Date(Date.now() + 40 * 86400000).toISOString().slice(0, 10);
+test('no se puede pedir un turno para más allá de los próximos 90 días', async () => {
+  const lejos = new Date(Date.now() + 100 * 86400000).toISOString().slice(0, 10);
   const r = await pub(tokenB).call('POST', '/appointments', { type: 'vacuna', patientId: petB, date: lejos, time: '10:00' });
   assert.equal(r.status, 400);
-  assert.match(r.data.error, /próximos 14 días/);
+  assert.match(r.data.error, /próximos 90 días/);
 });
 
 test('la copia de seguridad guarda el estado de los turnos y al restaurarla no cambian', async () => {
@@ -311,13 +316,16 @@ test('dos clientes piden el mismo horario a la vez: queda uno solo', async () =>
 
 test('pedidos simultáneos que se pisan en parte (consulta 20 min y vacuna 10 min después): queda uno solo', async () => {
   const s = await pub().call('GET', '/slots?type=consulta');
+  const v = await pub().call('GET', '/slots?type=vacuna');
   const day = s.data.days[s.data.days.length - 2];
-  // Un horario de consulta cuyo horario siguiente (10 min después) también esté libre.
-  const i = day.times.findIndex((t, k) => day.times[k + 1] && Number(day.times[k + 1].slice(3)) === (Number(t.slice(3)) + 10) % 60);
-  assert.ok(i >= 0, 'hay dos horarios seguidos libres');
+  const vday = v.data.days.find((d) => d.date === day.date);
+  // Un horario de consulta (cada 20 min) tal que la vacuna 10 minutos después también esté libre.
+  const plus10 = (t) => { const m = Number(t.slice(0, 2)) * 60 + Number(t.slice(3)) + 10; return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+  const t = day.times.find((x) => vday.times.includes(plus10(x)));
+  assert.ok(t, 'hay un horario de consulta con la vacuna de 10 minutos después libre');
   const [r1, r2] = await Promise.all([
-    pub(tokenA).call('POST', '/appointments', { type: 'consulta', patientId: petA, date: day.date, time: day.times[i] }),
-    pub(tokenB).call('POST', '/appointments', { type: 'vacuna', patientId: petB, date: day.date, time: day.times[i + 1] }),
+    pub(tokenA).call('POST', '/appointments', { type: 'consulta', patientId: petA, date: day.date, time: t }),
+    pub(tokenB).call('POST', '/appointments', { type: 'vacuna', patientId: petB, date: day.date, time: plus10(t) }),
   ]);
   assert.deepEqual([r1.status, r2.status].sort(), [200, 400], JSON.stringify([r1.data, r2.data]));
 });
@@ -351,7 +359,22 @@ async function clienteNuevo(nombre) {
   assert.equal(r.status, 200, JSON.stringify(r.data));
   return { token: r.data.token, id: r.data.client.id, pet: r.data.pets[0].id };
 }
-const diasLibres = async (type) => (await pub().call('GET', '/slots?type=' + type)).data.days;
+// Estas pruebas necesitan varios días con horarios: se abre toda la semana (antes dependían del horario que dejaba
+// otra prueba y fallaban según el día y la hora en que se corrían).
+let semanaAbierta = false;
+async function abrirSemana() {
+  if (semanaAbierta) return;
+  const cur = (await owner.call('GET', '/settings')).data;
+  const body = Object.assign({}, cur, { hours: { 0: [['08:00', '20:00']], 1: [['08:00', '20:00']], 2: [['08:00', '20:00']], 3: [['08:00', '20:00']], 4: [['08:00', '20:00']], 5: [['08:00', '20:00']], 6: [['08:00', '20:00']] } });
+  delete body.emailReady;
+  const r = await owner.call('PUT', '/settings', body);
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  semanaAbierta = true;
+}
+const diasLibres = async (type) => {
+  await abrirSemana();
+  return (await pub().call('GET', '/slots?type=' + type)).data.days;
+};
 
 test('una mascota no puede tener dos turnos el mismo día, y un cliente no pasa de 3 pedidos sin confirmar', async () => {
   const c = await clienteNuevo('Iris');
@@ -396,7 +419,7 @@ test('lo que agendó la veterinaria no se cancela desde la página; lo pedido po
   assert.equal(me.data.appointments.find((a) => a.id === web.data.id).canCancel, true);
   const no = await pub(c.token).call('POST', '/appointments/' + cir.data.id + '/cancel', {});
   assert.equal(no.status, 409);
-  assert.match(no.data.error, /llamá a la veterinaria/);
+  assert.match(no.data.error, /(llamá a|consultalo en) la veterinaria/);
   const agenda = await owner.call('GET', '/appointments?from=' + days[1].date + '&to=' + days[1].date);
   assert.ok(agenda.data.items.some((a) => a.id === cir.data.id), 'la cirugía sigue en la agenda');
   assert.equal((await pub(c.token).call('POST', '/appointments/' + web.data.id + '/cancel', {})).status, 200);
@@ -435,6 +458,9 @@ test('entrar bien con tu número nunca te bloquea (solo cuentan los intentos fal
   for (let i = 0; i < 14; i++) assert.equal((await pub().call('POST', '/login', { phone: '011 15 ' + tail4(n) })).status, 200, 'ingreso ' + (i + 1));
 });
 
+// Solo la parte de pendientes del resumen (aparte trae los cancelados por el cliente de hoy y mañana).
+const pendientes = (r) => ({ count: r.count, past: r.past, first: r.first, firstTime: r.firstTime });
+
 test('el resumen de pedidos para confirmar pide sesión y cuenta solo los pendientes', async () => {
   const resumen = async () => (await owner.call('GET', '/appointments/pending-summary')).data;
   assert.equal((await client().call('GET', '/appointments/pending-summary')).status, 401, 'sin sesión no se ve');
@@ -459,7 +485,9 @@ test('el resumen de pedidos para confirmar pide sesión y cuenta solo los pendie
   assert.equal((await owner.call('POST', '/appointments/' + ids[1] + '/status', { status: 'rechazado' })).status, 200);
   assert.equal((await resumen()).count, antes.count + 1, 'el rechazado no cuenta');
   assert.equal((await pub(c.token).call('POST', '/appointments/' + ids[2] + '/cancel')).status, 200);
-  assert.deepEqual(await resumen(), antes, 'el cancelado no cuenta');
+  // El cancelado no cuenta como pendiente (sí aparece aparte, en "cancelled", si es de hoy o mañana).
+  const fin = await resumen();
+  assert.deepEqual(pendientes(fin), pendientes(antes), 'el cancelado no cuenta');
 });
 
 test('el resumen cuenta también los pedidos con fecha pasada, y apunta primero al más próximo por venir', async () => {
@@ -479,9 +507,9 @@ test('el resumen cuenta también los pedidos con fecha pasada, y apunta primero 
     assert.equal(con.first, antes.first, 'mientras haya pedidos por venir, se apunta al más próximo');
     // Sin ningún pedido por venir, se apunta al pasado para que no quede olvidado.
     await pool.query("UPDATE appointments SET status = 'rechazado' WHERE status = 'pendiente' AND id <> $1", [ins.rows[0].id]);
-    assert.deepEqual(await resumen(), { count: 1, past: 1, first: '2020-01-15', firstTime: '10:30' });
+    assert.deepEqual(pendientes(await resumen()), { count: 1, past: 1, first: '2020-01-15', firstTime: '10:30' });
     assert.equal((await owner.call('POST', '/appointments/' + ins.rows[0].id + '/status', { status: 'rechazado' })).status, 200);
-    assert.deepEqual(await resumen(), { count: 0, past: 0, first: null, firstTime: null });
+    assert.deepEqual(pendientes(await resumen()), { count: 0, past: 0, first: null, firstTime: null });
   } finally {
     await pool.end();
   }

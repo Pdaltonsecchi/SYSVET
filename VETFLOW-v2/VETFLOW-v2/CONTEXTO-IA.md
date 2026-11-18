@@ -474,7 +474,7 @@ Agregado en la rama `turnos-web`. Guía para el dueño: `INSTRUCTIVO-TURNOS-WEB.
   si a alguno le falta la característica; con menos de 8, solo exacto). En la base se buscan candidatos por los
   últimos 6 dígitos (`clients_phone_tail_idx`). Si el teléfono coincide con más de un cliente, no entra a ninguno.
 - **Turnos:** `appointments.status` (`pendiente`/`confirmado`/`rechazado`/`cancelado`) y `source`
-  (`sistema`/`web`). Desde la web solo consulta y vacuna, dentro de los próximos 14 días y del horario de atención;
+  (`sistema`/`web`). Desde la web solo consulta y vacuna, dentro de los próximos 90 días (`booking.DAYS_AHEAD`; eran 14 hasta la ronda 2) y del horario de atención;
   quedan `pendiente` hasta que el personal acepta o rechaza (`POST /api/appointments/:id/status`). Pendientes y
   confirmados ocupan agenda. El pedido se valida dentro de una transacción con `pg_advisory_xact_lock`.
   El cliente solo cancela por la web lo que pidió por la web y todavía no empezó.
@@ -500,7 +500,7 @@ Agregado en la rama `turnos-web`. Guía para el dueño: `INSTRUCTIVO-TURNOS-WEB.
   `confirmado`/`sistema`. La configuración (tabla de ajustes) no entra en las copias, igual que antes.
 - **Pruebas:** `tests/booking.test.js` (lógica pura), `tests/turnos-web.test.js` (de punta a punta, incluye pedidos
   simultáneos) y `tests/turnos-limites.test.js`. Necesitan un Postgres de prueba con codificación UTF-8.
-- **Pendiente / ideas:** avisar al personal cuando un cliente cancela un turno ya confirmado; no hay recordatorios
+- **Pendiente / ideas:** (las cancelaciones de clientes de hoy y mañana ya se ven en "Para revisar": ver sección 16); no hay recordatorios
   al cliente; los contadores en memoria se reinician si el servidor se reinicia (plan gratuito de Render).
 
 ### Página pública después de las mejoras (rama `mejoras-turnos`)
@@ -512,7 +512,7 @@ Agregado en la rama `turnos-web`. Guía para el dueño: `INSTRUCTIVO-TURNOS-WEB.
   turno: muestra el resumen (`#summary`) y recién "Confirmar pedido" llama a `POST /api/public/appointments`.
 - **Calendario** (`renderCalendar`, `dayCell`): mes de lunes a domingo, armado con los días que devuelve
   `/api/public/slots`. No se va a meses pasados y hacia adelante se llega hasta el mes del último día con horarios (el
-  servidor ofrece 14 días). El día en que la mascota elegida ya tiene turno se marca "Ya tenés turno" (se saca de
+  servidor ofrece 90 días desde la ronda 2). El día en que la mascota elegida ya tiene turno se marca "Ya tenés turno" (se saca de
   `appointments` de `/api/public/me`); se puede tocar y explica qué turno hay.
 - **Mensajes:** los avisos van donde mira el cliente (`#notice`, `#mine-msg`, `#pet-msg`, `#day-msg`, `#done`) y el
   foco del teclado se lleva ahí (`goTo`). Validación propia debajo de cada campo (`validate`, `fieldError`), sin
@@ -523,3 +523,92 @@ Agregado en la rama `turnos-web`. Guía para el dueño: `INSTRUCTIVO-TURNOS-WEB.
   crema, ámbar solo en "Pendiente", rojo solo al cancelar), distinta de la del sistema interno (`DISENO.md`). Letra del
   sistema, 17 px de base, nada por debajo de 14 px. El gesto propio es el talón del turno (`.ticket`). Sin modo oscuro.
 - **"Otra especie":** no se agregó porque el servidor solo acepta Perro y Gato (`webPetInput`).
+
+## 15. Etapa 3: origen web, clientes inactivos, reseñas y aviso de pendiente
+
+Guía para el dueño: `INSTRUCTIVO-TURNOS-WEB.md`, secciones 2 a 5. Pruebas: `tests/etapa3.test.js`.
+
+- **Origen de clientes y mascotas.** `clients.source` y `patients.source` (`'sistema'` por defecto, `'web'` en las altas de
+  `POST /api/public/register` y `/api/public/pets`). Migración con `ADD COLUMN IF NOT EXISTS` y default: todo lo que ya
+  existía queda `'sistema'` (incluidos los clientes que se habían anotado por la web antes: no hay forma de saberlo).
+- **"Todavía sin visitas" (`webNew`).** Se calcula al leer (`VISITED_SQL` en `server/api.js`): la mascota tiene un cobro,
+  diagnóstico, vacuna, medicación o estudio (sin borrar), o un turno confirmado cuya fecha ya llegó. Para el cliente, alguna
+  de sus mascotas sin borrar. **Decisión:** la etiqueta de origen se mantiene siempre (es un dato); solo el resaltado y la
+  nota "Completá los datos si vuelve" dependen de `webNew`. Editar la ficha no la cambia. La nota la arma el frontend
+  (`webNote` en `public/app.js`): no se escribe en `patients.notes`, para no mezclarla con lo que escribe la veterinaria.
+- **Clientes inactivos.** `GET /api/reports/inactive-clients?months=4|6|12` (solo admin, solo lectura, máximo 500). Última
+  actividad = la fecha más reciente (hasta hoy) entre diagnósticos, vacunas aplicadas, cobros, medicación, estudios, pesos y
+  turnos confirmados de las mascotas sin borrar del cliente; si no hay, `clients.created_at`. Excluye a quien tenga un turno
+  pendiente o confirmado de hoy en adelante, o una vacuna con `next_on` de hoy en adelante. La medicación no se usa para
+  excluir porque `duration` es texto libre (no hay fecha de fin). `webNoVisit`: cliente web sin actividad (los pesos solos
+  no cuentan). **No toca `lostClients()` de `server/weekly.js`:** el informe semanal sigue igual.
+- **Reseña.** Configuración `reviewUrl` (solo https, mismo validador que `mapsUrl`), expuesto en `/api/public/info`. La
+  página pregunta al terminar de pedir un turno, a todos por igual (reglas de Google), una sola vez por visita
+  (`sessionStorage` `turnos-resena`). Sin `reviewUrl` no pregunta. **Cambiado en la ronda 2** (sección 16): ahora se pregunta en "Tus turnos" después de una atención.
+- **Pendiente y rechazados.** Aviso grande `#done` con día y hora. `appointments.status_at` se pone al aceptar, rechazar o
+  cancelar. `upcomingOf()` devuelve además los pedidos web `rechazado` de los últimos `REJECTED_DAYS` (7) del mismo
+  cliente, con `canCancel: false`; la página los muestra al final con un mensaje y "Pedir otro horario". Un rechazado no
+  ocupa el día de la mascota. Los rechazos anteriores a la actualización no tienen `status_at` y no se muestran.
+- **Copias de seguridad:** incluyen `clients.source`, `patients.source` y `appointments.status_at`; una copia vieja se
+  restaura como `'sistema'` y sin fecha.
+
+## 16. Página de turnos, ronda 2 (rama `mejoras-turnos-2`)
+
+Guía para el dueño: `INSTRUCTIVO-TURNOS-WEB.md`. Pruebas: `tests/turnos-ronda2.test.js` (más los cambios en
+`tests/booking.test.js` y `tests/turnos-web.test.js`). Lista de sugerencias y cuáles se hicieron: `SUGERENCIAS-PAGINA-TURNOS.md`.
+
+- **Horarios por tipo.** `booking.WEB_STEPS = { consulta: 20, vacuna: 10 }` y `booking.stepFor(type)`. `freeSlots` y
+  `canBook` reciben `step` y lo usan los dos (lo que se ofrece es exactamente lo que se acepta). Los horarios caen en
+  múltiplos del paso contados desde la medianoche (`Math.ceil(inicioFranja / paso) * paso`): la consulta siempre a
+  :00/:20/:40 aunque un turno interno deje un hueco "torcido" (9:30–10:00 → consulta 9:40; vacuna 9:30 y 9:50) o la
+  franja abra a las 9:30 (primera consulta 9:40). Sin `step`, el paso general `STEP_MIN` (10).
+- **90 días.** `booking.DAYS_AHEAD = 90` (constante documentada; cambiarla alcanza para servidor, página y mensajes).
+  `GET /api/public/slots` devuelve además `step`, `daysAhead` y `lastDate` (último día que se puede pedir); sigue
+  devolviendo `days: [{date, times}]` como antes. Se calcula todo el período con una sola consulta a la base (medido: 9 a
+  17 ms con 1.800 turnos cargados) y la respuesta va con gzip si el navegador lo acepta (`sendMaybeGzip`, solo esa
+  ruta): unos 37 KB sin comprimir, menos de 1 KB comprimida. Los topes (3 pendientes por cliente, 60 en total) no se
+  cambiaron.
+- **Página: hora y minutos.** `showDay` arma botones por hora (`.slot.hour`, `aria-expanded`, `aria-controls="minutes"`)
+  agrupados en Mañana/Tarde (`NOON`); `openHour` agrega el panel `#minutes` (role group) debajo del grupo, con los
+  minutos (`.slot.minute`, `aria-pressed`). Escape en el panel lo cierra y devuelve el foco a la hora. `state.hour` se
+  conserva al volver a dibujar el mismo día (otra mascota, horarios recargados, "ese horario ya no está disponible").
+  El calendario mensual se mantiene (la sugerencia de "calendario más corto" se descartó); `#cal-limit` dice hasta qué
+  día se puede pedir.
+- **Mensaje de la veterinaria.** Columna `appointments.client_message` (TEXT, default `''`, en las copias; una copia
+  vieja se restaura con `''`). `POST /api/appointments/:id/status` acepta `message` (string, hasta 300 caracteres, se
+  guarda recortado y solo al confirmar; al rechazar se ignora). `mapAppointment` devuelve `clientMessage`. En
+  `upcomingOf` el cliente recibe `message` solo si el turno está `confirmado` (y `duration`, para el calendario). En el
+  sistema interno, `appointmentDetails` muestra el campo en los pendientes (`CLIENT_MSG_MAX`) y el mensaje en los
+  confirmados; el texto se toma antes del aviso de turno superpuesto (que abre otra ventana), así no se pierde.
+- **"Agregar al calendario".** Todo en el navegador (`calendarLinks` en `turnos.js`): enlace a
+  `calendar.google.com/calendar/render?action=TEMPLATE` con `dates` en hora local y `ctz=America/Argentina/Buenos_Aires`;
+  y un `.ics` armado con `Blob` al tocar el enlace (`blob:` no choca con la política de seguridad), con horas en UTC
+  (Argentina es UTC-3 todo el año), texto escapado y líneas cortadas a 75 bytes. Sin dirección cargada, sin lugar.
+- **Reseña.** `clientSummary` devuelve `hadVisit` (algún turno confirmado de sus mascotas que ya terminó). La pregunta
+  está en "Tus turnos" (`#review-ask`), una sola vez por cliente en el dispositivo (`localStorage`
+  `turnos-resena-<id de cliente>`). Ya no se pregunta al terminar de pedir.
+- **Cancelaciones.** `pendingWeb()` (y por lo tanto `pending-summary` y `bootstrap.pendingWeb`) suma `cancelled` y
+  `cancelledFirst`: turnos web cancelados con fecha hoy o mañana. Aviso gris en "Para revisar" (`goto-cancelados`).
+  `GET /api/appointments?cancelled=1` (solo lo usa `loadAppointments` del calendario) suma los cancelados web de hoy en
+  adelante, que se dibujan apagados y tachados con "Cancelado por el cliente" (`apptState`, clase `.cancelado`). Sin el
+  parámetro la respuesta es la de siempre (los chequeos de superposición no los ven).
+- **`turnos.html` con el nombre.** `server/pagina.js` (lo llama `serveTurnos` en `server/index.js` cuando el archivo
+  pedido es `public/turnos.html`): reemplaza `<title>` y `meta description`, y agrega `og:*` y un bloque
+  `application/ld+json` (`LocalBusiness`: nombre, dirección, teléfono, mapa y horarios). Escape HTML para texto y
+  atributos (`escHtml`) y, dentro del JSON-LD, `<`, `>`, `&`, U+2028 y U+2029 como `\uXXXX` (`escJsonInHtml`). El bloque
+  de datos no se ejecuta, así que `script-src 'self'` no cambia. Sin nombre cargado: "Veterinaria", sin JSON-LD.
+  `settings.getSettings()` agrega `publicName` (lo guardado o `CLINIC_NAME`, nunca el "SYSVET" de relleno);
+  `/api/public/info` devuelve ese nombre (o "Veterinaria").
+- **Mensajes sin "llamá".** `askVet()` en `server/api.js`: "llamá a la veterinaria" solo si hay teléfono cargado; si
+  no, "consultalo en la veterinaria". Se usa en los topes (`closedError`), el teléfono repetido, el tope de mascotas y
+  cancelar lo que agendó la veterinaria. El número no registrado ya no dice "llamá" nunca y trae `code: 'no-registrado'`
+  (el manejador de errores de `index.js` pasa `e.code` si es un código corto en minúsculas); la página lo muestra en un
+  cuadro tranquilo (`.alert.soft`) con "Soy cliente nuevo" adentro. "Probar de nuevo" no borra el número.
+- **Otros detalles de la página.** En celular (menos de 700 px), al entrar se lleva la pantalla a "Pedir turno" (salvo
+  que haya un rechazo para ver). Alta con teléfono ya registrado: `state.pendingPet` guarda la mascota escrita y
+  `offerPendingPet` ofrece agregarla al entrar (si ya hay una con ese nombre, la elige). Tipos en una columna en celular
+  ("Consulta · 20 min" en una línea), resumen con etiquetas arriba, teléfono sin cortes (`.nowrap`), "Confirmado" con
+  tilde y talón con contorno (`.ticket.confirmed`), pendiente con talón crema (`.ticket.pending`).
+- **Sin tocar:** `server/weekly.js` (el informe semanal sale idéntico; probado sobre una base creada con `main`).
+- **Pendiente / decisiones del dueño:** el color de los errores de los formularios (sigue rojo); "Otra especie" no se
+  agregó (el servidor solo acepta Perro y Gato).

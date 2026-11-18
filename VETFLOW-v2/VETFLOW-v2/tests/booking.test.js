@@ -8,10 +8,54 @@ const booking = require('../server/booking');
 const HOURS = { 0: null, 1: [['09:00', '12:00'], ['16:00', '19:00']], 2: [['09:00', '19:00']], 3: null, 4: null, 5: null, 6: null };
 const LUNES = '2026-11-16';
 
-test('consulta (20 min) ofrece horarios cada 10 min que entran completos en la franja', () => {
-  const s = booking.freeSlots({ hours: HOURS, date: LUNES, duration: 20, busy: [] });
+// Paso de cada tipo, como lo usa el servidor (consulta cada 20, vacuna cada 10).
+const C = { duration: 20, step: booking.stepFor('consulta') };
+const V = { duration: 10, step: booking.stepFor('vacuna') };
+
+test('el paso depende del tipo: consulta cada 20 minutos, vacuna cada 10', () => {
+  assert.equal(booking.stepFor('consulta'), 20);
+  assert.equal(booking.stepFor('vacuna'), 10);
+  assert.equal(booking.stepFor('cirugia'), booking.STEP_MIN, 'otro tipo: el paso general');
+  const c = booking.freeSlots({ hours: HOURS, date: LUNES, busy: [], ...C });
+  assert.deepEqual(c.slice(0, 4), ['09:00', '09:20', '09:40', '10:00']);
+  assert.ok(c.every((t) => ['00', '20', '40'].includes(t.slice(3))), 'la consulta cae siempre en :00, :20 o :40');
+  const v = booking.freeSlots({ hours: HOURS, date: LUNES, busy: [], ...V });
+  assert.deepEqual(v.slice(0, 7), ['09:00', '09:10', '09:20', '09:30', '09:40', '09:50', '10:00']);
+});
+
+test('un hueco que deja un turno interno fuera del paso: la consulta se ofrece en el múltiplo de 20 siguiente y no pisa nada', () => {
+  // Turnos de la veterinaria de 09:00 a 09:30 y de 10:05 a 10:35: queda libre de 09:30 a 10:05.
+  const busy = [[540, 570], [605, 635]];
+  const c = booking.freeSlots({ hours: HOURS, date: LUNES, busy, ...C });
+  assert.ok(!c.includes('09:30'), '09:30 no es múltiplo de 20');
+  assert.ok(c.includes('09:40'), '09:40 a 10:00 entra entero en el hueco');
+  assert.ok(!c.includes('10:00'), '10:00 a 10:20 pisa el turno de las 10:05');
+  assert.ok(!c.includes('10:20'), '10:20 queda dentro del turno de las 10:05');
+  assert.ok(c.includes('10:40'), 'al terminar el turno (10:35) sigue el próximo múltiplo de 20');
+  // Ningún horario ofrecido se superpone con un turno ocupado.
+  for (const t of c) {
+    const s = booking.toMin(t);
+    assert.ok(!busy.some(([a, b]) => s < b && a < s + 20), t + ' pisa un turno');
+  }
+  const v = booking.freeSlots({ hours: HOURS, date: LUNES, busy, ...V });
+  assert.ok(v.includes('09:30') && v.includes('09:50'), 'la vacuna usa el hueco de a 10 minutos');
+  assert.ok(!v.includes('10:00'), '10:00 a 10:10 pisa el turno de las 10:05');
+  // canBook valida con el mismo paso: lo que se ofrece es lo único que se acepta.
+  assert.equal(booking.canBook({ hours: HOURS, date: LUNES, busy, time: '09:40', ...C }), true);
+  assert.equal(booking.canBook({ hours: HOURS, date: LUNES, busy, time: '09:30', ...C }), false);
+  assert.equal(booking.canBook({ hours: HOURS, date: LUNES, busy, time: '09:30', ...V }), true);
+});
+
+test('una franja que abre a una hora fuera del paso: la consulta empieza en el múltiplo de 20 siguiente', () => {
+  const h = { 1: [['09:30', '11:00']] };
+  assert.deepEqual(booking.freeSlots({ hours: h, date: LUNES, busy: [], ...C }), ['09:40', '10:00', '10:20', '10:40']);
+  assert.equal(booking.freeSlots({ hours: h, date: LUNES, busy: [], ...V })[0], '09:30');
+});
+
+test('consulta (20 min) ofrece horarios que entran completos en la franja', () => {
+  const s = booking.freeSlots({ hours: HOURS, date: LUNES, busy: [], ...C });
   assert.equal(s[0], '09:00');
-  assert.equal(s[1], '09:10');
+  assert.equal(s[1], '09:20');
   assert.ok(s.includes('11:40'), '11:40 + 20 = 12:00, justo al cierre de la mañana');
   assert.equal(s.at(-1), '18:40'); // última de la tarde: 18:40 + 20 = 19:00
   assert.ok(s.includes('16:00'));
@@ -20,18 +64,20 @@ test('consulta (20 min) ofrece horarios cada 10 min que entran completos en la f
 
 test('un turno ocupado saca los horarios que se pisan con él', () => {
   // Turno de 10:00 a 10:30 (busy en minutos: 600..630)
-  const s = booking.freeSlots({ hours: HOURS, date: LUNES, duration: 20, busy: [[600, 630]] });
-  assert.ok(!s.includes('09:50'), '09:50 + 20 pisa 10:00');
-  assert.ok(!s.includes('10:00'));
-  assert.ok(!s.includes('10:20'), '10:20 queda dentro del turno ocupado');
-  assert.ok(s.includes('10:30'), 'el horario que empieza al terminar el turno sí queda libre');
-  assert.ok(s.includes('09:40'), '09:40 + 20 = 10:00 justo antes del turno ocupado');
+  const s = booking.freeSlots({ hours: HOURS, date: LUNES, busy: [[600, 630]], ...V });
+  assert.ok(s.includes('09:50'), '09:50 + 10 = 10:00: la vacuna entra justo antes');
+  const c = booking.freeSlots({ hours: HOURS, date: LUNES, busy: [[600, 630]], ...C });
+  assert.ok(!c.includes('10:00'));
+  assert.ok(!c.includes('10:20'), '10:20 queda dentro del turno ocupado');
+  assert.ok(c.includes('10:40'), 'el primer múltiplo de 20 después del turno sí queda libre');
+  assert.ok(c.includes('09:40'), '09:40 + 20 = 10:00 justo antes del turno ocupado');
+  assert.ok(!s.includes('10:20') && s.includes('10:30'), 'la vacuna arranca justo al terminar el turno');
 });
 
 test('vacuna (10 min) entra en huecos que la consulta no entraría', () => {
   const busy = [[540, 550], [560, 570]]; // 09:00-09:10 y 09:20-09:30
-  const consulta = booking.freeSlots({ hours: HOURS, date: LUNES, duration: 20, busy });
-  const vacuna = booking.freeSlots({ hours: HOURS, date: LUNES, duration: 10, busy });
+  const consulta = booking.freeSlots({ hours: HOURS, date: LUNES, busy, ...C });
+  const vacuna = booking.freeSlots({ hours: HOURS, date: LUNES, busy, ...V });
   assert.ok(vacuna.includes('09:10'));
   assert.ok(!consulta.includes('09:10'));
 });
@@ -41,14 +87,15 @@ test('día cerrado no ofrece horarios', () => {
 });
 
 test('si el día es hoy, no se ofrecen horarios que ya pasaron', () => {
-  const s = booking.freeSlots({ hours: HOURS, date: LUNES, duration: 20, busy: [], nowMin: 10 * 60 });
+  const s = booking.freeSlots({ hours: HOURS, date: LUNES, busy: [], nowMin: 10 * 60, ...C });
   assert.ok(!s.includes('09:00'));
   assert.ok(s.includes('10:00'));
 });
 
 test('canBook acepta solo horarios que aparecen en la lista libre', () => {
-  const args = { hours: HOURS, date: LUNES, duration: 20, busy: [[600, 630]] };
-  assert.equal(booking.canBook({ ...args, time: '10:30:00' }), true);
+  const args = { hours: HOURS, date: LUNES, busy: [[600, 630]], ...C };
+  assert.equal(booking.canBook({ ...args, time: '10:40:00' }), true);
+  assert.equal(booking.canBook({ ...args, time: '10:30:00' }), false, 'la consulta no se acepta fuera de :00, :20, :40');
   assert.equal(booking.canBook({ ...args, time: '10:10:00' }), false);
   assert.equal(booking.canBook({ ...args, time: '13:00:00' }), false, 'fuera de horario');
 });
@@ -63,7 +110,8 @@ test('desde la web solo se pueden pedir consultas o vacunas', () => {
 
 test('el formato viejo de una sola franja también se acepta', () => {
   const old = { 1: ['09:00', '10:00'] };
-  assert.deepEqual(booking.freeSlots({ hours: old, date: LUNES, duration: 20, busy: [] }), ['09:00', '09:10', '09:20', '09:30', '09:40']);
+  assert.deepEqual(booking.freeSlots({ hours: old, date: LUNES, busy: [], ...C }), ['09:00', '09:20', '09:40']);
+  assert.deepEqual(booking.freeSlots({ hours: old, date: LUNES, busy: [], duration: 20 }), ['09:00', '09:10', '09:20', '09:30', '09:40'], 'sin paso: el general de 10');
 });
 
 test('el límite de pedidos corta después de la cantidad permitida', () => {

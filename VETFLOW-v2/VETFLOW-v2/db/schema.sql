@@ -436,3 +436,24 @@ ALTER TABLE appointments ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT '
 CREATE INDEX IF NOT EXISTS appt_status_idx ON appointments(status);
 -- El ingreso con teléfono busca candidatos por los últimos 6 dígitos y después compara en el servidor (011, 15, +54 9...).
 CREATE INDEX IF NOT EXISTS clients_phone_tail_idx ON clients (right(phone_norm, 6));
+
+-- ============================================================
+-- Etapa 3: clientes y mascotas creados desde la página de turnos, y fecha del último cambio de estado de un turno.
+-- source: 'sistema' (lo cargó la veterinaria) o 'web' (se registró solo desde la página). Lo que ya existía queda 'sistema'.
+-- status_at: cuándo se aceptó, rechazó o canceló un turno (sirve para avisarle al cliente un rechazo reciente). Los
+--            turnos anteriores quedan sin fecha.
+-- ============================================================
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'sistema'
+  CHECK (source IN ('sistema', 'web'));
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'sistema'
+  CHECK (source IN ('sistema', 'web'));
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS status_at TIMESTAMPTZ;
+-- Reporte de clientes que hace mucho no vienen: busca la próxima dosis de vacuna por mascota.
+CREATE INDEX IF NOT EXISTS vaccines_next_idx ON vaccines(patient_id, next_on) WHERE next_on IS NOT NULL;
+
+-- ============================================================
+-- Mejoras de la página de turnos (ronda 2): mensaje opcional de la veterinaria al confirmar un pedido web
+-- (por ejemplo "Traer al perro en ayunas."). Solo lo ve el cliente dueño del turno, y solo cuando está confirmado.
+-- Los turnos que ya existían quedan sin mensaje.
+-- ============================================================
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS client_message TEXT NOT NULL DEFAULT '';
