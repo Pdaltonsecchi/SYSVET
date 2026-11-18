@@ -1989,7 +1989,9 @@ add('PUT', '/api/appointments/:id', async (ctx) => {
   const a = appointmentInput(ctx.body);
   await mustExist('patients', a.patientId, 'No se encontró el paciente');
   const r = await db.query(
-    'UPDATE appointments SET patient_id = $1, title = $2, description = $3, appointment_date = $4, appointment_time = $5, appointment_type = $6, duration_min = $8 ' +
+    // Si el turno pasa a otra mascota, el mensaje para el cliente se borra: era para el dueño anterior.
+    'UPDATE appointments SET patient_id = $1, title = $2, description = $3, appointment_date = $4, appointment_time = $5, appointment_type = $6, duration_min = $8, ' +
+      "client_message = CASE WHEN patient_id = $1 THEN client_message ELSE '' END " +
       'WHERE id = $7 RETURNING id',
     [a.patientId, a.title, a.description, a.date, a.time, a.type, id, a.duration]
   );
@@ -2059,7 +2061,7 @@ add('POST', '/api/appointments/:id/status', async (ctx) => {
   const id = U.idParam(ctx.params.id);
   const b = ctx.body || {};
   const status = U.oneOf(b.status, ['confirmado', 'rechazado'], 'Estado');
-  if (b.message != null && typeof b.message !== 'string') throw U.bad('El mensaje para el cliente no es válido.');
+  if (b.message != null && (typeof b.message !== 'string' || b.message.includes(String.fromCharCode(0)))) throw U.bad('El mensaje para el cliente no es válido.');
   const message = status === 'confirmado' ? String(b.message || '').trim() : '';
   if (message.length > CLIENT_MESSAGE_MAX) throw U.bad('El mensaje para el cliente puede tener hasta ' + CLIENT_MESSAGE_MAX + ' caracteres.');
   const r = await db.query(
@@ -2178,7 +2180,8 @@ async function hadVisit(clientId) {
   const now = nowAR();
   const r = await db.query(
     "SELECT 1 FROM appointments a JOIN patients p ON p.id = a.patient_id WHERE p.client_id = $1 AND p.deleted_at IS NULL AND a.status = 'confirmado' " +
-      "AND (a.appointment_date < $2 OR (a.appointment_date = $2 AND a.appointment_time + make_interval(mins => a.duration_min) <= $3::time)) LIMIT 1",
+      // Fecha + hora + duración como fecha y hora completa: un turno de 23:50 termina al día siguiente.
+      "AND a.appointment_date + a.appointment_time + make_interval(mins => a.duration_min) <= ($2 || ' ' || $3)::timestamp LIMIT 1",
     [clientId, now.date, booking.fromMin(now.min)]
   );
   return !!r.rows[0];

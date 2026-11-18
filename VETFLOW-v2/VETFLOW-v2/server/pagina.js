@@ -60,10 +60,11 @@ function render(template, st) {
     head.push('<script type="application/ld+json">' + escJsonInHtml(ld) + '</script>');
   }
 
+  // Reemplazos con función: así un "$" en los datos (por ejemplo "Vet $'s") no se toma como comando de replace().
   return template
-    .replace(/<title>[^<]*<\/title>/, '<title>' + escHtml(title) + '</title>')
-    .replace(/<meta name="description" content="[^"]*">/, '<meta name="description" content="' + escHtml(description) + '">')
-    .replace('</head>', '  ' + head.join('\n  ') + '\n</head>');
+    .replace(/<title>[^<]*<\/title>/, () => '<title>' + escHtml(title) + '</title>')
+    .replace(/<meta name="description" content="[^"]*">/, () => '<meta name="description" content="' + escHtml(description) + '">')
+    .replace('</head>', () => '  ' + head.join('\n  ') + '\n</head>');
 }
 
 let cached = null;

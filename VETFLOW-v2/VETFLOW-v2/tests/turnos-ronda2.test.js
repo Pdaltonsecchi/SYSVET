@@ -411,3 +411,49 @@ test('la copia de seguridad guarda el mensaje; una copia vieja se restaura sin m
   assert.equal((await owner.call('POST', '/restore', { data: exp })).status, 200);
   await owner.call('DELETE', '/appointments/' + p.data.id);
 });
+
+/* ---------- arreglos de la revisión de seguridad ---------- */
+test('un "$" en el nombre de la veterinaria no rompe turnos.html', async () => {
+  await settingsWith({ shopName: "Vet $'s $& $$ $`" });
+  try {
+    const html = await (await fetch(base + '/turnos.html')).text();
+    assert.equal((html.match(/<body/g) || []).length, 1, 'la plantilla no se duplica');
+    assert.equal((html.match(/<script src="turnos.js">/g) || []).length, 1);
+    assert.match(html, /<title>Vet \$&#39;s \$&amp; \$\$ \$` · Turnos online<\/title>/);
+  } finally {
+    await settingsWith({ shopName: 'Veterinaria Ronda Dos' });
+  }
+});
+
+test('si la veterinaria pasa un turno a otra mascota, el mensaje para el cliente se borra', async () => {
+  const a = await clienteNuevo('DuenoA');
+  const b = await clienteNuevo('DuenoB');
+  const v = (await slots('vacuna')).days;
+  const p = await pub(a.token).call('POST', '/appointments', { type: 'vacuna', patientId: a.pet, date: v[11].date, time: v[11].times[0] });
+  await owner.call('POST', '/appointments/' + p.data.id + '/status', { status: 'confirmado', message: 'Dato privado de A' });
+  const editar = (patientId, title) => owner.call('PUT', '/appointments/' + p.data.id, { patientId, title, description: '', date: v[11].date, time: v[11].times[0], type: 'vacuna', duration: 10 });
+  assert.equal((await editar(a.pet, 'Vacuna (cambio de título)')).status, 200);
+  assert.equal((await pub(a.token).call('GET', '/me')).data.appointments.find((x) => x.id === p.data.id).message, 'Dato privado de A', 'misma mascota: el mensaje queda');
+  assert.equal((await editar(b.pet, 'Vacuna')).status, 200);
+  const meB = (await pub(b.token).call('GET', '/me')).data;
+  assert.ok(!JSON.stringify(meB).includes('Dato privado'), 'el otro cliente no recibe el mensaje');
+  assert.equal(meB.appointments.find((x) => x.id === p.data.id).message, '');
+  await owner.call('DELETE', '/appointments/' + p.data.id);
+});
+
+test('un mensaje con el carácter nulo da error de validación, no un error interno', async () => {
+  const a = await clienteNuevo('Nulo');
+  const v = (await slots('vacuna')).days;
+  const p = await pub(a.token).call('POST', '/appointments', { type: 'vacuna', patientId: a.pet, date: v[12].date, time: v[12].times[0] });
+  const r = await owner.call('POST', '/appointments/' + p.data.id + '/status', { status: 'confirmado', message: 'a' + String.fromCharCode(0) + 'b' });
+  assert.equal(r.status, 400);
+  await limpiar([p.data.id]);
+});
+
+test('hadVisit: un turno de las 23:50 recién cuenta cuando terminó (al día siguiente)', async () => {
+  const a = await clienteNuevo('Noche');
+  await db.query("INSERT INTO appointments (patient_id, title, description, appointment_date, appointment_time, appointment_type, duration_min, status, source) VALUES ($1, 'x', '', $2, '23:50', 'consulta', 20, 'confirmado', 'web')", [a.pet, today]);
+  assert.equal((await pub(a.token).call('GET', '/me')).data.hadVisit, false, 'termina mañana a las 00:10');
+  await db.query("UPDATE appointments SET appointment_date = $2 WHERE patient_id = $1", [a.pet, addDays(today, -1)]);
+  assert.equal((await pub(a.token).call('GET', '/me')).data.hadVisit, true);
+});

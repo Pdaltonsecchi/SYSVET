@@ -904,7 +904,7 @@
     return url;
   }
   /** Texto de un campo de .ics: se escapan \ ; , y los saltos de línea. */
-  function icsText(v) { return String(v).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n'); }
+  function icsText(v) { return String(v).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r\n|\r|\n/g, '\\n'); }
   /** Las líneas de un .ics no pueden pasar de 75 bytes: se cortan y siguen en la línea de abajo con un espacio. */
   function icsFold(line) {
     var out = '';
