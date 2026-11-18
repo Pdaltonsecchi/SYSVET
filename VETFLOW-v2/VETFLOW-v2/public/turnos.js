@@ -1038,8 +1038,12 @@
       setStep(4);
       setText('day-msg', err.message);
       show('day-msg', true);
+      var msg = err.message;
       return refresh().catch(function () { /* se sigue con los horarios que había */ }).then(function () {
-        if (state.day) showDay(state.day, { keepFocus: true, keepMsg: true });
+        // Al recargar los horarios se vuelve a dibujar el día: el aviso se pone de nuevo, para que no se pierda.
+        if (state.day) showDay(state.day, { keepFocus: true });
+        setText('day-msg', msg);
+        show('day-msg', true);
         goTo($('day-msg'), { block: 'center' });
       });
     }));
