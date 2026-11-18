@@ -995,11 +995,11 @@ function repInactive(){
     return '<tr'+(x.webNoVisit?' class="inact-web"':'')+'><td><button class="link" data-action="open-client" data-id="'+x.id+'" title="Abrir la ficha de '+esc(x.name)+'"><b>'+esc(x.name)+'</b></button>'+
       (x.source==='web'?'<br>'+webChip({source:'web',webNew:x.webNoVisit}):'')+(x.webNoVisit?'<br><small>Se anotó por la web y nunca tuvo una visita.</small>':'')+'</td>'+
       '<td>'+(x.phone?esc(x.phone):'<span class="mut">Sin teléfono</span>')+'</td><td>'+pets+'</td>'+
-      '<td>'+fmtDate(x.lastDate)+'<br><small>'+esc(x.lastLabel)+'</small></td><td class="num">'+ago+'</td></tr>';
+      '<td>'+fmtDate(x.lastDate)+'<br><small>'+(x.trashOnly?'Sus mascotas están en la Papelera':esc(x.lastLabel))+'</small></td><td class="num">'+ago+'</td></tr>';
   };
   var nWeb=R.items.filter(function(x){return x.webNoVisit;}).length;
   return '<section class="repsec" id="rep-inactive"><div class="toolbar"><h2>Clientes que hace mucho no vienen</h2>'+segHTML('rinact',[['4','4 meses'],['6','6 meses'],['12','1 año']],String(R.months))+'</div>'+
-    '<p class="rep-hint">Clientes sin actividad desde hace más de '+label+'. La <b>última actividad</b> es la fecha más reciente entre cobros, consultas, vacunas, medicación, estudios, registros de peso y turnos confirmados de cualquiera de sus mascotas; si nunca tuvo nada, es el día en que se creó la ficha. '+
+    '<p class="rep-hint">Clientes sin actividad desde hace más de '+label+'. La <b>última actividad</b> es la fecha más reciente entre cobros, consultas, vacunas, medicación, estudios, registros de peso y turnos confirmados de cualquiera de sus mascotas; si nunca tuvo nada, es el día en que se cargó su primera ficha. '+
       'No aparecen los que tienen un turno por venir ni una vacuna con próxima dosis a futuro.</p>'+
     (R.items.length?'<p class="rep-hint"><b>'+plural(R.items.length,'cliente','clientes')+'</b>'+(nWeb?', de los cuales '+plural(nWeb,'se anotó','se anotaron')+' por la web y nunca '+(nWeb===1?'vino':'vinieron')+' (los más claros para revisar)':'')+'. Del que más tiempo lleva al que menos.</p>':'')+
     topList('inact',{top:R.items,all:R.items},row,'<th>Cliente</th><th>Teléfono</th><th>Mascotas</th><th>Última actividad</th><th class="num">Hace</th>','No hay clientes sin actividad desde hace más de '+label+'.')+

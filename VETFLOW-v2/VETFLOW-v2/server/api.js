@@ -107,18 +107,26 @@ const TODAY_SQL = "(now() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date";
  * confirmado cuya fecha ya llegó. Un turno pendiente o futuro todavía no es una visita.
  */
 const VISITED_SQL =
-  '(EXISTS (SELECT 1 FROM charges x WHERE x.patient_id = p.id AND x.deleted_at IS NULL)' +
-  ' OR EXISTS (SELECT 1 FROM diagnoses x WHERE x.patient_id = p.id AND x.deleted_at IS NULL)' +
-  ' OR EXISTS (SELECT 1 FROM vaccines x WHERE x.patient_id = p.id AND x.deleted_at IS NULL)' +
-  ' OR EXISTS (SELECT 1 FROM medications x WHERE x.patient_id = p.id AND x.deleted_at IS NULL)' +
-  ' OR EXISTS (SELECT 1 FROM complementary_studies x WHERE x.patient_id = p.id AND x.deleted_at IS NULL)' +
+  '(EXISTS (SELECT 1 FROM charges x WHERE x.patient_id = p.id AND x.deleted_at IS NULL AND x.on_date <= ' + TODAY_SQL + ')' +
+  ' OR EXISTS (SELECT 1 FROM diagnoses x WHERE x.patient_id = p.id AND x.deleted_at IS NULL AND x.on_date <= ' + TODAY_SQL + ')' +
+  ' OR EXISTS (SELECT 1 FROM vaccines x WHERE x.patient_id = p.id AND x.deleted_at IS NULL AND x.applied_on <= ' + TODAY_SQL + ')' +
+  ' OR EXISTS (SELECT 1 FROM medications x WHERE x.patient_id = p.id AND x.deleted_at IS NULL AND x.on_date <= ' + TODAY_SQL + ')' +
+  ' OR EXISTS (SELECT 1 FROM complementary_studies x WHERE x.patient_id = p.id AND x.deleted_at IS NULL AND x.on_date <= ' + TODAY_SQL + ')' +
   " OR EXISTS (SELECT 1 FROM appointments x WHERE x.patient_id = p.id AND x.status = 'confirmado' AND x.appointment_date <= " + TODAY_SQL + '))';
-// web_new: se registró sola desde la página de turnos y todavía no tuvo ninguna visita (solo se calcula para las de origen web).
 const PATIENT_SELECT =
   'p.id, p.hc_number, p.name, p.species, p.breed, p.sex, p.neutered, p.birth, p.weight, p.owner_name, p.phone, p.email, p.notes, p.client_id, ' +
   'c.first_name AS c_first, c.last_name AS c_last, c.phone AS c_phone, c.email AS c_email, ' +
-  "p.source, to_char(p.created_at AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD') AS created_on, " +
-  "CASE WHEN p.source = 'web' THEN NOT " + VISITED_SQL + ' ELSE FALSE END AS web_new';
+  "p.source, to_char(p.created_at AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD') AS created_on";
+// web_new: se registró sola desde la página de turnos y todavía no tuvo ninguna visita (solo para las de origen web).
+// En la ficha de una mascota va en la misma consulta; en la lista se pide aparte (ver webNewIds), que es más liviano.
+const PATIENT_WEB_NEW = ", CASE WHEN p.source = 'web' THEN NOT " + VISITED_SQL + ' ELSE FALSE END AS web_new';
+/** Ids de las mascotas (o de los clientes) web que todavía no tuvieron ninguna visita. */
+async function webNewIds(kind) {
+  const r = kind === 'patients'
+    ? await db.query("SELECT p.id FROM patients p WHERE p.source = 'web' AND p.deleted_at IS NULL AND NOT " + VISITED_SQL)
+    : await db.query("SELECT c.id FROM clients c WHERE c.source = 'web' AND NOT EXISTS (SELECT 1 FROM patients p WHERE p.client_id = c.id AND p.deleted_at IS NULL AND " + VISITED_SQL + ')');
+  return new Set(r.rows.map((x) => x.id));
+}
 const PATIENT_FROM = ' FROM patients p LEFT JOIN clients c ON c.id = p.client_id';
 const fullName = (first, last) => (String(first || '') + ' ' + String(last || '')).trim();
 
@@ -184,15 +192,16 @@ const mapCash = (r) => ({
 });
 
 async function listPatients() {
-  const [p, v] = await Promise.all([
+  const [p, v, fresh] = await Promise.all([
     db.query('SELECT ' + PATIENT_SELECT + PATIENT_FROM + ' WHERE p.deleted_at IS NULL ORDER BY lower(p.name), p.id'),
     db.query('SELECT id, patient_id, name, applied_on, next_on, product_id, stock_qty FROM vaccines WHERE deleted_at IS NULL ORDER BY applied_on DESC, id DESC'),
+    webNewIds('patients'),
   ]);
   const by = {};
   v.rows.forEach((x) => {
     (by[x.patient_id] = by[x.patient_id] || []).push(mapVaccine(x));
   });
-  return p.rows.map((r) => Object.assign(mapPatient(r), { vaccines: by[r.id] || [] }));
+  return p.rows.map((r) => Object.assign(mapPatient(Object.assign(r, { web_new: fresh.has(r.id) })), { vaccines: by[r.id] || [] }));
 }
 // C1: el costo unitario (último precio pagado en una compra) es información financiera: solo para el administrador.
 async function listProducts(admin) {
@@ -565,7 +574,7 @@ add('POST', '/api/patients', async (ctx) => {
 
 add('GET', '/api/patients/:id', async (ctx) => {
   const id = U.idParam(ctx.params.id);
-  const r = await db.query('SELECT ' + PATIENT_SELECT + PATIENT_FROM + ' WHERE p.id = $1 AND p.deleted_at IS NULL', [id]);
+  const r = await db.query('SELECT ' + PATIENT_SELECT + PATIENT_WEB_NEW + PATIENT_FROM + ' WHERE p.id = $1 AND p.deleted_at IS NULL', [id]);
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el paciente');
   const [v, d, m, c, s, ap, wt] = await Promise.all([
     db.query('SELECT id, name, applied_on, next_on, product_id, stock_qty FROM vaccines WHERE patient_id = $1 AND deleted_at IS NULL ORDER BY applied_on DESC, id DESC', [id]),
@@ -1515,19 +1524,24 @@ const INACTIVE_SQL =
     lastOf('weights', 'fecha', 'peso', 7, ''),
   ].join(' UNION ALL ') +
   '), ' +
-  'last AS (SELECT DISTINCT ON (client_id) client_id, d, kind FROM act ORDER BY client_id, d DESC, prio) ' +
+  'last AS (SELECT DISTINCT ON (client_id) client_id, d, kind FROM act ORDER BY client_id, d DESC, prio), ' +
+  'alta AS (SELECT c.id AS client_id, (LEAST(c.created_at, (SELECT MIN(p.created_at) FROM patients p WHERE p.client_id = c.id)) ' +
+  "AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS d FROM clients c) " +
   'SELECT c.id, c.first_name, c.last_name, c.phone, c.source, ' +
-  "COALESCE(l.d, (c.created_at AT TIME ZONE 'America/Argentina/Buenos_Aires')::date) AS last_date, COALESCE(l.kind, 'alta') AS last_kind, " +
+  "COALESCE(l.d, a.d) AS last_date, COALESCE(l.kind, 'alta') AS last_kind, " +
   // Cliente web que nunca tuvo una visita (un registro de peso solo no cuenta como visita).
-  "(c.source = 'web' AND NOT EXISTS (SELECT 1 FROM act v WHERE v.client_id = c.id AND v.kind <> 'peso')) AS web_no_visit " +
-  'FROM clients c LEFT JOIN last l ON l.client_id = c.id ' +
-  "WHERE COALESCE(l.d, (c.created_at AT TIME ZONE 'America/Argentina/Buenos_Aires')::date) < $2 " +
+  "(c.source = 'web' AND NOT EXISTS (SELECT 1 FROM act v WHERE v.client_id = c.id AND v.kind <> 'peso')) AS web_no_visit, " +
+  // Todas sus mascotas están en la Papelera.
+  '(NOT EXISTS (SELECT 1 FROM pets p WHERE p.client_id = c.id) AND EXISTS (SELECT 1 FROM patients p WHERE p.client_id = c.id)) AS trash_only ' +
+  'FROM clients c JOIN alta a ON a.client_id = c.id LEFT JOIN last l ON l.client_id = c.id ' +
+  'WHERE COALESCE(l.d, a.d) < $2 ' +
   "AND NOT EXISTS (SELECT 1 FROM appointments a JOIN pets p ON p.id = a.patient_id WHERE p.client_id = c.id AND a.status IN ('pendiente', 'confirmado') AND a.appointment_date >= $1) " +
   'AND NOT EXISTS (SELECT 1 FROM vaccines v JOIN pets p ON p.id = v.patient_id WHERE p.client_id = c.id AND v.deleted_at IS NULL AND v.next_on >= $1) ' +
   'ORDER BY last_date, c.id LIMIT $3';
 const INACTIVE_MAX = 500;
 add('GET', '/api/reports/inactive-clients', { admin: true }, async (ctx) => {
-  const months = Number(ctx.query.get('months') || 4);
+  const raw = ctx.query.get('months');
+  const months = raw === null ? 4 : /^(4|6|12)$/.test(raw) ? Number(raw) : 0;
   const days = INACTIVE_MONTHS[months];
   if (!days) throw U.bad('El período tiene que ser de 4, 6 o 12 meses.');
   const today = U.todayAR();
@@ -1552,6 +1566,7 @@ add('GET', '/api/reports/inactive-clients', { admin: true }, async (ctx) => {
         phone: x.phone,
         source: x.source,
         webNoVisit: !!x.web_no_visit,
+        trashOnly: !!x.trash_only,
         pets: pets[x.id] || [],
         lastDate: x.last_date,
         lastKind: x.last_kind,
@@ -1698,26 +1713,27 @@ const mapClient = (r, pets) => ({
   createdOn: r.created_on || '',
   pets: pets || [],
 });
-// web_new: el cliente se registró solo desde la página y ninguna de sus mascotas tuvo todavía una visita.
 const CLIENT_SELECT =
   'c.id, c.first_name, c.last_name, c.email, c.phone, c.address, c.source, ' +
-  "to_char(c.created_at AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD') AS created_on, " +
-  "CASE WHEN c.source = 'web' THEN NOT EXISTS (SELECT 1 FROM patients p WHERE p.client_id = c.id AND p.deleted_at IS NULL AND " + VISITED_SQL + ') ELSE FALSE END AS web_new';
+  "to_char(c.created_at AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD') AS created_on";
+// web_new: el cliente se registró solo desde la página y ninguna de sus mascotas tuvo todavía una visita.
+const CLIENT_WEB_NEW = ", CASE WHEN c.source = 'web' THEN NOT EXISTS (SELECT 1 FROM patients p WHERE p.client_id = c.id AND p.deleted_at IS NULL AND " + VISITED_SQL + ') ELSE FALSE END AS web_new';
 async function listClients(db_) {
-  const [cl, pt] = await Promise.all([
+  const [cl, pt, fresh] = await Promise.all([
     db_.query('SELECT ' + CLIENT_SELECT + ' FROM clients c ORDER BY lower(c.last_name), lower(c.first_name), c.id'),
     db_.query('SELECT id, hc_number, name, species, client_id FROM patients WHERE deleted_at IS NULL AND client_id IS NOT NULL ORDER BY lower(name), id'),
+    webNewIds('clients'),
   ]);
   const by = {};
   pt.rows.forEach((x) => (by[x.client_id] = by[x.client_id] || []).push({ id: x.id, hc: x.hc_number, name: x.name, species: x.species }));
-  return cl.rows.map((r) => mapClient(r, by[r.id]));
+  return cl.rows.map((r) => mapClient(Object.assign(r, { web_new: fresh.has(r.id) }), by[r.id]));
 }
 add('GET', '/api/clients', async () => ({ items: await listClients(db) }));
 
 // Ficha del cliente: contacto, mascotas y el historial de pagos de todas sus mascotas.
 add('GET', '/api/clients/:id', async (ctx) => {
   const id = U.idParam(ctx.params.id);
-  const r = await db.query('SELECT ' + CLIENT_SELECT + ' FROM clients c WHERE c.id = $1', [id]);
+  const r = await db.query('SELECT ' + CLIENT_SELECT + CLIENT_WEB_NEW + ' FROM clients c WHERE c.id = $1', [id]);
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el cliente');
   const [pets, pays] = await Promise.all([
     db.query('SELECT id, hc_number, name, species, breed FROM patients WHERE client_id = $1 AND deleted_at IS NULL ORDER BY lower(name), id', [id]),

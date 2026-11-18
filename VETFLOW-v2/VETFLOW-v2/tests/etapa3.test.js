@@ -306,3 +306,45 @@ test('la copia de seguridad guarda el origen; una copia vieja se restaura como "
   // Se deja la base como estaba antes de esta prueba.
   assert.equal((await owner.call('POST', '/restore', { data: exp })).status, 200);
 });
+
+/* ---------- arreglos de la revisión independiente ---------- */
+test('cliente creado al migrar fichas viejas: sin actividad, cuenta la fecha de su mascota más vieja', async () => {
+  const m = await interno('Migrado');
+  // La mascota es de hace 2 años; el cliente se creó "hoy" (como los que creó la migración de clientes).
+  await db.query("UPDATE patients SET created_at = now() - interval '730 days' WHERE id = $1", [m.petId]);
+  const r = await inactivos(12);
+  const x = r.items.find((i) => i.id === m.clientId);
+  assert.ok(x, 'aparece aunque la ficha del cliente sea nueva');
+  assert.equal(x.lastKind, 'alta');
+  assert.equal(x.lastDate, day(-730));
+});
+
+test('cliente con todas sus mascotas en la Papelera: aparece marcado', async () => {
+  const t = await interno('Papelera');
+  await antiguo(t.clientId, 300);
+  await diagnostico(t.petId, -1);
+  assert.equal((await owner.call('DELETE', '/patients/' + t.petId)).status, 200);
+  const x = (await inactivos()).items.find((i) => i.id === t.clientId);
+  assert.ok(x);
+  assert.equal(x.trashOnly, true);
+  assert.deepEqual(x.pets, []);
+  const b = (await inactivos()).items.find((i) => i.trashOnly === false);
+  assert.ok(!b || b.trashOnly === false);
+});
+
+test('una consulta con fecha futura no cuenta como visita (ni en la ficha ni en el reporte)', async () => {
+  const w = await web('Futuro');
+  await db.query("INSERT INTO diagnoses (patient_id, on_date, title) VALUES ($1, $2, 'Cargada con fecha futura')", [w.petId, day(30)]);
+  assert.equal((await owner.call('GET', '/patients/' + w.petId)).data.webNew, true);
+  assert.equal((await owner.call('GET', '/clients/' + w.clientId)).data.webNew, true);
+  const boot = (await owner.call('GET', '/bootstrap')).data;
+  assert.equal(boot.patients.find((p) => p.id === w.petId).webNew, true, 'la lista coincide con la ficha');
+  assert.equal(boot.clients.find((c) => c.id === w.clientId).webNew, true);
+});
+
+test('el período del reporte tiene que ser 4, 6 o 12 exactos', async () => {
+  for (const m of ['4.0', '12 ', '', 'abc', '-4', '5']) {
+    assert.equal((await owner.call('GET', '/reports/inactive-clients?months=' + encodeURIComponent(m))).status, 400, JSON.stringify(m));
+  }
+  assert.equal((await owner.call('GET', '/reports/inactive-clients')).status, 200, 'sin período: 4 meses');
+});
