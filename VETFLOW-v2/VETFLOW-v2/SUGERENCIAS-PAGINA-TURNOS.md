@@ -1,6 +1,25 @@
 # Página de turnos: qué se probó y qué se podría mejorar
 
-Revisión de la página pública de turnos (noviembre de 2026), hecha en un navegador real en celular (390 px), tablet (820 px) y computadora (1280 px), con datos de prueba. **Ninguna de las sugerencias está hecha**: elegís vos cuáles se hacen.
+Revisión de la página pública de turnos (noviembre de 2026), hecha en un navegador real en celular (390 px), tablet (820 px) y computadora (1280 px), con datos de prueba.
+
+## Estado después de la ronda 2 (rama `mejoras-turnos-2`)
+
+| # | Sugerencia | Estado |
+|---|---|---|
+| 1 | Menos botones de hora | **Hecha, como la pediste:** primero la hora y después los minutos; consulta cada 20 minutos y vacuna cada 10. No se agregó "Primer horario libre". |
+| 2 | Nombre en el título, al compartir y datos para Google | **Hecha.** Sin nombre cargado dice "Veterinaria", nunca "SYSVET". |
+| 3 | Reseña después de una atención | **Hecha.** Cambia lo que habías pedido antes: ya no se pregunta al terminar de pedir un turno, sino en "Tus turnos" a quien ya vino a un turno confirmado, una vez por cliente en ese dispositivo. |
+| 4 | Cuidado al cancelar un confirmado | **Hecha:** aviso más claro al cliente y, para vos, aviso en "Para revisar" y marca "Cancelado por el cliente" en el calendario (hoy y mañana). Se sigue pudiendo cancelar desde la página. |
+| 5 | "Agregar al calendario" | **Hecha:** "Agregar a Google Calendar" y archivo .ics. |
+| 6 | Texto antes de la vacuna | **Reemplazada** por lo que pediste: un mensaje opcional que escribís al aceptar cada pedido. |
+| 7 | Errores más amables | **Hecha.** |
+| 8 | En celular, ir a "Pedir turno" al entrar | **Hecha.** |
+| 9 | Detalles en celular | **Hecha.** |
+| 10 | "Confirmado" más reconocible | **Hecha** (tilde y borde verde; el ámbar sigue siendo solo de "Pendiente"). |
+| 11 | Calendario más corto | **No se hace** (la descartaste): se mantiene el mes completo y ahora se puede avanzar hasta 90 días. |
+| 12 | No perder la mascota escrita | **Hecha.** |
+
+Siguen pendientes de una decisión tuya: el color de los mensajes de error de los formularios (hoy rojo) y "Otra especie" (el servidor solo acepta Perro y Gato).
 
 ## Lo que se probó y anduvo bien
 
@@ -16,7 +35,7 @@ Revisión de la página pública de turnos (noviembre de 2026), hecha en un nave
 
 **Si otro cliente tomaba el mismo horario mientras el cliente revisaba su pedido, al confirmar no aparecía ningún mensaje** y podía creer que su turno había quedado hecho. Ahora aparece "Ese horario ya no está disponible. Elegí otro." arriba de los horarios. Probado en celular y computadora.
 
-## Sugerencias, de mayor a menor impacto
+## Sugerencias originales, de mayor a menor impacto
 
 | # | Qué | Para quién | Qué resuelve | Esfuerzo | ¿Toca una decisión tuya? |
 |---|---|---|---|---|---|
