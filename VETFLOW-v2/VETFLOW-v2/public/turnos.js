@@ -105,7 +105,13 @@
   }
   function daysIn(month) { return new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0, 12)).getUTCDate(); }
 
-  var STATUS_LABEL = { pendiente: 'Pendiente de confirmación', confirmado: 'Confirmado' };
+  var STATUS_LABEL = { pendiente: 'Pendiente de confirmación', confirmado: 'Confirmado', rechazado: 'No se pudo confirmar' };
+  // Qué significa cada estado, con palabras claras.
+  var STATUS_HELP = {
+    pendiente: 'Esperando que la veterinaria lo confirme. Volvé a entrar con tu teléfono para ver si lo aceptó.',
+    confirmado: 'La veterinaria lo confirmó: te esperamos.',
+  };
+  var REVIEW_KEY = 'turnos-resena';
 
   /* ---------- en qué paso está el cliente: 1 ingresar, 2 mascota, 3 día, 4 hora, 5 confirmar (6 = terminado) ---------- */
   function setStep(n) {
@@ -216,7 +222,7 @@
     if (info.phone) {
       // Enlace tel: de verdad. Sin teléfono cargado, ningún botón de llamar se muestra.
       var tel = 'tel:' + onlyDigits(info.phone);
-      [['call-btn', 'Llamar ' + info.phone], ['call-link', 'Llamar a la veterinaria'], ['bar-call', 'Llamar'], ['phone-link', info.phone], ['footer-phone-link', info.phone]].forEach(function (x) {
+      [['call-btn', 'Llamar ' + info.phone], ['call-link', 'Llamar a la veterinaria'], ['bar-call', 'Llamar'], ['phone-link', info.phone], ['footer-phone-link', info.phone], ['done-call-link', info.phone]].forEach(function (x) {
         $(x[0]).href = tel;
         $(x[0]).textContent = x[1];
       });
@@ -224,6 +230,7 @@
       show('bar-call', true);
       show('location-phone', true);
       show('footer-phone', true);
+      show('done-call', true);
     }
     if (info.mapsUrl) {
       $('maps-btn').href = info.mapsUrl;
@@ -642,10 +649,11 @@
   function renderAppointments() {
     var list = $('my-appts');
     list.textContent = '';
-    var items = state.appointments;
+    var items = state.appointments.filter(function (a) { return a.status !== 'rechazado'; })
+      .concat(state.appointments.filter(function (a) { return a.status === 'rechazado'; }));
     $('no-appts').hidden = items.length > 0;
     items.forEach(function (a) {
-      var item = el('li', null, 'ticket');
+      var item = el('li', null, 'ticket' + (a.status === 'rechazado' ? ' rejected' : ''));
       item.appendChild(stubOf(a.date));
       var li = el('div', null, 'ticket-body');
       item.appendChild(li);
@@ -654,6 +662,29 @@
       li.appendChild(title);
       li.appendChild(el('div', cap(fmtDay(a.date)) + ' a las ' + a.time + ' hs', 'appt-when'));
       li.appendChild(el('span', STATUS_LABEL[a.status] || a.status, 'badge' + (a.status === 'pendiente' ? ' pending' : '')));
+      if (a.status === 'rechazado') {
+        // Un pedido que la veterinaria rechazó en los últimos días: se explica y se ofrece pedir otro horario.
+        var why = el('p', 'La veterinaria no pudo confirmar este horario. Probá con otro' + (state.info && state.info.phone ? ' o llamanos al ' : '.'), 'appt-help');
+        if (state.info && state.info.phone) {
+          var tel = el('a', state.info.phone);
+          tel.href = 'tel:' + onlyDigits(state.info.phone);
+          why.appendChild(tel);
+          why.appendChild(document.createTextNode('.'));
+        }
+        li.appendChild(why);
+        var again = el('button', 'Pedir otro horario', 'btn');
+        again.type = 'button';
+        again.addEventListener('click', function () {
+          notice('notice', '');
+          show('done', false);
+          show('book-flow', true);
+          showCalendar($('cal-heading'));
+        });
+        li.appendChild(again);
+        list.appendChild(item);
+        return;
+      }
+      if (STATUS_HELP[a.status]) li.appendChild(el('p', STATUS_HELP[a.status], 'appt-help'));
       if (!a.canCancel) {
         // Lo agendó la veterinaria (o ya empezó): desde la página no se cancela.
         li.appendChild(el('div', 'Para cambiar o cancelar este turno, ' + (state.info && state.info.phone ? 'llamá a la veterinaria.' : 'avisale a la veterinaria.'), 'muted small-text'));
@@ -730,7 +761,7 @@
     if (!petId) return null;
     for (var i = 0; i < state.appointments.length; i++) {
       var a = state.appointments[i];
-      if (String(a.patientId) === String(petId) && a.date === iso) return a;
+      if (a.status !== 'rechazado' && String(a.patientId) === String(petId) && a.date === iso) return a;
     }
     return null;
   }
@@ -981,8 +1012,10 @@
       body: { type: type, patientId: Number(petId), date: date, time: time },
     }).then(function () {
       var t = typeOf(type);
-      setText('done-text', 'Listo: pediste ' + (t ? t.label.toLowerCase() : 'turno') + ' para ' + pet.name + ' el ' + fmtDay(date) + ' a las ' + time +
-        ' hs. Queda pendiente hasta que la veterinaria lo confirme.');
+      setText('done-what', (t ? t.label : 'Turno') + ' para ' + pet.name);
+      setText('done-when', cap(fmtDay(date)) + ' a las ' + time + ' hs');
+      fillStub($('done-stub-day'), $('done-stub-month'), date);
+      askReview();
       show('book-flow', false);
       show('done', true);
       animate($('done'));
@@ -1010,6 +1043,31 @@
         goTo($('day-msg'), { block: 'center' });
       });
     }));
+  });
+
+  /* ---------- reseña: se le pregunta a todos por igual al terminar de pedir, una sola vez por visita ---------- */
+  function reviewAnswered() {
+    try { return !!sessionStorage.getItem(REVIEW_KEY); } catch (e) { return false; }
+  }
+  function askReview() {
+    var url = state.info && state.info.reviewUrl;
+    // Sin enlace cargado, o si ya contestó en esta visita, no se pregunta.
+    if (!url || reviewAnswered()) {
+      show('review-ask', false);
+      return;
+    }
+    $('review-yes').href = url;
+    show('review-ask', true);
+  }
+  function closeReview(answer) {
+    try { sessionStorage.setItem(REVIEW_KEY, answer); } catch (e) { /* sin sessionStorage: se oculta igual */ }
+    show('review-ask', false);
+  }
+  // "Dejar reseña" abre Google en otra pestaña (es un enlace); acá solo se guarda que ya contestó.
+  $('review-yes').addEventListener('click', function () { closeReview('si'); });
+  $('review-no').addEventListener('click', function () {
+    closeReview('no');
+    goTo($('done-again'), { block: 'center' });
   });
 
   $('done-again').addEventListener('click', function () {

@@ -148,9 +148,29 @@
             <h3 id="book-title" tabindex="-1">Pedir turno</h3>
 
             <!-- Resultado del pedido: aparece acá arriba, donde el cliente está mirando -->
-            <div id="done" class="done" role="status" tabindex="-1" hidden>
-              <p id="done-text"></p>
+            <div id="done" class="done" role="status" tabindex="-1" aria-labelledby="done-title" hidden>
+              <h4 id="done-title">Tu turno quedó pendiente</h4>
+              <div class="ticket">
+                <div class="stub" aria-hidden="true"><span class="stub-day" id="done-stub-day"></span><span class="stub-month" id="done-stub-month"></span></div>
+                <div class="ticket-body">
+                  <p id="done-what" class="appt-title"></p>
+                  <p id="done-when" class="appt-when"></p>
+                  <span class="badge pending">Pendiente de confirmación</span>
+                </div>
+              </div>
+              <p id="done-text">Todavía no está confirmado. Volvé a entrar a esta página con tu teléfono para ver si la veterinaria lo aceptó o lo rechazó.</p>
+              <p class="done-more">Para volver fácil, guardá esta página en tus favoritos.</p>
+              <p id="done-call" class="done-more" hidden>Si no podés esperar, llamá al <a id="done-call-link" href="#"></a>.</p>
               <button type="button" class="btn" id="done-again">Pedir otro turno</button>
+
+              <!-- Se le pregunta a todos por igual, sin nada a cambio. Solo si la veterinaria cargó el enlace. -->
+              <div id="review-ask" class="review-ask" role="group" aria-labelledby="review-ask-text" hidden>
+                <p id="review-ask-text">¿Ya nos conocés? Si te gustó la atención, nos ayuda mucho que dejes tu reseña en Google.</p>
+                <div class="row">
+                  <a id="review-yes" class="btn" href="#" target="_blank" rel="noopener">Dejar reseña</a>
+                  <button type="button" class="btn text" id="review-no">Ahora no</button>
+                </div>
+              </div>
             </div>
 
             <div id="book-flow">

@@ -131,7 +131,10 @@ test('la veterinaria rechaza un pedido: el horario vuelve a quedar libre', async
   const sameDay = again.data.days.find((d) => d.date === day.date);
   assert.ok(sameDay && sameDay.times.includes(time), 'el horario rechazado vuelve a estar libre');
   const meB = await pub(tokenB).call('GET', '/me');
-  assert.ok(!meB.data.appointments.some((a) => a.id === req.data.id), 'el rechazado no aparece en los turnos del cliente');
+  // Etapa 3: el rechazo reciente queda a la vista del cliente, marcado como rechazado (ya no como turno activo).
+  const visto = meB.data.appointments.find((a) => a.id === req.data.id);
+  assert.ok(visto && visto.status === 'rechazado' && visto.canCancel === false, 'el rechazado se le muestra al cliente como rechazado');
+  assert.ok(!meB.data.appointments.some((a) => a.id === req.data.id && a.status !== 'rechazado'));
 });
 
 test('el cliente cancela su turno y deja de aparecer', async () => {
@@ -351,7 +354,22 @@ async function clienteNuevo(nombre) {
   assert.equal(r.status, 200, JSON.stringify(r.data));
   return { token: r.data.token, id: r.data.client.id, pet: r.data.pets[0].id };
 }
-const diasLibres = async (type) => (await pub().call('GET', '/slots?type=' + type)).data.days;
+// Estas pruebas necesitan varios días con horarios: se abre toda la semana (antes dependían del horario que dejaba
+// otra prueba y fallaban según el día y la hora en que se corrían).
+let semanaAbierta = false;
+async function abrirSemana() {
+  if (semanaAbierta) return;
+  const cur = (await owner.call('GET', '/settings')).data;
+  const body = Object.assign({}, cur, { hours: { 0: [['08:00', '20:00']], 1: [['08:00', '20:00']], 2: [['08:00', '20:00']], 3: [['08:00', '20:00']], 4: [['08:00', '20:00']], 5: [['08:00', '20:00']], 6: [['08:00', '20:00']] } });
+  delete body.emailReady;
+  const r = await owner.call('PUT', '/settings', body);
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  semanaAbierta = true;
+}
+const diasLibres = async (type) => {
+  await abrirSemana();
+  return (await pub().call('GET', '/slots?type=' + type)).data.days;
+};
 
 test('una mascota no puede tener dos turnos el mismo día, y un cliente no pasa de 3 pedidos sin confirmar', async () => {
   const c = await clienteNuevo('Iris');

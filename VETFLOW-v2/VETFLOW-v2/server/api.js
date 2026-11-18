@@ -100,9 +100,25 @@ async function dispatch(req, res, url) {
    ============================================================ */
 // El dueño es un cliente (tabla clients): su contacto vive ahí una sola vez. Las columnas viejas de la mascota
 // (owner_name, phone, email) solo se usan como respaldo para registros que todavía no tengan cliente.
+// Fecha de hoy en Buenos Aires, dentro de una consulta.
+const TODAY_SQL = "(now() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date";
+/**
+ * "Tuvo una visita": la mascota (alias p) tiene algún cobro, consulta, vacuna, medicación o estudio, o un turno
+ * confirmado cuya fecha ya llegó. Un turno pendiente o futuro todavía no es una visita.
+ */
+const VISITED_SQL =
+  '(EXISTS (SELECT 1 FROM charges x WHERE x.patient_id = p.id AND x.deleted_at IS NULL)' +
+  ' OR EXISTS (SELECT 1 FROM diagnoses x WHERE x.patient_id = p.id AND x.deleted_at IS NULL)' +
+  ' OR EXISTS (SELECT 1 FROM vaccines x WHERE x.patient_id = p.id AND x.deleted_at IS NULL)' +
+  ' OR EXISTS (SELECT 1 FROM medications x WHERE x.patient_id = p.id AND x.deleted_at IS NULL)' +
+  ' OR EXISTS (SELECT 1 FROM complementary_studies x WHERE x.patient_id = p.id AND x.deleted_at IS NULL)' +
+  " OR EXISTS (SELECT 1 FROM appointments x WHERE x.patient_id = p.id AND x.status = 'confirmado' AND x.appointment_date <= " + TODAY_SQL + '))';
+// web_new: se registró sola desde la página de turnos y todavía no tuvo ninguna visita (solo se calcula para las de origen web).
 const PATIENT_SELECT =
   'p.id, p.hc_number, p.name, p.species, p.breed, p.sex, p.neutered, p.birth, p.weight, p.owner_name, p.phone, p.email, p.notes, p.client_id, ' +
-  'c.first_name AS c_first, c.last_name AS c_last, c.phone AS c_phone, c.email AS c_email';
+  'c.first_name AS c_first, c.last_name AS c_last, c.phone AS c_phone, c.email AS c_email, ' +
+  "p.source, to_char(p.created_at AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD') AS created_on, " +
+  "CASE WHEN p.source = 'web' THEN NOT " + VISITED_SQL + ' ELSE FALSE END AS web_new';
 const PATIENT_FROM = ' FROM patients p LEFT JOIN clients c ON c.id = p.client_id';
 const fullName = (first, last) => (String(first || '') + ' ' + String(last || '')).trim();
 
@@ -121,6 +137,9 @@ const mapPatient = (r) => ({
   phone: r.c_first != null ? r.c_phone : r.phone,
   email: r.c_first != null ? r.c_email : r.email,
   notes: r.notes,
+  source: r.source || 'sistema',
+  webNew: !!r.web_new,
+  createdOn: r.created_on || '',
 });
 const mapVaccine = (r) => ({ id: r.id, name: r.name, date: r.applied_on, next: r.next_on || '', productId: r.product_id || null, stockQty: r.stock_qty || 0 });
 const mapProduct = (r) => ({ id: r.id, name: r.name, category: r.category, stock: r.stock, min: r.min_stock, price: Number(r.price), species: r.species || '', cost: r.cost == null ? null : Number(r.cost), supplierId: r.supplier_id || null, barcode: r.barcode || '' });
@@ -1469,6 +1488,81 @@ add('GET', '/api/reports/monthly', { admin: true }, async () => {
   return { months, today };
 });
 
+/* ---------- Clientes que hace mucho no vienen ----------
+   Última actividad de un cliente = la fecha más reciente, entre todas sus mascotas (sin contar las eliminadas), de:
+   cobros, consultas/diagnósticos, vacunas aplicadas, medicación, estudios, registros de peso y turnos confirmados
+   cuya fecha ya llegó. Si nunca tuvo nada de eso, se toma el día en que se creó la ficha del cliente.
+   No se listan los que tienen un turno por venir (pendiente o confirmado) ni los que tienen una vacuna con próxima
+   dosis a futuro: a esos se los espera de vuelta. La medicación no tiene fecha de fin (la duración es texto libre),
+   así que no se puede usar para excluir.
+   Solo lee: no borra, no archiva ni modifica nada. */
+const INACTIVE_KINDS = { consulta: 'Consulta', vacuna: 'Vacuna', cobro: 'Cobro', medicacion: 'Medicación', estudio: 'Estudio', turno: 'Turno', peso: 'Control de peso', alta: 'Alta de la ficha' };
+const INACTIVE_MONTHS = { 4: 120, 6: 180, 12: 365 };
+// Un máximo por tabla y por cliente (7 filas por cliente como mucho) y después se elige la más reciente.
+const lastOf = (table, col, kind, prio, extra) =>
+  'SELECT p.client_id, MAX(x.' + col + ") AS d, '" + kind + "'::text AS kind, " + prio + ' AS prio FROM ' + table + ' x JOIN pets p ON p.id = x.patient_id ' +
+  'WHERE x.' + col + ' <= $1' + (extra ? ' AND ' + extra : '') + ' GROUP BY p.client_id';
+const INACTIVE_SQL =
+  'WITH pets AS (SELECT id, client_id FROM patients WHERE client_id IS NOT NULL AND deleted_at IS NULL), ' +
+  'act AS (' +
+  [
+    lastOf('diagnoses', 'on_date', 'consulta', 1, 'x.deleted_at IS NULL'),
+    lastOf('vaccines', 'applied_on', 'vacuna', 2, 'x.deleted_at IS NULL'),
+    lastOf('charges', 'on_date', 'cobro', 3, 'x.deleted_at IS NULL'),
+    lastOf('medications', 'on_date', 'medicacion', 4, 'x.deleted_at IS NULL'),
+    lastOf('complementary_studies', 'on_date', 'estudio', 5, 'x.deleted_at IS NULL'),
+    lastOf('appointments', 'appointment_date', 'turno', 6, "x.status = 'confirmado'"),
+    lastOf('weights', 'fecha', 'peso', 7, ''),
+  ].join(' UNION ALL ') +
+  '), ' +
+  'last AS (SELECT DISTINCT ON (client_id) client_id, d, kind FROM act ORDER BY client_id, d DESC, prio) ' +
+  'SELECT c.id, c.first_name, c.last_name, c.phone, c.source, ' +
+  "COALESCE(l.d, (c.created_at AT TIME ZONE 'America/Argentina/Buenos_Aires')::date) AS last_date, COALESCE(l.kind, 'alta') AS last_kind, " +
+  // Cliente web que nunca tuvo una visita (un registro de peso solo no cuenta como visita).
+  "(c.source = 'web' AND NOT EXISTS (SELECT 1 FROM act v WHERE v.client_id = c.id AND v.kind <> 'peso')) AS web_no_visit " +
+  'FROM clients c LEFT JOIN last l ON l.client_id = c.id ' +
+  "WHERE COALESCE(l.d, (c.created_at AT TIME ZONE 'America/Argentina/Buenos_Aires')::date) < $2 " +
+  "AND NOT EXISTS (SELECT 1 FROM appointments a JOIN pets p ON p.id = a.patient_id WHERE p.client_id = c.id AND a.status IN ('pendiente', 'confirmado') AND a.appointment_date >= $1) " +
+  'AND NOT EXISTS (SELECT 1 FROM vaccines v JOIN pets p ON p.id = v.patient_id WHERE p.client_id = c.id AND v.deleted_at IS NULL AND v.next_on >= $1) ' +
+  'ORDER BY last_date, c.id LIMIT $3';
+const INACTIVE_MAX = 500;
+add('GET', '/api/reports/inactive-clients', { admin: true }, async (ctx) => {
+  const months = Number(ctx.query.get('months') || 4);
+  const days = INACTIVE_MONTHS[months];
+  if (!days) throw U.bad('El período tiene que ser de 4, 6 o 12 meses.');
+  const today = U.todayAR();
+  const r = await db.query(INACTIVE_SQL, [today, U.addDays(today, -days), INACTIVE_MAX + 1]);
+  const rows = r.rows.slice(0, INACTIVE_MAX);
+  const pets = {};
+  if (rows.length) {
+    const pr = await db.query('SELECT id, name, client_id FROM patients WHERE deleted_at IS NULL AND client_id = ANY($1::int[]) ORDER BY lower(name), id', [rows.map((x) => x.id)]);
+    pr.rows.forEach((x) => (pets[x.client_id] = pets[x.client_id] || []).push({ id: x.id, name: x.name }));
+  }
+  const dayNum = (iso) => Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10))) / 86400000;
+  return {
+    months,
+    days,
+    today,
+    more: r.rows.length > INACTIVE_MAX,
+    items: rows.map((x) => {
+      const since = dayNum(today) - dayNum(x.last_date);
+      return {
+        id: x.id,
+        name: fullName(x.first_name, x.last_name),
+        phone: x.phone,
+        source: x.source,
+        webNoVisit: !!x.web_no_visit,
+        pets: pets[x.id] || [],
+        lastDate: x.last_date,
+        lastKind: x.last_kind,
+        lastLabel: INACTIVE_KINDS[x.last_kind] || x.last_kind,
+        daysSince: since,
+        monthsSince: Math.floor(since / 30),
+      };
+    }),
+  };
+});
+
 add('GET', '/api/reports/services', { admin: true }, async (ctx) => {
   const { from, to, days } = reportRange(ctx.query);
   const r = await db.query(
@@ -1599,11 +1693,19 @@ const mapClient = (r, pets) => ({
   email: r.email,
   phone: r.phone,
   address: r.address,
+  source: r.source || 'sistema',
+  webNew: !!r.web_new,
+  createdOn: r.created_on || '',
   pets: pets || [],
 });
+// web_new: el cliente se registró solo desde la página y ninguna de sus mascotas tuvo todavía una visita.
+const CLIENT_SELECT =
+  'c.id, c.first_name, c.last_name, c.email, c.phone, c.address, c.source, ' +
+  "to_char(c.created_at AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD') AS created_on, " +
+  "CASE WHEN c.source = 'web' THEN NOT EXISTS (SELECT 1 FROM patients p WHERE p.client_id = c.id AND p.deleted_at IS NULL AND " + VISITED_SQL + ') ELSE FALSE END AS web_new';
 async function listClients(db_) {
   const [cl, pt] = await Promise.all([
-    db_.query('SELECT id, first_name, last_name, email, phone, address FROM clients ORDER BY lower(last_name), lower(first_name), id'),
+    db_.query('SELECT ' + CLIENT_SELECT + ' FROM clients c ORDER BY lower(c.last_name), lower(c.first_name), c.id'),
     db_.query('SELECT id, hc_number, name, species, client_id FROM patients WHERE deleted_at IS NULL AND client_id IS NOT NULL ORDER BY lower(name), id'),
   ]);
   const by = {};
@@ -1615,7 +1717,7 @@ add('GET', '/api/clients', async () => ({ items: await listClients(db) }));
 // Ficha del cliente: contacto, mascotas y el historial de pagos de todas sus mascotas.
 add('GET', '/api/clients/:id', async (ctx) => {
   const id = U.idParam(ctx.params.id);
-  const r = await db.query('SELECT id, first_name, last_name, email, phone, address FROM clients WHERE id = $1', [id]);
+  const r = await db.query('SELECT ' + CLIENT_SELECT + ' FROM clients c WHERE c.id = $1', [id]);
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró el cliente');
   const [pets, pays] = await Promise.all([
     db.query('SELECT id, hc_number, name, species, breed FROM patients WHERE client_id = $1 AND deleted_at IS NULL ORDER BY lower(name), id', [id]),
@@ -1919,7 +2021,7 @@ add('GET', '/api/appointments/pending-summary', async () => pendingWeb());
 add('POST', '/api/appointments/:id/status', async (ctx) => {
   const id = U.idParam(ctx.params.id);
   const status = U.oneOf(ctx.body && ctx.body.status, ['confirmado', 'rechazado'], 'Estado');
-  const r = await db.query("UPDATE appointments SET status = $1 WHERE id = $2 AND status = 'pendiente' RETURNING id", [status, id]);
+  const r = await db.query("UPDATE appointments SET status = $1, status_at = now() WHERE id = $2 AND status = 'pendiente' RETURNING id", [status, id]);
   if (!r.rows[0]) throw new HttpError(404, 'No se encontró un turno pendiente con ese número.');
   return { id, status };
 });
@@ -1989,20 +2091,25 @@ async function petsOf(clientId) {
   const r = await db.query('SELECT id, name, species, breed FROM patients WHERE client_id = $1 AND deleted_at IS NULL ORDER BY name, id', [clientId]);
   return r.rows.map((x) => ({ id: x.id, name: x.name, species: x.species, breed: x.breed }));
 }
+// Cuántos días se le sigue mostrando al cliente un pedido que la veterinaria rechazó.
+const REJECTED_DAYS = 7;
 async function upcomingOf(clientId) {
   const r = await db.query(
     "SELECT a.id, a.patient_id, p.name AS patient_name, a.appointment_type, a.appointment_date, to_char(a.appointment_time, 'HH24:MI') AS hhmm, a.status, a.source " +
       'FROM appointments a JOIN patients p ON p.id = a.patient_id ' +
-      "WHERE p.client_id = $1 AND p.deleted_at IS NULL AND a.status IN ('pendiente', 'confirmado') AND a.appointment_date >= $2 " +
+      // Además de los que vienen, los pedidos web que la veterinaria rechazó en los últimos días: si no, el turno
+      // desaparecería de la lista sin explicación. Siempre filtrado por el cliente de la sesión.
+      "WHERE p.client_id = $1 AND p.deleted_at IS NULL AND ((a.status IN ('pendiente', 'confirmado') AND a.appointment_date >= $2) " +
+      "OR (a.status = 'rechazado' AND a.source = 'web' AND a.status_at >= now() - ($3 || ' days')::interval)) " +
       'ORDER BY a.appointment_date, a.appointment_time, a.id',
-    [clientId, U.todayAR()]
+    [clientId, U.todayAR(), String(REJECTED_DAYS)]
   );
   const now = nowAR();
   return r.rows.map((x) => ({
     id: x.id, patientId: x.patient_id, patientName: x.patient_name, type: x.appointment_type,
     typeLabel: U.APPT_LABELS[x.appointment_type] || x.appointment_type, date: x.appointment_date, time: x.hhmm, status: x.status,
     // Desde la página se cancela solo lo que se pidió desde la página; lo que agendó la veterinaria, por teléfono.
-    canCancel: x.source === 'web' && (x.appointment_date > now.date || booking.toMin(x.hhmm) > now.min),
+    canCancel: x.status !== 'rechazado' && x.source === 'web' && (x.appointment_date > now.date || booking.toMin(x.hhmm) > now.min),
   }));
 }
 async function clientSummary(client, withToken) {
@@ -2039,8 +2146,8 @@ const webPetInput = (p) => {
 };
 async function insertPet(q, clientId, ownerName, pet) {
   await q.query(
-    "INSERT INTO patients (name, species, breed, sex, neutered, birth, weight, owner_name, phone, email, notes, phone_norm, client_id) " +
-      "VALUES ($1, $2, '', $3, FALSE, NULL, NULL, $4, '', '', '', '', $5)",
+    "INSERT INTO patients (name, species, breed, sex, neutered, birth, weight, owner_name, phone, email, notes, phone_norm, client_id, source) " +
+      "VALUES ($1, $2, '', $3, FALSE, NULL, NULL, $4, '', '', '', '', $5, 'web')",
     [pet.name, pet.species, pet.sex, ownerName, clientId]
   );
 }
@@ -2053,6 +2160,7 @@ add('GET', '/api/public/info', { public: true }, async () => {
     address: st.address,
     professionalName: st.professionalName,
     mapsUrl: st.mapsUrl,
+    reviewUrl: st.reviewUrl || '',
     reviews: st.reviews,
     hours: st.hours,
     methods: st.methods,
@@ -2133,7 +2241,7 @@ add('POST', '/api/public/register', { public: true }, async (ctx) => {
     // Se vuelve a mirar el tope con el candado tomado: varias altas a la vez no lo pasan.
     if (booking.blocked(ipKey, L.signupsPerIp)) throw new HttpError(429, PUBLIC_IP_LIMIT_MSG);
     if (booking.blocked('alta-total:dia', L.signupsPerDay)) throw new HttpError(429, PUBLIC_CLOSED_MSG);
-    const r = await c.query("INSERT INTO clients (first_name, last_name, email, phone, phone_norm, address) VALUES ($1, $2, '', $3, $4, '') RETURNING id, first_name, last_name, phone_norm", [first, last, ph.phone, ph.norm]);
+    const r = await c.query("INSERT INTO clients (first_name, last_name, email, phone, phone_norm, address, source) VALUES ($1, $2, '', $3, $4, '', 'web') RETURNING id, first_name, last_name, phone_norm", [first, last, ph.phone, ph.norm]);
     await insertPet(c, r.rows[0].id, fullName(first, last), pet);
     booking.hit(ipKey, 60 * MIN);
     booking.hit('alta-total:dia', 24 * 60 * MIN);
@@ -2219,7 +2327,7 @@ add('POST', '/api/public/appointments/:id/cancel', { public: true }, async (ctx)
   if (!cur.rows[0]) throw new HttpError(404, 'No encontramos ese turno para cancelar. Puede que ya haya pasado.');
   // Lo que agendó la veterinaria (por ejemplo una cirugía) no se cancela desde la página: se avisa por teléfono.
   if (cur.rows[0].source !== 'web') throw new HttpError(409, 'Ese turno lo agendó la veterinaria. Para cancelarlo o cambiarlo, llamá a la veterinaria.');
-  const r = await db.query("UPDATE appointments SET status = 'cancelado' WHERE id = $1 AND source = 'web' AND status IN ('pendiente', 'confirmado') RETURNING id", [id]);
+  const r = await db.query("UPDATE appointments SET status = 'cancelado', status_at = now() WHERE id = $1 AND source = 'web' AND status IN ('pendiente', 'confirmado') RETURNING id", [id]);
   if (!r.rows[0]) throw new HttpError(404, 'No encontramos ese turno para cancelar. Puede que ya haya pasado.');
   return { ok: true };
 });

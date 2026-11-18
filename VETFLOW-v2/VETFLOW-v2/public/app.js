@@ -267,8 +267,8 @@ async function loadCash(){
 }
 async function loadReports(){
   var rq=ui.rfrom&&ui.rto?'from='+ui.rfrom+'&to='+ui.rto:'days='+ui.rep;
-  var r=await Promise.all([api('/reports/monthly'),api('/reports/services?'+rq),api('/reports/products?'+rq)]);
-  ui.rmonthly=r[0].months;ui.rtoday=r[0].today;ui.rservices=r[1].items;ui.rproducts=r[2].items;ui.rdays=r[2].days;
+  var r=await Promise.all([api('/reports/monthly'),api('/reports/services?'+rq),api('/reports/products?'+rq),api('/reports/inactive-clients?months='+(ui.rinact||4))]);
+  ui.rmonthly=r[0].months;ui.rtoday=r[0].today;ui.rservices=r[1].items;ui.rproducts=r[2].items;ui.rdays=r[2].days;ui.rinactive=r[3];
 }
 /* Después de guardar algo: vuelve a pedir los datos y redibuja. */
 async function reload(){
@@ -531,6 +531,20 @@ function filteredPatients(){
     return true;
   });
 }
+/* Etapa 3: clientes y mascotas que se registraron solos desde la página de turnos.
+   La etiqueta de origen queda siempre (es un dato); se resalta, y aparece la nota, mientras no hayan tenido una visita
+   (un cobro, consulta, vacuna, medicación, estudio o turno confirmado que ya llegó). Editar la ficha no la quita.
+   La nota la muestra el sistema: no se escribe en las notas de la veterinaria. */
+function webChip(x){
+  if(!x||x.source!=='web')return '';
+  return '<span class="chip web'+(x.webNew?' new':'')+'" title="'+(x.webNew?'Se registró desde la página de turnos y todavía no tuvo ninguna visita':'Se registró desde la página de turnos')+'">Creado desde la web</span>';
+}
+function webNote(x){
+  if(!x||x.source!=='web')return '';
+  var when=x.createdOn?' el '+fmtDate(x.createdOn):'';
+  return x.webNew?'<p class="note webnote"><b>Creado desde la web.</b> Se registró solo desde la página de turnos'+when+' y todavía no tuvo ninguna visita. Completá los datos si vuelve.</p>':
+    '<p class="note webnote seen"><b>Creado desde la web.</b> Se registró solo desde la página de turnos'+when+'.</p>';
+}
 function listHTML(){
   var L=filteredPatients();
   if(!L.length)return '<li class="empty">'+(S.patients.length?'No hay pacientes con ese filtro.':'Todavía no cargaste ningún paciente. Empezá con “Nuevo paciente”.')+'</li>';
@@ -539,7 +553,7 @@ function listHTML(){
     var chip=al==='bad'?'<span class="chip bad">Vacuna vencida</span>':al==='warn'?'<span class="chip warn">Vacuna por vencer</span>':'';
     return '<li><button class="pitem" data-action="select" data-id="'+p.id+'" aria-current="'+(p.id===ui.sel)+'">'+
       '<span class="avatar" aria-hidden="true">'+emo(p)+'</span>'+
-      '<span class="pi-main"><b>'+esc(p.name)+'</b><small>'+(p.hc?'<span class="hc">'+hcNum(p)+'</span> · ':'')+esc(p.breed||p.species)+' · '+esc(p.owner)+'</small></span>'+chip+'</button></li>';
+      '<span class="pi-main"><b>'+esc(p.name)+'</b><small>'+(p.hc?'<span class="hc">'+hcNum(p)+'</span> · ':'')+esc(p.breed||p.species)+' · '+esc(p.owner)+'</small>'+webChip(p)+'</span>'+chip+'</button></li>';
   }).join('');
 }
 var emptyPane=function(){return '<p class="empty">'+(S.patients.length?'Elegí un paciente de la lista para ver su historia clínica, o agregá uno nuevo.':'Cuando cargues el primer paciente vas a ver acá su historia clínica.')+'</p>';};
@@ -690,11 +704,12 @@ function detailHTML(p){
 
   return '<button class="btn back" data-action="back">Volver a la lista</button>'+
     '<header class="phead"><div class="phead-id"><div class="avatar avatar--lg" aria-hidden="true">'+emo(p)+'</div>'+
-    '<div class="info"><h2>'+esc(p.name)+(p.hc?' <span class="hcbadge" title="Número de historia clínica">'+hcLabel(p)+'</span>':'')+'</h2>'+
+    '<div class="info"><h2>'+esc(p.name)+(p.hc?' <span class="hcbadge" title="Número de historia clínica">'+hcLabel(p)+'</span>':'')+' '+webChip(p)+'</h2>'+
     '<p class="meta">Dueño: '+(p.clientId?'<button class="link ownerlink" data-action="open-client" data-id="'+p.clientId+'" title="Ver datos de contacto y mascotas del cliente">'+esc(p.owner)+'</button>':esc(p.owner))+'</p></div></div>'+
     clinicStrip(p)+
     '<div class="pactions"><button class="btn primary" data-action="charge">Cobrar servicio</button><button class="btn" data-action="edit-patient">Editar datos</button><button class="btn" data-action="print">Imprimir</button>'+
     (isAdmin()?'<button class="btn danger-o" data-action="del-patient">Eliminar</button>':'')+'</div></header>'+
+    webNote(p)+
     (p.notes?'<p class="note"><b>Notas:</b> '+esc(p.notes)+'</p>':'')+
     sec('Peso','add-weight','Registrar peso',weightHTML(p))+
     sec('Vacunas','add-vac','Agregar vacuna',vacHTML)+
@@ -970,6 +985,27 @@ function topList(key,items,rowFn,head,emptyMsg,allLabel){
   var more=items.all.length>Math.min(5,items.top.length)?'<button class="btn rep-more" data-action="rep-all" data-v="'+key+'" aria-expanded="'+open+'">'+(open?'Ver menos':'Ver todos ('+items.all.length+(allLabel||'')+')')+'</button>':'';
   return (shown.length?'<div class="tbl-wrap"><table class="tbl"><thead><tr>'+head+'</tr></thead><tbody>'+shown.map(rowFn).join('')+'</tbody></table></div>':'<p class="empty">'+emptyMsg+'</p>')+more;
 }
+// Clientes sin actividad hace 4, 6 o 12 meses. Solo informa: cada fila abre la ficha del cliente para revisarla.
+function repInactive(){
+  var R=ui.rinactive;if(!R)return '';
+  var label={4:'4 meses',6:'6 meses',12:'un año'}[R.months]||R.months+' meses';
+  var row=function(x){
+    var pets=x.pets.length?x.pets.map(function(p){return esc(p.name);}).join(', '):'<span class="mut">Sin mascotas</span>';
+    var ago=x.monthsSince>=1?plural(x.monthsSince,'mes','meses'):plural(x.daysSince,'día','días');
+    return '<tr'+(x.webNoVisit?' class="inact-web"':'')+'><td><button class="link" data-action="open-client" data-id="'+x.id+'" title="Abrir la ficha de '+esc(x.name)+'"><b>'+esc(x.name)+'</b></button>'+
+      (x.source==='web'?'<br>'+webChip({source:'web',webNew:x.webNoVisit}):'')+(x.webNoVisit?'<br><small>Se anotó por la web y nunca tuvo una visita.</small>':'')+'</td>'+
+      '<td>'+(x.phone?esc(x.phone):'<span class="mut">Sin teléfono</span>')+'</td><td>'+pets+'</td>'+
+      '<td>'+fmtDate(x.lastDate)+'<br><small>'+esc(x.lastLabel)+'</small></td><td class="num">'+ago+'</td></tr>';
+  };
+  var nWeb=R.items.filter(function(x){return x.webNoVisit;}).length;
+  return '<section class="repsec" id="rep-inactive"><div class="toolbar"><h2>Clientes que hace mucho no vienen</h2>'+segHTML('rinact',[['4','4 meses'],['6','6 meses'],['12','1 año']],String(R.months))+'</div>'+
+    '<p class="rep-hint">Clientes sin actividad desde hace más de '+label+'. La <b>última actividad</b> es la fecha más reciente entre cobros, consultas, vacunas, medicación, estudios, registros de peso y turnos confirmados de cualquiera de sus mascotas; si nunca tuvo nada, es el día en que se creó la ficha. '+
+      'No aparecen los que tienen un turno por venir ni una vacuna con próxima dosis a futuro.</p>'+
+    (R.items.length?'<p class="rep-hint"><b>'+plural(R.items.length,'cliente','clientes')+'</b>'+(nWeb?', de los cuales '+plural(nWeb,'se anotó','se anotaron')+' por la web y nunca '+(nWeb===1?'vino':'vinieron')+' (los más claros para revisar)':'')+'. Del que más tiempo lleva al que menos.</p>':'')+
+    topList('inact',{top:R.items,all:R.items},row,'<th>Cliente</th><th>Teléfono</th><th>Mascotas</th><th>Última actividad</th><th class="num">Hace</th>','No hay clientes sin actividad desde hace más de '+label+'.')+
+    (R.more?'<p class="rep-hint">Se muestran los 500 que más tiempo llevan.</p>':'')+
+    '<p class="rep-hint">Este listado no borra ni cambia nada. Tocá un nombre para abrir su ficha y decidir. Para eliminar una ficha: primero la mascota, desde su historia clínica (queda 30 días en la Papelera), y después el cliente.</p></section>';
+}
 function viewReportes(){
   if(!ui.rmonthly||!ui.rservices||!ui.rproducts)return '<section class="farm"><div class="head"><h1>Reportes</h1></div><p class="empty">Cargando…</p></section>';
   ui.repAll=ui.repAll||{};
@@ -987,7 +1023,7 @@ function viewReportes(){
     return '<tr><td><b>'+esc(x.name)+'</b><br><small>'+esc(x.category)+'</small></td><td><div class="bars"><div class="bar" data-w="'+Math.max(4,Math.round(x.units/maxU*90))+'px"></div><span>'+x.units+'</span></div></td><td class="num">'+x.stock+'</td><td>'+st+'</td></tr>';
   };
   var head='<section class="farm rep"><div class="head"><h1>Reportes</h1><button class="btn" data-action="rep-export">Exportar movimientos (CSV)</button></div>';
-  if(!R.M.length)return head+'<p class="empty">Todavía no hay ingresos ni egresos para mostrar. Cuando cobres o registres movimientos en la caja, acá vas a ver cómo va el negocio.</p></section>';
+  if(!R.M.length)return head+'<p class="empty">Todavía no hay ingresos ni egresos para mostrar. Cuando cobres o registres movimientos en la caja, acá vas a ver cómo va el negocio.</p>'+repInactive()+'</section>';
   return head+repKpis(R)+
     '<section class="panel rep-chart"><div class="rep-chart-head"><h2>Ingresos y egresos por mes</h2>'+
       '<div class="legend"><span><i class="sw-in"></i>Ingresos</span><span><i class="sw-line"></i>Egresos</span><span><i class="sw-est"></i>Estimado</span></div></div>'+
@@ -996,7 +1032,7 @@ function viewReportes(){
     '<section class="repsec"><h2>Mes por mes</h2>'+repTable(R)+'</section>'+
     '<section class="repsec"><div class="toolbar"><h2>Servicios y productos '+period+'</h2>'+segHTML('rep',[['30','30 días'],['90','3 meses'],['365','1 año']],ui.rfrom&&ui.rto?'':ui.rep)+rangeHTML('rfrom','rto',ui.rfrom,ui.rto)+'</div>'+
       '<div class="rep-cols"><div class="grp"><h3>Servicios más cobrados</h3>'+topList('svc',{top:ui.rservices,all:ui.rservices},svRow,'<th>Servicio</th><th>Veces</th><th class="num">Total</th>','No hay servicios cobrados en este período.')+'</div>'+
-      '<div class="grp"><h3>Productos que más rotan</h3>'+topList('prod',{top:moved,all:ui.rproducts},prRow,'<th>Producto</th><th>Unidades</th><th class="num">Stock</th><th>Cuánto dura</th>','Ningún producto se vendió ni se usó en este período.',', con los que no rotaron')+'</div></div></section></section>';
+      '<div class="grp"><h3>Productos que más rotan</h3>'+topList('prod',{top:moved,all:ui.rproducts},prRow,'<th>Producto</th><th>Unidades</th><th class="num">Stock</th><th>Cuánto dura</th>','Ningún producto se vendió ni se usó en este período.',', con los que no rotaron')+'</div></div></section>'+repInactive()+'</section>';
 }
 
 /* ============================================================
@@ -1015,7 +1051,7 @@ function clientListHTML(){
   if(!L.length)return '<li class="empty">'+(S.clients.length?'No hay clientes con esa búsqueda.':'Todavía no hay clientes. Se crean al cargar una mascota o con “Nuevo cliente”.')+'</li>';
   return L.map(function(c){
     return '<li><button class="pitem" data-action="select-client" data-id="'+c.id+'" aria-current="'+(c.id===ui.csel)+'"><span class="avatar" aria-hidden="true">'+ico('user')+'</span>'+
-      '<span class="pi-main"><b>'+esc(c.name)+'</b><small>'+plural(c.pets.length,'mascota','mascotas')+(c.phone?' · '+esc(c.phone):'')+'</small></span></button></li>';
+      '<span class="pi-main"><b>'+esc(c.name)+'</b><small>'+plural(c.pets.length,'mascota','mascotas')+(c.phone?' · '+esc(c.phone):'')+'</small>'+webChip(c)+'</span></button></li>';
   }).join('');
 }
 function clientDetailHTML(c){
@@ -1031,10 +1067,11 @@ function clientDetailHTML(c){
     return '<tr><td>'+fmtDate(x.date)+'</td><td><button class="link" data-action="open-patient" data-id="'+x.patientId+'">'+esc(x.patient)+'</button></td><td>'+esc(x.concept)+'</td><td>'+esc(x.method||'—')+'</td><td class="num">'+money(x.amount)+'</td></tr>';
   }).join('')+'</tbody><tfoot><tr><td colspan="5"><b>Total pagado por todas sus mascotas:</b> '+money(c.totalPaid)+'</td></tr></tfoot></table></div>':'<p class="empty">Todavía no se cobró nada a las mascotas de este cliente.</p>';
   return '<button class="btn back" data-action="back-client">Volver a la lista</button>'+
-    '<header class="phead"><div class="avatar avatar--lg" aria-hidden="true">'+ico('user')+'</div><div class="info"><h2>'+esc(c.name)+'</h2>'+
+    '<header class="phead"><div class="avatar avatar--lg" aria-hidden="true">'+ico('user')+'</div><div class="info"><h2>'+esc(c.name)+' '+webChip(c)+'</h2>'+
     '<p class="meta">'+contact.join(' · ')+'</p><p class="meta">'+(c.address?esc(c.address):'<span class="mut">Sin dirección</span>')+'</p></div>'+
     '<div class="pactions"><button class="btn primary" data-action="add-pet">Agregar mascota</button><button class="btn" data-action="edit-client">Editar datos</button>'+
     (isAdmin()?'<button class="btn danger-o" data-action="del-client">Eliminar</button>':'')+'</div></header>'+
+    webNote(c)+
     '<section class="sec"><div class="sec-head"><h3>Mascotas ('+c.pets.length+')</h3></div>'+pets+'</section>'+
     '<section class="sec"><div class="sec-head"><h3>Historial de pagos</h3></div>'+pay+'</section>';
 }
@@ -1280,8 +1317,10 @@ function configGeneral(){
       fld('Teléfono de la veterinaria','clinicPhone',{type:'tel',value:st.phone||'',maxlength:50,pattern:PHONE_PAT,title:'Solo números, espacios, + , - y paréntesis (mínimo 6 dígitos)',ph:'Ej: 11 4444-5555'})+
       fld('Dirección','clinicAddress',{value:st.address||'',maxlength:200,ph:'Calle, número, localidad'})+
       fld('Enlace de Google Maps','mapsUrl',{value:st.mapsUrl||'',maxlength:300,full:true,ph:'https://maps.app.goo.gl/...'})+
+      fld('Enlace para dejar una reseña en Google','reviewUrl',{value:st.reviewUrl||'',maxlength:300,full:true,ph:'https://g.page/r/.../review'})+
       fld('Reseñas (una por línea: estrellas | autor | texto)','reviews',{type:'textarea',value:(st.reviews||[]).map(function(r){return r.stars+' | '+r.author+' | '+r.text;}).join('\n'),full:true,ph:'5 | María P. | Muy buena atención con mi perro.'})+
-      '</div><p class="cfg-hint">Estos datos se muestran en la página de turnos. El teléfono es el del botón "Llamar" y el que ve un cliente cuando la página no lo reconoce. Las reseñas las copiás de Google Maps a mano: las que quieras mostrar, con su autor y la cantidad de estrellas.</p></section>'+
+      '</div><p class="cfg-hint">Estos datos se muestran en la página de turnos. El teléfono es el del botón "Llamar" y el que ve un cliente cuando la página no lo reconoce. Las reseñas las copiás de Google Maps a mano: las que quieras mostrar, con su autor y la cantidad de estrellas.</p>'+
+      '<p class="cfg-hint"><b>Enlace para dejar una reseña:</b> es distinto del de Google Maps. Lo conseguís en tu Perfil de Empresa de Google: buscá tu veterinaria en Google con tu cuenta, tocá “Pedir reseñas” (o “Conseguir más reseñas”) y copiá el enlace que te da. Si lo cargás, cuando un cliente termina de pedir un turno la página le pregunta si quiere dejar una reseña. Si lo dejás vacío, no se pregunta nada.</p></section>'+
     '<section class="panel"><h2>Horario de atención</h2><p class="cfg-hint">Un día puede tener más de un horario, por ejemplo de 08:00 a 12:00 y de 16:00 a 19:00. Al anotar un turno fuera de estos horarios, la agenda te avisa antes de guardarlo.</p>'+
       '<div class="hours" id="cfghours">'+WEEK_ORDER.map(hourDayHTML).join('')+'</div></section>'+
     '<section class="panel"><h2>Medios de pago</h2><p class="cfg-hint">Los que marques son los que aparecen al cobrar y al registrar ingresos o egresos.</p>'+
@@ -1339,7 +1378,7 @@ async function saveConfig(){
   var body=Object.assign({},S.settings,{shopName:name.value.trim(),hours:h.hours,methods:methods,
     professionalName:f.querySelector('[name="professionalName"]').value.trim(),
     phone:f.querySelector('[name="clinicPhone"]').value.trim(),address:f.querySelector('[name="clinicAddress"]').value.trim(),
-    mapsUrl:f.querySelector('[name="mapsUrl"]').value.trim(),reviews:reviews});
+    mapsUrl:f.querySelector('[name="mapsUrl"]').value.trim(),reviewUrl:f.querySelector('[name="reviewUrl"]').value.trim(),reviews:reviews});
   delete body.emailReady;
   var r;
   try{r=await api('/settings',{method:'PUT',body:body});}
@@ -2328,6 +2367,7 @@ var actions={
   cashf:function(id,b){ui.cashf=b.dataset.v;return refreshView();},
   cashm:function(id,b){ui.cashm=b.dataset.v;return refreshView();},
   rep:function(id,b){ui.rep=b.dataset.v;ui.rfrom='';ui.rto='';return refreshView();},
+  rinact:function(id,b){ui.rinact=Number(b.dataset.v);return refreshView();},
   'rep-all':function(id,b){ui.repAll=ui.repAll||{};ui.repAll[b.dataset.v]=!ui.repAll[b.dataset.v];render();},
   'rep-export':function(){
     var from=ui.rfrom&&ui.rto?ui.rfrom:shiftDays(-Number(ui.rep)),to=ui.rfrom&&ui.rto?ui.rto:todayIso();

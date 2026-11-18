@@ -7,8 +7,8 @@ const U = require('./util');
 // Tablas incluidas en las copias, en orden de dependencia (las de abajo dependen de las de arriba).
 // No se incluyen los usuarios ni sus contraseñas.
 const TABLES = [
-  ['clients', ['id', 'first_name', 'last_name', 'email', 'phone', 'address', 'created_at']],
-  ['patients', ['id', 'name', 'species', 'breed', 'sex', 'neutered', 'birth', 'weight', 'owner_name', 'phone', 'email', 'notes', 'deleted_at', 'hc_number', 'client_id']],
+  ['clients', ['id', 'first_name', 'last_name', 'email', 'phone', 'address', 'created_at', 'source']],
+  ['patients', ['id', 'name', 'species', 'breed', 'sex', 'neutered', 'birth', 'weight', 'owner_name', 'phone', 'email', 'notes', 'deleted_at', 'hc_number', 'client_id', 'source']],
   ['weights', ['id', 'patient_id', 'fecha', 'kg']],
   ['suppliers', ['id', 'name', 'phone', 'email', 'description']], // antes que productos y compras, que lo referencian
   // "products" y "stock_movements" van antes que vacunas, medicación y caja, que apuntan a ellos.
@@ -22,7 +22,7 @@ const TABLES = [
   ['complementary_studies', ['id', 'patient_id', 'on_date', 'title', 'notes', 'deleted_at']],
   // Solo los metadatos de los adjuntos: los archivos quedan en Supabase Storage (no viajan en el JSON).
   ['study_attachments', ['id', 'study_id', 'file_path', 'file_name', 'mime_type', 'size_bytes', 'created_at']],
-  ['appointments', ['id', 'patient_id', 'title', 'description', 'appointment_date', 'appointment_time', 'appointment_type', 'duration_min', 'status', 'source']],
+  ['appointments', ['id', 'patient_id', 'title', 'description', 'appointment_date', 'appointment_time', 'appointment_type', 'duration_min', 'status', 'source', 'status_at']],
   ['cash_movements', ['id', 'on_date', 'kind', 'concept', 'category', 'method', 'amount', 'stock_movement_id', 'supplier_id']],
   ['charges', ['id', 'patient_id', 'on_date', 'concept', 'amount', 'method', 'cash_id', 'line_type', 'deleted_at', 'cash_was']],
   ['cash_closings', ['id', 'closed_at', 'on_date', 'expected', 'counted', 'difference', 'note', 'closed_by', 'adjustment_id']],
@@ -40,7 +40,8 @@ const COL_DEFAULTS = {
   charges: { line_type: 'service', cash_was: false },
   appointments: { duration_min: 30, status: 'confirmado', source: 'sistema' },
   study_attachments: { created_at: new Date().toISOString() },
-  clients: { created_at: new Date().toISOString() },
+  clients: { created_at: new Date().toISOString(), source: 'sistema' },
+  patients: { source: 'sistema' },
   vaccines: { stock_qty: 0 },
   medications: { stock_qty: 0 },
 };

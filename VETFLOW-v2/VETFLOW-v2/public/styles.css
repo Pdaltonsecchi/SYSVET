@@ -790,3 +790,16 @@ body[data-stale] #app,body[data-stale] dialog{pointer-events:none;opacity:.55}
 /* "Cancelar/Cerrar" dentro de una ventana: fondo apenas marcado para que se lea como botón */
 .actions .btn.ghost{background:var(--fill-soft)}
 .actions .btn.ghost:hover:not(:disabled),.actions .btn.ghost:active:not(:disabled){background:var(--fill)}
+
+/* ---------- Etapa 3 ---------- */
+/* Origen "Creado desde la web": discreta siempre; resaltada mientras no haya tenido una visita. */
+.chip.web{background:var(--fill);color:var(--ink)}
+.chip.web.new{background:var(--info-bg);color:var(--info)}
+.pi-main .chip{align-self:flex-start;margin-top:.25rem}
+.phead h2 .chip{vertical-align:middle;font-family:var(--f-body)}
+.note.webnote{background:var(--info-bg);color:#1e3a8a}
+.note.webnote.seen{background:var(--fill-soft);color:var(--muted)}
+/* Reporte de clientes que hace mucho no vienen. */
+.rep-hint{max-width:78ch;margin:0 0 .75rem;color:var(--muted);font-size:.95rem}
+.rep-hint b{color:var(--ink)}
+tr.inact-web td:first-child{box-shadow:inset 3px 0 0 var(--info)}
