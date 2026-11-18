@@ -85,6 +85,10 @@ async function getSettings(q) {
   const value = Object.assign({}, DEFAULT_SETTINGS, saved, { report: Object.assign({}, DEFAULT_SETTINGS.report, saved.report || {}) });
   value.hours = normHours(value.hours);
   if (!value.shopName) value.shopName = process.env.CLINIC_NAME || 'SYSVET';
+  // Nombre para la página pública: solo el que cargó el dueño (o CLINIC_NAME). Nunca el "SYSVET" de relleno del sistema
+  // interno; sin nombre, la página dice "Veterinaria".
+  const own = String(saved.shopName || process.env.CLINIC_NAME || '').trim();
+  value.publicName = own && own.toUpperCase() !== 'SYSVET' ? own : '';
   cache = { at: Date.now(), value };
   return value;
 }

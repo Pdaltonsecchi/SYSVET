@@ -156,7 +156,7 @@ function showLogin(msg){
   $('#lerror').textContent=msg||'';
 }
 function applyBootstrap(d){
-  S.clinic=d.clinic||'SYSVET';S.settings=d.settings||{};document.title=S.clinic;var sn=$('#shopname');if(sn)sn.textContent=S.clinic;S.attachments=!!d.attachments;S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.suppliers=d.suppliers||[];S.clients=d.clients||[];S.summary=d.summary||null;S.pendingWeb=Number(d.pendingWeb&&d.pendingWeb.count)||0;S.pendingWebFirst=(d.pendingWeb&&d.pendingWeb.first)||null;S.pendingWebPast=Number(d.pendingWeb&&d.pendingWeb.past)||0;
+  S.clinic=d.clinic||'SYSVET';S.settings=d.settings||{};document.title=S.clinic;var sn=$('#shopname');if(sn)sn.textContent=S.clinic;S.attachments=!!d.attachments;S.user=d.user;S.patients=d.patients;S.products=d.products;S.services=d.services;S.suppliers=d.suppliers||[];S.clients=d.clients||[];S.summary=d.summary||null;S.pendingWeb=Number(d.pendingWeb&&d.pendingWeb.count)||0;S.pendingWebFirst=(d.pendingWeb&&d.pendingWeb.first)||null;S.pendingWebPast=Number(d.pendingWeb&&d.pendingWeb.past)||0;S.cancelledWeb=Number(d.pendingWeb&&d.pendingWeb.cancelled)||0;S.cancelledWebFirst=(d.pendingWeb&&d.pendingWeb.cancelledFirst)||null;
 }
 async function start(){
   var d=await api('/bootstrap');
@@ -221,7 +221,8 @@ function calRange(){
 }
 async function loadAppointments(){
   var r=calRange();
-  ui.appts=(await api('/appointments?from='+r[0]+'&to='+r[1])).items;
+  // cancelled=1: también los turnos web que canceló el cliente (de hoy en adelante), marcados "Cancelado por el cliente".
+  ui.appts=(await api('/appointments?from='+r[0]+'&to='+r[1]+'&cancelled=1')).items;
 }
 async function reloadCal(){
   try{await loadAppointments();}catch(e){toast(e.message);}
@@ -487,6 +488,8 @@ function renderAlerts(){
   // Turnos pedidos desde la web: va primero porque es lo único que espera una respuesta de la veterinaria (aceptar o rechazar).
   if(S.pendingWeb)h+='<button class="al pedido" data-action="goto-pedidos"><span class="dot pedido"></span><span>'+plural(S.pendingWeb,'turno pedido desde la web para confirmar','turnos pedidos desde la web para confirmar')+
     (S.pendingWebPast?' <small>('+(S.pendingWebPast===S.pendingWeb?(S.pendingWeb===1?'la fecha ya pasó':'las fechas ya pasaron'):S.pendingWebPast+' con fecha ya pasada')+')</small>':'')+'</span></button>';
+  // Turnos de hoy y mañana que el cliente canceló desde la página: el horario quedó libre (sin email ni WhatsApp).
+  if(S.cancelledWeb)h+='<button class="al" data-action="goto-cancelados"><span class="dot cancelado"></span><span>'+plural(S.cancelledWeb,'turno de hoy o mañana cancelado por el cliente','turnos de hoy o mañana cancelados por el cliente')+'</span></button>';
   if(bad)h+='<button class="al" data-action="goto-vac"><span class="dot vencida"></span><span>'+plural(bad,'paciente con vacuna vencida','pacientes con vacuna vencida')+'</span></button>';
   if(warn)h+='<button class="al" data-action="goto-vac"><span class="dot porvencer"></span><span>'+plural(warn,'paciente con vacuna por vencer','pacientes con vacuna por vencer')+'</span></button>';
   if(low)h+='<button class="al" data-action="goto-stock"><span class="dot stock"></span><span>'+plural(low,'producto con poco stock','productos con poco stock')+'</span></button>';
@@ -1194,7 +1197,9 @@ var WEEKDAYS=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
 // Texto de un turno en la grilla: "10:00 · Luna (Gómez)" (el apellido distingue pacientes homónimos).
 var ownerLast=function(a){return a.patientOwnerLast||surname(a.patientOwner);};
 // Los pedidos hechos desde la página de turnos llevan "Pendiente" hasta que se acepten.
-var apptLabel=function(a){return a.time.slice(0,5)+' · '+(a.status==='pendiente'?'Pendiente · ':'')+esc(a.patientName)+' ('+esc(ownerLast(a))+')';};
+// Los que canceló el cliente desde la página quedan a la vista (apagados) con "Cancelado por el cliente".
+var apptLabel=function(a){return a.time.slice(0,5)+' · '+(a.status==='pendiente'?'Pendiente · ':a.status==='cancelado'?'Cancelado por el cliente · ':'')+esc(a.patientName)+' ('+esc(ownerLast(a))+')';};
+var apptState=function(a){return a.status==='pendiente'?' pendiente':a.status==='cancelado'?' cancelado':'';};
 function dayAppts(iso){return (ui.appts||[]).filter(function(a){return a.date===iso;}).sort(function(a,b){return a.time.localeCompare(b.time);});}
 function calDayColumn(iso){
   var list=dayAppts(iso);
@@ -1202,7 +1207,7 @@ function calDayColumn(iso){
   // E3: en la vista Semana el alto del bloque refleja la duración del turno.
   var blocks=list.map(function(a){
     var h=ui.cal.view==='week'?' data-mh="'+Math.round(Math.min(Math.max(38,a.duration*0.9),180))+'px"':'';
-    return '<button class="appt '+a.type+(a.status==='pendiente'?' pendiente':'')+'"'+h+' data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'<small>'+esc(a.title)+'</small></button>';
+    return '<button class="appt '+a.type+apptState(a)+'"'+h+' data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'<small>'+esc(a.title)+'</small></button>';
   }).join('');
   return '<div class="cal-day'+(isToday?' today':'')+'"><div class="cal-day-head"><span>'+WEEKDAYS[(d.getDay()+6)%7]+'</span><b>'+d.getDate()+'</b>'+
     '<button class="cal-add" data-action="cal-add-day" data-v="'+iso+'" aria-label="Agregar turno este día">+</button></div>'+blocks+'</div>';
@@ -1213,7 +1218,7 @@ function calMonthGrid(){
     var list=dayAppts(d);
     var out=ui.cal.view==='month'&&d.slice(0,7)!==curMonth,isToday=d===todayIso();
     var shown=list.slice(0,3).map(function(a){
-      return '<button class="cal-chip '+a.type+'" data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'</button>';
+      return '<button class="cal-chip '+a.type+apptState(a)+'" data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'</button>';
     }).join('');
     var more=list.length>3?'<button class="cal-more" data-action="cal-day-list" data-v="'+d+'">+'+(list.length-3)+' más</button>':'';
     cells+='<div class="cal-mday'+(out?' out':'')+(isToday?' today':'')+(list.length||isToday?' has':'')+'"><div class="mhead"><span>'+WEEKDAYS[(parse(d).getDay()+6)%7]+' '+Number(d.slice(8,10))+'</span>'+
@@ -1228,11 +1233,11 @@ function calDayAgenda(){
   var inHours=function(a){var s=toMin(a.time),e=s+Number(a.duration||0);return open.some(function(r){return s>=toMin(r[0])&&e<=toMin(r[1]);});};
   var rows=list.map(function(a){
     return '<li class="dv-row"><span class="dv-time"><b>'+a.time.slice(0,5)+'</b><small>'+esc(a.endTime||'')+'</small></span>'+
-      '<button class="dv-appt '+a.type+(a.status==='pendiente'?' pendiente':'')+'" data-action="appt-view" data-id="'+a.id+'">'+
-      (a.status==='pendiente'?'<span class="chip pedido">Pedido desde la web · falta confirmar</span>':'')+
+      '<button class="dv-appt '+a.type+apptState(a)+'" data-action="appt-view" data-id="'+a.id+'">'+
+      (a.status==='pendiente'?'<span class="chip pedido">Pedido desde la web · falta confirmar</span>':a.status==='cancelado'?'<span class="chip cancelado">Cancelado por el cliente</span>':'')+
       '<span class="dv-what"><b>'+esc(a.title||APPT_LABEL[a.type]||'')+'</b><span class="dv-type">'+(APPT_LABEL[a.type]||'')+'</span></span>'+
       '<span class="dv-who">'+esc(a.patientName)+' ('+esc(ownerLast(a))+')'+'</span>'+(a.patientPhone?'<span class="dv-phone">'+esc(a.patientPhone)+'</span>':'')+
-      (open.length&&!inHours(a)?'<span class="chip warn">Fuera de horario</span>':'')+'</button></li>';
+      (open.length&&!inHours(a)&&a.status!=='cancelado'?'<span class="chip warn">Fuera de horario</span>':'')+'</button></li>';
   }).join('');
   return '<div class="cal-dayview"><p class="dv-hours">'+(open.length?'Horario de atención: '+rangesText(open)+'.':'Este día el negocio figura cerrado.')+'</p>'+
     (rows?'<ol class="dv-list">'+rows+'</ol>':'<div class="dv-empty"><p>No hay turnos para este día.</p><button class="btn" data-action="cal-add-day" data-v="'+iso+'">Agregar turno este día</button></div>')+'</div>';
@@ -1241,7 +1246,7 @@ function calDayAgenda(){
 function dayListDialog(iso){
   var list=dayAppts(iso);
   var rows=list.map(function(a){
-    return '<button type="button" class="appt '+a.type+'" data-id="'+a.id+'">'+apptLabel(a)+'<small>'+esc(a.title)+' · hasta las '+a.endTime+'</small></button>';
+    return '<button type="button" class="appt '+a.type+apptState(a)+'" data-id="'+a.id+'">'+apptLabel(a)+'<small>'+esc(a.title)+' · hasta las '+a.endTime+'</small></button>';
   }).join('');
   dlg.innerHTML='<form class="dform"><h2>Turnos del '+fmtDate(iso)+'</h2><div class="daylist">'+(rows||'<p class="empty">No hay turnos este día.</p>')+'</div>'+
     '<div class="actions"><button type="button" class="btn ghost" data-close>Cerrar</button><button type="button" class="btn primary" data-x="add">Agregar turno</button></div></form>';
@@ -2113,6 +2118,7 @@ function appointmentForm(a,presetDate){
 }
 // Modal de detalle con acciones propias (Editar / Eliminar / Ver ficha), por eso arma el diálogo a
 // mano en vez de usar openForm (pensado para un único botón de guardar).
+var CLIENT_MSG_MAX=300; // igual que CLIENT_MESSAGE_MAX en server/api.js
 function appointmentDetails(a){
   var tel=String(a.patientPhone||'').replace(/[^\d+]/g,'');
   var kind=[a.patientSpecies,a.patientBreed].filter(Boolean).map(esc).join(' · ');
@@ -2122,20 +2128,38 @@ function appointmentDetails(a){
     '<p><b>Tipo:</b> '+esc(APPT_LABEL[a.type]||a.type)+'</p>'+
     '<p><b>Cuándo:</b> '+fmtDate(a.date)+' de '+a.time.slice(0,5)+' a '+a.endTime+' hs <small>('+a.duration+' min)</small></p>'+
     (a.description?'<p><b>Descripción:</b> '+esc(a.description)+'</p>':'')+
-    (a.status==='pendiente'?'<p class="cfg-hint"><b>Pedido desde la página de turnos.</b> Todavía no lo aceptaste: mientras esté pendiente, ese horario queda reservado.</p>'+
+    (a.status==='confirmado'&&a.clientMessage?'<p class="appt-msg"><b>Mensaje para el cliente:</b> '+esc(a.clientMessage)+'</p>':'')+
+    (a.status==='pendiente'?'<p class="cfg-hint"><b>Pedido desde la página de turnos: '+esc(APPT_LABEL[a.type]||a.type)+'.</b> Todavía no lo aceptaste: mientras esté pendiente, ese horario queda reservado.</p>'+
+      // Mensaje opcional que el cliente ve debajo del turno confirmado, cuando vuelve a entrar con su teléfono.
+      '<label class="fld full appt-msg-fld"><span>Mensaje para el cliente (opcional)</span>'+
+      '<textarea name="clientMessage" rows="3" maxlength="'+CLIENT_MSG_MAX+'" placeholder="Ej.: Traer al perro en ayunas." aria-describedby="appt-msg-hint"></textarea>'+
+      '<small class="hint" id="appt-msg-hint">Lo ve el cliente en la página de turnos cuando el turno está confirmado. Hasta '+CLIENT_MSG_MAX+' caracteres.</small></label>'+
+      '<p class="err" role="alert"></p>'+
       '<div class="actions"><button type="button" class="btn danger-o" data-x="reject">Rechazar</button><button type="button" class="btn ghost" data-close>Cerrar</button><button type="button" class="btn primary" data-x="accept">Aceptar turno</button></div></form>':
+    a.status==='cancelado'?'<p class="cfg-hint"><b>Cancelado por el cliente</b> desde la página de turnos. El horario quedó libre.</p>'+
+      '<div class="actions"><button type="button" class="btn" data-x="ficha">Ver ficha</button><button type="button" class="btn primary" data-close>Cerrar</button></div></form>':
     '<div class="actions"><button type="button" class="btn danger-o" data-x="del">Eliminar turno</button><button type="button" class="btn" data-x="ficha">Ver ficha</button><button type="button" class="btn ghost" data-close>Cerrar</button><button type="button" class="btn primary" data-x="edit">Editar</button></div></form>');
   dlg.querySelector('[data-close]').addEventListener('click',function(){dlg.close();});
   if(a.status==='pendiente'){
-    dlg.querySelector('[data-x="accept"]').addEventListener('click',async function(){
-      var s0=toMin(a.time),e0=s0+a.duration;
-      var hit=(await api('/appointments?from='+a.date+'&to='+a.date)).items.find(function(x){var xs=toMin(x.time);return x.id!==a.id&&x.status==='confirmado'&&s0<xs+x.duration&&xs<e0;});
-      if(hit){
-        var ch=await choiceDialog('Turno superpuesto','<p>Ya hay un turno confirmado a esa hora: '+esc(hit.patientName)+' ('+esc(ownerLast(hit))+') – '+esc(hit.title)+'. ¿Aceptar igual?</p>',
-          [{label:'No aceptar',value:'no',cls:'ghost'},{label:'Aceptar igual',value:'ok',cls:'primary'}]);
-        if(ch!=='ok')return;
-      }
-      await api('/appointments/'+a.id+'/status',{method:'POST',body:{status:'confirmado'}});dlg.close();pendingWebResolved(a);await reloadCal();toast('Turno aceptado y agregado a la agenda');
+    var acceptBtn=dlg.querySelector('[data-x="accept"]'),msgBox=dlg.querySelector('[name="clientMessage"]'),errBox=dlg.querySelector('.err');
+    acceptBtn.addEventListener('click',async function(){
+      // El texto se toma antes del aviso de turno superpuesto: ese aviso abre otra ventana y el mensaje no se pierde.
+      var message=msgBox.value.trim();
+      errBox.textContent='';
+      if(message.length>CLIENT_MSG_MAX){errBox.textContent='El mensaje puede tener hasta '+CLIENT_MSG_MAX+' caracteres.';msgBox.focus();return;}
+      acceptBtn.disabled=true;
+      try{
+        var s0=toMin(a.time),e0=s0+a.duration;
+        var hit=(await api('/appointments?from='+a.date+'&to='+a.date)).items.find(function(x){var xs=toMin(x.time);return x.id!==a.id&&x.status==='confirmado'&&s0<xs+x.duration&&xs<e0;});
+        if(hit){
+          var ch=await choiceDialog('Turno superpuesto','<p>Ya hay un turno confirmado a esa hora: '+esc(hit.patientName)+' ('+esc(ownerLast(hit))+') – '+esc(hit.title)+'. ¿Aceptar igual?</p>',
+            [{label:'No aceptar',value:'no',cls:'ghost'},{label:'Aceptar igual',value:'ok',cls:'primary'}]);
+          if(ch!=='ok'){msgBox.focus();return;}
+        }
+        await api('/appointments/'+a.id+'/status',{method:'POST',body:{status:'confirmado',message:message}});
+      }catch(e){errBox.textContent=e.message;return;}
+      finally{acceptBtn.disabled=false;}
+      dlg.close();pendingWebResolved(a);await reloadCal();toast(message?'Turno aceptado. El cliente va a ver tu mensaje':'Turno aceptado y agregado a la agenda');
     });
     dlg.querySelector('[data-x="reject"]').addEventListener('click',function(){
       confirmForm('Rechazar turno','Se rechaza el pedido de '+esc(a.patientName)+' para el '+fmtDate(a.date)+' a las '+a.time.slice(0,5)+' hs. El horario queda libre para otro pedido.','Rechazar',async function(){
@@ -2145,10 +2169,11 @@ function appointmentDetails(a){
     if(!dlg.open)dlg.showModal();
     return;
   }
-  dlg.querySelector('[data-x="edit"]').addEventListener('click',function(){dlg.close();appointmentForm(a);});
   dlg.querySelector('[data-x="ficha"]').addEventListener('click',function(){
     dlg.close();ui.sel=a.patientId;ui.detail=null;ui.filter='all';ui.q='';go('pacientes');
   });
+  if(a.status==='cancelado'){if(!dlg.open)dlg.showModal();return;}
+  dlg.querySelector('[data-x="edit"]').addEventListener('click',function(){dlg.close();appointmentForm(a);});
   dlg.querySelector('[data-x="del"]').addEventListener('click',function(){
     confirmForm('Eliminar turno','Se elimina el turno de '+esc(a.patientName)+' ("'+esc(a.title)+'") del '+fmtDate(a.date)+'.','Eliminar',async function(){
       await api('/appointments/'+a.id,{method:'DELETE'});await reloadCal();toast('Turno eliminado');
@@ -2272,6 +2297,7 @@ var actions={
   // Pedidos de la web: abre el calendario en "2 semanas" a partir del pedido más próximo.
   // Abre la agenda del día del pedido más próximo: ahí se lo toca para aceptarlo o rechazarlo.
   'goto-pedidos':function(){ui.cal.view='day';ui.cal.anchor=S.pendingWebFirst||todayIso();return go('calendario');},
+  'goto-cancelados':function(){ui.cal.view='day';ui.cal.anchor=S.cancelledWebFirst||todayIso();return go('calendario');},
   'new-patient':function(){patientForm();},
   'edit-patient':function(){if(ui.detail)patientForm(ui.detail);},
   'del-patient':function(){
@@ -2628,15 +2654,22 @@ document.addEventListener('visibilitychange',function(){if(document.visibilitySt
 // calendario se vuelve a pedir solo si se lo está mirando y la cantidad cambió (nunca en cada consulta).
 var pendingCheckedAt=0;
 function setPendingWeb(p){
-  S.pendingWeb=Math.max(0,Number(p.count)||0);S.pendingWebPast=Math.min(S.pendingWeb,Math.max(0,Number(p.past)||0));S.pendingWebFirst=p.first||null;renderAlerts();
+  S.pendingWeb=Math.max(0,Number(p.count)||0);S.pendingWebPast=Math.min(S.pendingWeb,Math.max(0,Number(p.past)||0));S.pendingWebFirst=p.first||null;
+  if(p.cancelled!=null){S.cancelledWeb=Math.max(0,Number(p.cancelled)||0);S.cancelledWebFirst=p.cancelledFirst||null;}
+  renderAlerts();
 }
 async function checkPendingWeb(force){
   if(!S.user||document.body.dataset.stale||document.body.dataset.state!=='app'||document.visibilityState!=='visible')return;
   var now=Date.now();if(!force&&now-pendingCheckedAt<20000)return;pendingCheckedAt=now;
   try{
     var p=await api('/appointments/pending-summary'),n=Number(p.count)||0,before=S.pendingWeb;
-    if(n===before&&(p.first||null)===S.pendingWebFirst&&(Number(p.past)||0)===S.pendingWebPast)return;
+    var cancelledBefore=S.cancelledWeb;
+    if(n===before&&(p.first||null)===S.pendingWebFirst&&(Number(p.past)||0)===S.pendingWebPast&&(Number(p.cancelled)||0)===S.cancelledWeb)return;
     setPendingWeb(p);
+    if((Number(p.cancelled)||0)>cancelledBefore&&!force){
+      toast('Un cliente canceló un turno de hoy o mañana desde la página');
+      if(ui.view==='calendario'&&!document.querySelector('dialog[open]'))await reloadCal();
+    }
     if(n>before&&!force){
       toast(n-before===1?'Entró un turno pedido desde la web para confirmar':'Entraron '+(n-before)+' turnos pedidos desde la web para confirmar');
       if(ui.view==='calendario'&&!document.querySelector('dialog[open]'))await reloadCal();

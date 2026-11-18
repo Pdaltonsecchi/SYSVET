@@ -450,3 +450,10 @@ ALTER TABLE patients ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'sist
 ALTER TABLE appointments ADD COLUMN IF NOT EXISTS status_at TIMESTAMPTZ;
 -- Reporte de clientes que hace mucho no vienen: busca la próxima dosis de vacuna por mascota.
 CREATE INDEX IF NOT EXISTS vaccines_next_idx ON vaccines(patient_id, next_on) WHERE next_on IS NOT NULL;
+
+-- ============================================================
+-- Mejoras de la página de turnos (ronda 2): mensaje opcional de la veterinaria al confirmar un pedido web
+-- (por ejemplo "Traer al perro en ayunas."). Solo lo ve el cliente dueño del turno, y solo cuando está confirmado.
+-- Los turnos que ya existían quedan sin mensaje.
+-- ============================================================
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS client_message TEXT NOT NULL DEFAULT '';

@@ -37,5 +37,5 @@ test('150 ingresos fallidos a la vez, cada uno desde otra IP: en total no se pue
   assert.equal(count(res, 404), 40, 'probados: ' + count(res, 404));
   assert.equal(count(res, 429), 110);
   const cerrado = res.find((r) => r.status === 429);
-  assert.match(cerrado.data.error, /Llamá a la veterinaria/);
+  assert.match(cerrado.data.error, /(Llamá a|Consultalo en) la veterinaria/);
 });

@@ -803,3 +803,14 @@ body[data-stale] #app,body[data-stale] dialog{pointer-events:none;opacity:.55}
 .rep-hint{max-width:78ch;margin:0 0 .75rem;color:var(--muted);font-size:.95rem}
 .rep-hint b{color:var(--ink)}
 tr.inact-web td:first-child{box-shadow:inset 3px 0 0 var(--info)}
+/* Turno que el cliente canceló desde la página: queda a la vista, apagado y tachado, con "Cancelado por el cliente".
+   Va al final para ganarle al color de cada tipo de turno (.appt.consulta, etc.). */
+.appt.cancelado,.cal-chip.cancelado{background:var(--fill);color:var(--muted);text-shadow:none;text-decoration:line-through;text-decoration-thickness:1px}
+.appt.cancelado small{color:var(--muted)}
+.dv-appt.cancelado{border-left-color:var(--line-strong);background:var(--fill-soft)}
+.dv-appt.cancelado .dv-what,.dv-appt.cancelado .dv-who{color:var(--muted);text-decoration:line-through;text-decoration-thickness:1px}
+.chip.cancelado{background:var(--fill);color:var(--ink)}
+.dot.cancelado{background:var(--dot-copia)}
+.appt-msg{white-space:pre-wrap;overflow-wrap:anywhere}
+.appt-msg-fld{display:grid;gap:.3rem;margin:.6rem 0 .2rem}
+.appt-msg-fld>span{font-weight:600}

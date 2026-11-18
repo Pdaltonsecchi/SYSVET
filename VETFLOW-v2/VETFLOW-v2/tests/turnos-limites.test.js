@@ -42,7 +42,7 @@ test('probar números cambiando de IP: a los 60 ingresos fallidos en total se ci
   for (let i = 1; i <= 40; i++) assert.equal((await call('/login', { phone: '11 ' + n8() }, '203.0.113.' + i)).status, 404, 'intento ' + i);
   const r = await call('/login', { phone: '11 ' + n8() }, '203.0.113.200');
   assert.equal(r.status, 429);
-  assert.match(r.data.error, /Llamá a la veterinaria/);
+  assert.match(r.data.error, /(Llamá a|Consultalo en) la veterinaria/);
   // El alta de cliente nuevo también queda cerrada: no sirve para seguir probando números.
   assert.equal((await alta('203.0.113.201', 99)).status, 429);
 });

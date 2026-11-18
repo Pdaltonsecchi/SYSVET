@@ -38,6 +38,7 @@ const auth = require('./auth');
 const api = require('./api');
 const backup = require('./backup');
 const U = require('./util');
+const pagina = require('./pagina');
 
 // Las miniaturas y la vista previa de los adjuntos se cargan desde Supabase Storage (URLs firmadas):
 // ese origen (y solo ese) se agrega a img-src.
@@ -82,6 +83,9 @@ function serveStatic(req, res, url) {
     res.writeHead(403);
     return res.end();
   }
+  // La página pública de turnos lleva el nombre de la veterinaria escrito por el servidor (título, vista previa al
+  // compartir y datos para Google). Ver server/pagina.js.
+  if (file === path.join(PUBLIC, 'turnos.html')) return serveTurnos(req, res);
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -95,6 +99,20 @@ function serveStatic(req, res, url) {
     if (req.method === 'HEAD') return res.end();
     fs.createReadStream(file).pipe(res);
   });
+}
+
+function serveTurnos(req, res) {
+  pagina.turnosHtml().then(
+    (html) => {
+      res.writeHead(200, { 'Content-Type': MIME['.html'], 'Content-Length': Buffer.byteLength(html), 'Cache-Control': 'no-cache' });
+      res.end(req.method === 'HEAD' ? undefined : html);
+    },
+    (e) => {
+      console.error('Página de turnos:', e.message);
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('No se pudo mostrar la página. Probá de nuevo en un rato.');
+    }
+  );
 }
 
 const server = http.createServer(async (req, res) => {
@@ -129,7 +147,10 @@ const server = http.createServer(async (req, res) => {
   } catch (e) {
     const status = e.status && (e.status < 500 || e.expose) ? e.status : 500;
     if (status === 500 && !e.expose) console.error('Error interno en', req.method, url.pathname, '-', e.message);
-    if (!res.headersSent) U.sendJson(res, status, { error: status === 500 && !e.expose ? 'Ocurrió un error interno. Probá de nuevo.' : e.message });
+    const body = { error: status === 500 && !e.expose ? 'Ocurrió un error interno. Probá de nuevo.' : e.message };
+    // Código corto para que la página distinga un caso sin depender del texto (por ejemplo, "no-registrado").
+    if (status < 500 && typeof e.code === 'string' && /^[a-z-]{1,40}$/.test(e.code)) body.code = e.code;
+    if (!res.headersSent) U.sendJson(res, status, body);
     else res.end();
   }
   console.log(req.method, url.pathname, res.statusCode, Date.now() - started + 'ms');
