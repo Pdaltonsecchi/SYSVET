@@ -282,7 +282,7 @@
       li.appendChild(name);
       var box = el('span', null, 'day-hours' + (ranges.length ? '' : ' muted'));
       if (!ranges.length) box.textContent = 'Cerrado';
-      ranges.forEach(function (r) { box.appendChild(el('span', r[0] + ' a ' + r[1] + ' hs')); });
+      ranges.forEach(function (r) { box.appendChild(el('span', r[0] + ' a ' + r[1] + '\u00a0hs')); });
       li.appendChild(box);
       ul.appendChild(li);
     });
@@ -751,7 +751,7 @@
       var title = el('div', null, 'appt-title');
       title.appendChild(el('span', a.typeLabel + ' con ' + a.patientName));
       li.appendChild(title);
-      li.appendChild(el('div', cap(fmtDay(a.date)) + ' a las ' + a.time + ' hs', 'appt-when'));
+      li.appendChild(el('div', cap(fmtDay(a.date)) + ' a las ' + a.time + '\u00a0hs', 'appt-when'));
       var badge = el('span', null, 'badge' + (STATUS_CLASS[a.status] || ''));
       // "Confirmado" se reconoce de un vistazo: tilde, borde verde y el talón con contorno (el ámbar es solo de "Pendiente").
       if (a.status === 'confirmado') badge.appendChild(el('span', '✓', 'badge-icon')).setAttribute('aria-hidden', 'true');
@@ -798,7 +798,7 @@
       }
       var cancel = el('button', 'Cancelar turno', 'btn text danger');
       cancel.type = 'button';
-      cancel.setAttribute('aria-label', 'Cancelar el turno de ' + a.patientName + ' del ' + fmtDay(a.date) + ' a las ' + a.time + ' hs');
+      cancel.setAttribute('aria-label', 'Cancelar el turno de ' + a.patientName + ' del ' + fmtDay(a.date) + ' a las ' + a.time + '\u00a0hs');
       li.appendChild(cancel);
 
       // Confirmación dentro de la tarjeta (sin el cartel del navegador).
@@ -1021,7 +1021,9 @@
     show('cal-msg', false);
     show('cal', true);
     // Hasta cuándo se puede pedir (el servidor ofrece los próximos 90 días): así nadie busca más allá.
-    setText('cal-limit', state.lastDate ? 'Podés pedir turno hasta el ' + fmtDay(state.lastDate) + '.' : '');
+    // Si el límite cae en otro año, se dice el año ("hasta el lunes 15 de febrero de 2027").
+    var limitYear = state.lastDate && state.lastDate.slice(0, 4) !== today.slice(0, 4) ? ' de ' + state.lastDate.slice(0, 4) : '';
+    setText('cal-limit', state.lastDate ? 'Podés pedir turno hasta el ' + fmtDay(state.lastDate) + limitYear + '.' : '');
     show('cal-limit', !!state.lastDate);
 
     // Se arranca en el mes del primer día con horarios; nunca fuera de los meses permitidos.
@@ -1241,7 +1243,7 @@
       b.type = 'button';
       b.dataset.time = t;
       b.setAttribute('aria-pressed', 'false');
-      b.setAttribute('aria-label', t + ' hs');
+      b.setAttribute('aria-label', t + '\u00a0hs');
       b.addEventListener('click', function () { pickTime(t); });
       grid.appendChild(b);
     });
@@ -1284,7 +1286,7 @@
     setText('sum-type', typeText(state.type));
     setText('sum-pet', pet.name);
     setText('sum-day', cap(fmtDay(state.day)));
-    setText('sum-time', time + ' hs');
+    setText('sum-time', time + '\u00a0hs');
     fillStub($('sum-stub-day'), $('sum-stub-month'), state.day);
     show('summary', true);
     animate($('summary'));
@@ -1319,7 +1321,7 @@
     }).then(function () {
       var t = typeOf(type);
       setText('done-what', (t ? t.label : 'Turno') + ' para ' + pet.name);
-      setText('done-when', cap(fmtDay(date)) + ' a las ' + time + ' hs');
+      setText('done-when', cap(fmtDay(date)) + ' a las ' + time + '\u00a0hs');
       fillStub($('done-stub-day'), $('done-stub-month'), date);
       show('book-flow', false);
       show('done', true);
