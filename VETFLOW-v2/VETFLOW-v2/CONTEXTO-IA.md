@@ -523,3 +523,31 @@ Agregado en la rama `turnos-web`. Guía para el dueño: `INSTRUCTIVO-TURNOS-WEB.
   crema, ámbar solo en "Pendiente", rojo solo al cancelar), distinta de la del sistema interno (`DISENO.md`). Letra del
   sistema, 17 px de base, nada por debajo de 14 px. El gesto propio es el talón del turno (`.ticket`). Sin modo oscuro.
 - **"Otra especie":** no se agregó porque el servidor solo acepta Perro y Gato (`webPetInput`).
+
+## 15. Etapa 3: origen web, clientes inactivos, reseñas y aviso de pendiente
+
+Guía para el dueño: `INSTRUCTIVO-TURNOS-WEB.md`, secciones 2 a 5. Pruebas: `tests/etapa3.test.js`.
+
+- **Origen de clientes y mascotas.** `clients.source` y `patients.source` (`'sistema'` por defecto, `'web'` en las altas de
+  `POST /api/public/register` y `/api/public/pets`). Migración con `ADD COLUMN IF NOT EXISTS` y default: todo lo que ya
+  existía queda `'sistema'` (incluidos los clientes que se habían anotado por la web antes: no hay forma de saberlo).
+- **"Todavía sin visitas" (`webNew`).** Se calcula al leer (`VISITED_SQL` en `server/api.js`): la mascota tiene un cobro,
+  diagnóstico, vacuna, medicación o estudio (sin borrar), o un turno confirmado cuya fecha ya llegó. Para el cliente, alguna
+  de sus mascotas sin borrar. **Decisión:** la etiqueta de origen se mantiene siempre (es un dato); solo el resaltado y la
+  nota "Completá los datos si vuelve" dependen de `webNew`. Editar la ficha no la cambia. La nota la arma el frontend
+  (`webNote` en `public/app.js`): no se escribe en `patients.notes`, para no mezclarla con lo que escribe la veterinaria.
+- **Clientes inactivos.** `GET /api/reports/inactive-clients?months=4|6|12` (solo admin, solo lectura, máximo 500). Última
+  actividad = la fecha más reciente (hasta hoy) entre diagnósticos, vacunas aplicadas, cobros, medicación, estudios, pesos y
+  turnos confirmados de las mascotas sin borrar del cliente; si no hay, `clients.created_at`. Excluye a quien tenga un turno
+  pendiente o confirmado de hoy en adelante, o una vacuna con `next_on` de hoy en adelante. La medicación no se usa para
+  excluir porque `duration` es texto libre (no hay fecha de fin). `webNoVisit`: cliente web sin actividad (los pesos solos
+  no cuentan). **No toca `lostClients()` de `server/weekly.js`:** el informe semanal sigue igual.
+- **Reseña.** Configuración `reviewUrl` (solo https, mismo validador que `mapsUrl`), expuesto en `/api/public/info`. La
+  página pregunta al terminar de pedir un turno, a todos por igual (reglas de Google), una sola vez por visita
+  (`sessionStorage` `turnos-resena`). Sin `reviewUrl` no pregunta.
+- **Pendiente y rechazados.** Aviso grande `#done` con día y hora. `appointments.status_at` se pone al aceptar, rechazar o
+  cancelar. `upcomingOf()` devuelve además los pedidos web `rechazado` de los últimos `REJECTED_DAYS` (7) del mismo
+  cliente, con `canCancel: false`; la página los muestra al final con un mensaje y "Pedir otro horario". Un rechazado no
+  ocupa el día de la mascota. Los rechazos anteriores a la actualización no tienen `status_at` y no se muestran.
+- **Copias de seguridad:** incluyen `clients.source`, `patients.source` y `appointments.status_at`; una copia vieja se
+  restaura como `'sistema'` y sin fecha.

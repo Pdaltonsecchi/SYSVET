@@ -26,6 +26,7 @@ En el sistema, andá a **Configuración → General**.
 | Dirección | "Página pública" | "Cómo llegar" |
 | Enlace de Google Maps | "Página pública" | El botón "Ver en Google Maps" |
 | Reseñas | "Página pública" | "Lo que dicen nuestros clientes" |
+| Enlace para dejar una reseña | "Página pública" | La pregunta "¿Ya nos conocés?" al terminar de pedir un turno |
 
 Tocá **Guardar cambios** al terminar.
 
@@ -57,13 +58,30 @@ Ejemplo:
 - Copialas tal cual están en Google Maps, con el nombre como figura ahí.
 - Conviene elegir reseñas que representen cómo atendés de verdad, no solo las de cinco estrellas: una página con todas perfectas genera menos confianza.
 
+### El enlace para dejar una reseña
+
+Es **distinto** del de Google Maps: el de Maps abre la ficha de tu veterinaria; este abre directo el formulario para escribir una reseña.
+
+1. Entrá a Google con la cuenta que administra tu veterinaria y buscá el nombre de tu veterinaria.
+2. En el panel de tu Perfil de Empresa, tocá **"Pedir reseñas"** (en algunos casos dice "Conseguir más reseñas").
+3. Copiá el enlace que te da y pegalo en "Enlace para dejar una reseña". Tiene que empezar con `https://`.
+
+Si lo dejás vacío, la página no pregunta nada.
+
+Dos reglas de Google que conviene respetar (si no, Google puede borrar reseñas):
+- **Se le pregunta a todos por igual.** La página no elige a quién preguntarle según si quedó contento o no.
+- **No se ofrece nada a cambio** (descuentos, regalos) por dejar una reseña.
+
 ## 2. Qué hace el cliente
 
 1. Entra a la página y escribe **su teléfono** (el que le dio a la veterinaria). No importa si lo escribe con 011, con 15, con +54 9, con espacios o con guiones.
 2. Si es cliente nuevo, toca **Soy cliente nuevo** y carga su nombre, apellido, teléfono y su mascota. Queda guardado como cliente en tu sistema.
 3. Elige **consulta** o **vacuna** y la mascota. Después elige el **día** en un calendario del mes (solo se pueden tocar los días con horarios libres, dentro de los próximos 14) y la **hora**, separada en mañana y tarde.
 4. Antes de pedirlo ve un **resumen** (servicio, mascota, día y hora) y toca **Confirmar pedido**. Recién ahí te llega el pedido.
-5. Ve sus turnos. Los que pidió por la página los puede **cancelar** él mismo; para cambiar uno, lo cancela y pide otro.
+5. Ve un aviso grande: **"Tu turno quedó pendiente"**, con el día y la hora, que le explica que todavía no está confirmado y que vuelva a entrar con su teléfono para ver si lo aceptaste. Le sugiere guardar la página en favoritos y le muestra tu teléfono por si no puede esperar.
+   Si cargaste el enlace de reseñas, abajo le pregunta: *"¿Ya nos conocés? Si te gustó la atención, nos ayuda mucho que dejes tu reseña en Google."* Si toca "Ahora no", no se le vuelve a preguntar en esa visita.
+6. En **"Tus turnos"** ve cada turno con su estado explicado: **pendiente** (esperando que lo confirmes), **confirmado** (te esperamos) o **no se pudo confirmar** (lo rechazaste: ver más abajo).
+7. Los turnos que pidió por la página los puede **cancelar** él mismo; para cambiar uno, lo cancela y pide otro.
    Los turnos que cargaste vos (por ejemplo una cirugía) los ve, pero no los puede cancelar desde la página: le dice que llame.
 
 Las cirugías no se pueden pedir por la página: las seguís agendando vos.
@@ -77,11 +95,30 @@ Si el teléfono no está registrado, o figura en la ficha de más de un cliente,
 2. Tocá el pedido. Vas a ver la mascota, el dueño con su teléfono, el tipo y el horario.
 3. Elegí:
    - **Aceptar turno**: pasa a la agenda como cualquier otro turno. El cliente lo ve como "Confirmado". Si ya tenías otro turno confirmado a esa hora, el sistema te avisa antes de aceptar.
-   - **Rechazar**: el pedido desaparece y el horario queda libre para otra persona.
+   - **Rechazar**: el horario queda libre para otra persona. Durante **7 días** el cliente lo sigue viendo en "Tus turnos" con el mensaje *"La veterinaria no pudo confirmar este horario. Probá con otro o llamanos"* (con tu teléfono) y un botón para pedir otro horario.
 
 Mientras un pedido está pendiente, **ese horario queda reservado**: nadie más lo puede pedir.
 
-El sistema no manda avisos por email ni por WhatsApp. El aviso de "Para revisar" se actualiza solo cada minuto mientras tengas el sistema abierto (no hace falta recargar), y cuando entra un pedido nuevo aparece un cartel abajo. Si rechazás un pedido, llamá al cliente: en su página el turno simplemente deja de aparecer.
+El sistema no manda avisos por email ni por WhatsApp. El aviso de "Para revisar" se actualiza solo cada minuto mientras tengas el sistema abierto (no hace falta recargar), y cuando entra un pedido nuevo aparece un cartel abajo. El cliente se entera de lo que decidiste **cuando vuelve a entrar a la página**: si es urgente, llamalo.
+
+## 4. Clientes y mascotas que se anotaron por la web
+
+Cuando alguien se registra solo desde la página, en el sistema su ficha y la de su mascota llevan la etiqueta **"Creado desde la web"**, en la lista de **Clientes**, en la de **Pacientes** y en cada ficha.
+
+- Mientras **no haya tenido ninguna visita** (un cobro, una consulta, una vacuna, una medicación, un estudio, o un turno confirmado que ya llegó), la etiqueta se ve **resaltada en azul** y la ficha muestra la nota *"Se registró solo desde la página de turnos y todavía no tuvo ninguna visita. Completá los datos si vuelve."*
+- Con la primera visita, la etiqueta queda (para que sepas de dónde vino) pero en gris, y la nota dice solo cuándo se registró.
+- Esa nota la muestra el sistema: **no se escribe en tus notas** de la mascota.
+- Los clientes que se anotaron por la web **antes de esta actualización** no llevan la etiqueta: el sistema no tenía cómo saberlo.
+
+## 5. Reporte: clientes que hace mucho no vienen
+
+En **Reportes**, al final, está **"Clientes que hace mucho no vienen"**. Sirve para revisar y limpiar fichas.
+
+- Elegís el período: **4 meses** (el que aparece primero), **6 meses** o **1 año**.
+- **Última actividad** es la fecha más reciente entre cobros, consultas, vacunas, medicación, estudios, registros de peso y turnos confirmados de cualquiera de sus mascotas. Si nunca tuvo nada, es el día en que se creó la ficha.
+- **No aparecen** los que tienen un turno por venir ni una vacuna con próxima dosis a futuro: a esos los estás esperando.
+- Están ordenados del que más tiempo lleva al que menos. Los que **se anotaron por la web y nunca vinieron** aparecen resaltados: son los más claros para borrar.
+- **El reporte no borra ni cambia nada.** Tocá el nombre para abrir la ficha y decidir. Para eliminar una ficha: primero la mascota, desde su historia clínica (queda 30 días en la Papelera), y después el cliente.
 
 ## Topes para que nadie abuse de la página
 
