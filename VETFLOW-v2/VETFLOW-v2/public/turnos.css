@@ -103,7 +103,7 @@ a { color: var(--brand-dark); text-underline-offset: 3px; }
 .hero-services > p { font-size: 0.9375rem; color: #f2f9f7; }
 .services { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 8px 0 0; }
 /* La píldora oscurece el verde (no lo aclara): el texto blanco gana contraste. */
-.services li { display: inline-flex; align-items: baseline; gap: 8px; padding: 7px 14px; border-radius: 999px; background: rgba(8, 44, 39, 0.34); border: 1px solid rgba(255, 255, 255, 0.45); }
+.services li { display: inline-flex; align-items: baseline; gap: 8px; padding: 7px 14px; border-radius: 999px; background: rgba(8, 44, 39, 0.34); border: 1px solid rgba(255, 255, 255, 0.45); white-space: nowrap; }
 .service-name { font-weight: 700; }
 .service-time { font-size: 0.9375rem; color: #fff; }
 .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
@@ -272,11 +272,17 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .review-ask { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
 .review-ask .row { margin-top: 10px; }
 .alert { margin-top: 14px; padding: 14px 16px; border-radius: var(--r-field); color: #6f271f; background: var(--red-bg); border: 1px solid #efcbc2; }
+/* Un número que no está registrado no es un error: cuadro tranquilo, con "Soy cliente nuevo" adentro. */
+.alert.soft { color: var(--ink); background: var(--bg); border-color: var(--line); }
+.nowrap { white-space: nowrap; }
 .note { margin-top: 12px; padding: 12px 16px; border-radius: var(--r-field); background: var(--bg); }
 
 /* ---------- para qué es ---------- */
 .choice { margin-top: 16px; }
-#types { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+/* Una opción por renglón en celular: "Consulta · 20 min" entra en una sola línea. */
+#types { display: grid; grid-template-columns: 1fr; gap: 10px; }
+@media (min-width: 560px) { #types { grid-template-columns: 1fr 1fr; } }
+#types label > span { white-space: nowrap; }
 #types label {
   display: flex;
   align-items: center;
@@ -325,6 +331,20 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .appt-when { color: var(--muted); }
 .badge { display: inline-block; margin-top: 8px; padding: 3px 12px; border-radius: 999px; font-size: 0.875rem; font-weight: 650; color: var(--brand-dark); background: #fff; }
 .badge.pending { color: var(--amber-ink); background: var(--amber-bg); }
+/* Confirmado: tilde y borde verde; el talón entero lleva contorno. Pendiente: talón crema con la pastilla ámbar. */
+.badge.confirmed { display: inline-flex; align-items: center; gap: 6px; color: var(--brand-dark); background: #fff; box-shadow: inset 0 0 0 1.5px var(--brand); }
+.badge-icon { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; font-size: 0.875rem; font-weight: 800; color: #fff; background: var(--brand); }
+.ticket.confirmed { box-shadow: inset 0 0 0 2px var(--brand); }
+.ticket.pending { background: #fbf4e2; }
+.ticket.pending .stub { color: var(--amber-ink); border-right-color: rgba(107, 78, 0, 0.35); }
+/* Mensaje que dejó la veterinaria al confirmar. */
+.vet-msg { margin-top: 10px; padding: 10px 14px; border-radius: 12px; background: #fff; }
+.vet-msg-title { font-size: 0.875rem; font-weight: 700; color: var(--brand-dark); }
+.vet-msg-text { margin-top: 2px !important; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Agregar al calendario: Google como botón; el archivo .ics, un enlace chico para otros calendarios. */
+.add-cal { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 12px; }
+.ics-link { display: inline-flex; align-items: center; min-height: 44px; font-size: 0.9375rem; font-weight: 600; }
+.confirm-help { margin-top: 6px !important; font-size: 0.9375rem; }
 .appt-help { margin-top: 8px; font-size: 0.9375rem; }
 /* Pedido que la veterinaria no pudo confirmar: apagado, sin rojo (el rojo es solo para cancelar). */
 .ticket.rejected { background: var(--bg-deep); }
@@ -419,14 +439,31 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .slot:hover { background: var(--brand-soft-2); }
 .slot:active { transform: scale(0.94); }
 .slot[aria-pressed="true"] { color: #fff; background: var(--brand); }
+/* Horas: dos renglones (la hora y cuántos lugares tiene); la abierta lleva contorno. */
+.slot.hour { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; min-height: 56px; border-radius: 14px; }
+.hour-time { font-size: 1.0625rem; }
+.hour-count { font-size: 0.875rem; font-weight: 500; color: var(--muted); }
+.slot.hour.open { background: #fff; box-shadow: inset 0 0 0 2px var(--brand); }
+/* Minutos de la hora elegida, justo debajo de su grupo. */
+.minutes { margin-top: 12px; padding: 14px; border-radius: var(--r-field); background: var(--bg); }
+.minutes-title { margin-bottom: 10px; font-weight: 650; }
+.minutes-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (min-width: 560px) { .minutes-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+.slot.minute { background: #fff; box-shadow: inset 0 0 0 1.5px var(--brand-soft-2); }
+.slot.minute:hover { background: var(--brand-soft); }
+.slot.minute[aria-pressed="true"] { color: #fff; background: var(--brand); box-shadow: none; }
+.minutes.in { animation-name: rise; }
+#cal-limit { margin-top: 12px; }
 
 /* ---------- resumen antes de confirmar ---------- */
 .summary { margin-top: 22px; padding: 18px; border: 2px solid var(--brand); border-radius: var(--r-card); background: var(--card); }
 .summary h4 { margin: 0 0 12px; font-size: 1.125rem; }
 .summary > .muted { margin-top: 12px; }
-.summary-list div { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; }
-.summary-list dt { color: var(--muted); }
-.summary-list dd { min-width: 0; font-weight: 700; text-align: right; overflow-wrap: anywhere; }
+/* Cada dato con su etiqueta arriba: en celular nada queda apretado ni cortado a la mitad. */
+.summary-list div { padding: 4px 0; }
+.summary-list div + div { border-top: 1px solid rgba(20, 81, 74, 0.12); }
+.summary-list dt { font-size: 0.875rem; color: var(--muted); }
+.summary-list dd { min-width: 0; font-weight: 700; overflow-wrap: break-word; }
 
 /* ---------- datos de la clínica ---------- */
 .plain { list-style: none; padding: 0; margin: 0; }

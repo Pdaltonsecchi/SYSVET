@@ -66,10 +66,11 @@
             </div>
             <button type="submit" class="btn primary wide" id="login-submit">Entrar</button>
           </form>
+          <!-- Error del ingreso. Si el número no está, el cuadro es tranquilo (no rojo) y ofrece anotarse ahí mismo. -->
           <div id="login-error" class="alert" role="alert" tabindex="-1" hidden>
             <p id="login-error-text"></p>
-            <p id="login-help" hidden>Revisá que el número tenga el código de área (por ejemplo, 11). Si todavía no sos cliente, anotate como cliente nuevo.</p>
             <div class="row">
+              <button type="button" class="btn primary" id="login-new" hidden>Soy cliente nuevo</button>
               <button type="button" class="btn" id="retry">Probar de nuevo</button>
               <a id="call-link" class="btn" href="#" hidden>Llamar a la veterinaria</a>
             </div>
@@ -142,6 +143,16 @@
             <p id="mine-msg" class="notice" role="status" hidden></p>
             <ul id="my-appts" class="tickets"></ul>
             <p id="no-appts" class="muted" hidden>No tenés turnos pendientes ni confirmados.</p>
+
+            <!-- Reseña: se pregunta después de una atención (un turno confirmado que ya pasó), a todos por igual, sin nada
+                 a cambio, una sola vez por cliente en este dispositivo. Solo si la veterinaria cargó el enlace. -->
+            <div id="review-ask" class="review-ask" role="group" aria-labelledby="review-ask-text" hidden>
+              <p id="review-ask-text">Si te gustó la atención, nos ayuda mucho que dejes tu reseña en Google.</p>
+              <div class="row">
+                <a id="review-yes" class="btn" href="#" target="_blank" rel="noopener">Dejar reseña</a>
+                <button type="button" class="btn text" id="review-no">Ahora no</button>
+              </div>
+            </div>
           </div>
 
           <div class="card" id="book-card">
@@ -150,7 +161,7 @@
             <!-- Resultado del pedido: aparece acá arriba, donde el cliente está mirando -->
             <div id="done" class="done" role="status" tabindex="-1" aria-labelledby="done-title" hidden>
               <h4 id="done-title">Tu turno quedó pendiente</h4>
-              <div class="ticket">
+              <div class="ticket pending">
                 <div class="stub" aria-hidden="true"><span class="stub-day" id="done-stub-day"></span><span class="stub-month" id="done-stub-month"></span></div>
                 <div class="ticket-body">
                   <p id="done-what" class="appt-title"></p>
@@ -160,17 +171,8 @@
               </div>
               <p id="done-text">Todavía no está confirmado. Volvé a entrar a esta página con tu teléfono para ver si la veterinaria lo aceptó o lo rechazó.</p>
               <p class="done-more">Para volver fácil, guardá esta página en tus favoritos.</p>
-              <p id="done-call" class="done-more" hidden>Si no podés esperar, llamá al <a id="done-call-link" href="#"></a>.</p>
+              <p id="done-call" class="done-more" hidden>Si no podés esperar, llamá al <a id="done-call-link" class="nowrap" href="#"></a>.</p>
               <button type="button" class="btn" id="done-again">Pedir otro turno</button>
-
-              <!-- Se le pregunta a todos por igual, sin nada a cambio. Solo si la veterinaria cargó el enlace. -->
-              <div id="review-ask" class="review-ask" role="group" aria-labelledby="review-ask-text" hidden>
-                <p id="review-ask-text">¿Ya nos conocés? Si te gustó la atención, nos ayuda mucho que dejes tu reseña en Google.</p>
-                <div class="row">
-                  <a id="review-yes" class="btn" href="#" target="_blank" rel="noopener">Dejar reseña</a>
-                  <button type="button" class="btn text" id="review-no">Ahora no</button>
-                </div>
-              </div>
             </div>
 
             <div id="book-flow">
@@ -186,6 +188,15 @@
                   <select id="pet"></select>
                 </div>
                 <p id="pet-msg" class="notice" role="status" hidden></p>
+                <!-- Se anotó como cliente nuevo con un teléfono que ya estaba: se le ofrece agregar la mascota que escribió. -->
+                <div id="pet-offer" class="note" role="group" aria-labelledby="pet-offer-text" hidden>
+                  <p id="pet-offer-text"></p>
+                  <div class="row">
+                    <button type="button" class="btn primary" id="pet-offer-yes"></button>
+                    <button type="button" class="btn text" id="pet-offer-no">No, gracias</button>
+                  </div>
+                  <p id="pet-offer-error" class="field-error" role="alert" hidden></p>
+                </div>
                 <button type="button" class="btn text" id="toggle-add-pet" aria-expanded="false" aria-controls="add-pet-form">+ Agregar otra mascota</button>
 
                 <form id="add-pet-form" class="sub-form" novalidate hidden>
@@ -228,6 +239,7 @@
                     <li><span class="key off" aria-hidden="true">8</span>Sin turnos</li>
                     <li><span class="key today" aria-hidden="true"></span>Hoy</li>
                   </ul>
+                  <p id="cal-limit" class="muted small-text" hidden></p>
                 </div>
               </div>
 
@@ -238,6 +250,7 @@
                 <p id="recap" class="muted"></p>
                 <div id="day-msg" class="alert" role="alert" tabindex="-1" hidden></div>
                 <p id="day-mine" class="note" hidden></p>
+                <!-- Primero la hora; al tocarla aparecen los minutos libres de esa hora. -->
                 <div id="slots"></div>
 
                 <!-- Resumen antes de confirmar: el talón del turno -->
