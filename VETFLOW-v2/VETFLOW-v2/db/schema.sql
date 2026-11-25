@@ -457,3 +457,32 @@ CREATE INDEX IF NOT EXISTS vaccines_next_idx ON vaccines(patient_id, next_on) WH
 -- Los turnos que ya existían quedan sin mensaje.
 -- ============================================================
 ALTER TABLE appointments ADD COLUMN IF NOT EXISTS client_message TEXT NOT NULL DEFAULT '';
+
+-- ============================================================
+-- Seguridad (revisión QA, M3): Row Level Security (RLS) en todas las tablas.
+-- Supabase ofrece las tablas del esquema public por su Data API a quien tenga la clave "anon" del proyecto. Este
+-- sistema no usa esa API: el servidor se conecta directo a Postgres con el usuario dueño de las tablas, y al dueño
+-- RLS no lo afecta. Activar RLS SIN crear políticas deja a la Data API sin acceso a ninguna fila.
+-- Solo se activa en las tablas donde el usuario del servidor sigue teniendo acceso (es el dueño o puede saltear
+-- RLS); si en alguna no se puede, se avisa en el log y el sistema arranca igual. Se puede correr muchas veces.
+-- ============================================================
+DO $$
+DECLARE
+  t record;
+  bypass boolean := (SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user);
+BEGIN
+  FOR t IN
+    SELECT c.relname, c.relowner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT c.relrowsecurity
+  LOOP
+    IF NOT (COALESCE(bypass, false) OR pg_has_role(current_user, t.relowner, 'USAGE')) THEN
+      RAISE WARNING 'RLS: no se activa en la tabla % porque el servidor no es su dueño', t.relname;
+      CONTINUE;
+    END IF;
+    BEGIN
+      EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t.relname);
+    EXCEPTION WHEN insufficient_privilege THEN
+      RAISE WARNING 'RLS: no se pudo activar en la tabla %: %', t.relname, SQLERRM;
+    END;
+  END LOOP;
+END $$;

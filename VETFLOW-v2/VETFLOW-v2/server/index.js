@@ -72,13 +72,20 @@ function serveStatic(req, res, url) {
     return res.end('Método no permitido');
   }
   let pathname = url.pathname === '/' ? '/index.html' : url.pathname;
-  let file;
+  let decoded;
   try {
-    file = path.normalize(path.join(PUBLIC, decodeURIComponent(pathname)));
+    decoded = decodeURIComponent(pathname);
   } catch (e) {
     res.writeHead(400);
     return res.end();
   }
+  // Un byte nulo ("/%00") hace que fs lance un error en el acto, y antes eso apagaba el servidor: se rechaza antes de
+  // tocar el disco (revisión QA, A1).
+  if (decoded.includes('\0')) {
+    res.writeHead(400);
+    return res.end();
+  }
+  const file = path.normalize(path.join(PUBLIC, decoded));
   if (file !== PUBLIC && !file.startsWith(PUBLIC + path.sep)) {
     res.writeHead(403);
     return res.end();
@@ -140,7 +147,16 @@ const server = http.createServer(async (req, res) => {
 
   securityHeaders(res);
 
-  if (!url.pathname.startsWith('/api/')) return serveStatic(req, res, url);
+  if (!url.pathname.startsWith('/api/')) {
+    // Un error inesperado al servir un archivo no tiene que apagar el sistema: se responde 500 y se sigue.
+    try {
+      return serveStatic(req, res, url);
+    } catch (e) {
+      console.error('Error interno en', req.method, url.pathname, '-', e.message);
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end();
+    }
+  }
 
   try {
     await api.dispatch(req, res, url);
@@ -181,3 +197,7 @@ function shutdown() {
 }
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
+// Red de seguridad: un error no previsto dentro de un pedido se registra, pero no apaga el sistema para todos.
+process.on('unhandledRejection', (e) => {
+  console.error('Error no manejado:', e && e.message ? e.message : e);
+});

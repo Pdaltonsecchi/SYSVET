@@ -316,7 +316,9 @@ function parseDec(s){
 }
 // 1500.75 → "1500,75" para mostrar en un campo editable.
 var decText=function(n){return String(n).replace('.',',');};
-// Valida los campos de montos y pesos de un formulario y deja el valor normalizado ("1500.75") en data.
+// Valida los campos de montos y pesos de un formulario y deja en data el número ya interpretado (1500.75).
+// Va como número y no como texto: el texto "2.575" el servidor lo lee como 2575 (punto de miles), y así un monto
+// escrito "2,575" se guardaba mil veces más grande (revisión QA, M1).
 function checkDecimals(f,data){
   var bad=null;
   f.querySelectorAll('[data-dec]').forEach(function(el){
@@ -327,7 +329,7 @@ function checkDecimals(f,data){
     var n=parseDec(v),min=el.dataset.min!=null?Number(el.dataset.min):null,max=el.dataset.max!=null?Number(el.dataset.max):null;
     var msg=isNaN(n)?name+': escribí un número, por ejemplo 1500,50.':min!=null&&n<min?name+': tiene que ser '+decText(min)+' o más.':max!=null&&n>max?name+': tiene que ser '+decText(max)+' o menos.':'';
     if(msg){el.setAttribute('aria-invalid','true');bad={el:el,msg:msg};return;}
-    if(el.name)data[el.name]=String(n);
+    if(el.name)data[el.name]=n;
   });
   return bad;
 }
@@ -1638,7 +1640,10 @@ function chargeForm(p){
       var items=[];
       f.querySelectorAll('.cline:not(.head)').forEach(function(r){
         var v=r.querySelector('.l-item').value;if(!v)return;
-        items.push({type:v[0]==='s'?'service':'product',id:Number(v.slice(1)),qty:r.querySelector('.l-qty').value,price:String(parseDec(r.querySelector('.l-price').value))});
+        // El precio viaja como número (ver checkDecimals). Vacío: se avisa acá, antes de mandar nada.
+        var price=parseDec(r.querySelector('.l-price').value);
+        if(isNaN(price))throw new Error('Completá el precio de cada línea');
+        items.push({type:v[0]==='s'?'service':'product',id:Number(v.slice(1)),qty:r.querySelector('.l-qty').value,price:price});
       });
       if(!items.length)throw new Error('Agregá al menos un servicio o producto');
       var r=await api('/patients/'+p.id+'/charges',{body:{items:items,date:d.date,method:d.method,cash:!!d.cash,discount:d.dtype!=='none'&&d.dvalue!==''?{type:d.dtype,value:d.dvalue}:null}});
@@ -2433,8 +2438,12 @@ var actions={
     var c=((ui.cash&&ui.cash.items)||[]).find(function(x){return String(x.id)===String(id);});
     var d=c?c.stockDelta:0;
     var extra=d>0?' También se devuelven '+plural(d,'unidad','unidades')+' al stock.':d<0?' También se restan '+plural(-d,'unidad','unidades')+' del stock.':'';
-    confirmForm('Eliminar movimiento','Se borra este movimiento de la caja.'+extra+' Esta acción no se puede deshacer.','Eliminar',async function(){
-      await api('/cash/'+id,{method:'DELETE'});await reload();toast('Movimiento eliminado'+(d>0?' · stock devuelto':d<0?' · stock descontado':''));
+    // Si el ingreso es de un cobro, también se quita de la historia del paciente (y eso sí se puede recuperar).
+    var pac=c&&c.chargePatient?c.chargePatient:'';
+    var end=pac?' También se quita el cobro de la historia de '+esc(pac)+'. Va a la Papelera: si lo restaurás durante 30 días, vuelven el cobro y este ingreso.':' Esta acción no se puede deshacer.';
+    confirmForm('Eliminar movimiento','Se borra este movimiento de la caja.'+extra+end,'Eliminar',async function(){
+      var r=await api('/cash/'+id,{method:'DELETE'});await reload();
+      toast('Movimiento eliminado'+(r.charges?' · cobro quitado (está en la Papelera)':'')+(d>0?' · stock devuelto':d<0?' · stock descontado':''));
     });
   },
   'backup-download':function(){return downloadExport();},

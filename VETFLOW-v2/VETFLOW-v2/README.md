@@ -103,6 +103,7 @@ Para volver atrás, entrá a **Configuración → Copias de seguridad** y tocá 
 - Las sesiones duran 7 días y se cierran solas si cambiás la contraseña.
 - Después de 5 intentos fallidos de ingreso, ese usuario se bloquea 15 minutos.
 - Toda la comunicación va por HTTPS.
+- Todas las tablas tienen **RLS** (Row Level Security) activado y sin políticas: la *Data API* de Supabase no puede leer ni escribir ningún dato. El sistema no la usa (se conecta directo a la base), así que no lo afecta. Para verlo en Supabase: **Table Editor** → cada tabla dice *RLS enabled*, y **Advisors → Security** no muestra avisos de "RLS disabled".
 - Guardás nombres, teléfonos y mails de tus clientes: conviene tener en cuenta la ley argentina de protección de datos personales. Un profesional puede confirmarte qué te corresponde.
 
 ## Actualizar el sistema
