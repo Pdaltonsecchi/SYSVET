@@ -2438,8 +2438,12 @@ var actions={
     var c=((ui.cash&&ui.cash.items)||[]).find(function(x){return String(x.id)===String(id);});
     var d=c?c.stockDelta:0;
     var extra=d>0?' También se devuelven '+plural(d,'unidad','unidades')+' al stock.':d<0?' También se restan '+plural(-d,'unidad','unidades')+' del stock.':'';
-    confirmForm('Eliminar movimiento','Se borra este movimiento de la caja.'+extra+' Esta acción no se puede deshacer.','Eliminar',async function(){
-      await api('/cash/'+id,{method:'DELETE'});await reload();toast('Movimiento eliminado'+(d>0?' · stock devuelto':d<0?' · stock descontado':''));
+    // Si el ingreso es de un cobro, también se quita de la historia del paciente (y eso sí se puede recuperar).
+    var pac=c&&c.chargePatient?c.chargePatient:'';
+    var end=pac?' También se quita el cobro de la historia de '+esc(pac)+'. Va a la Papelera: si lo restaurás durante 30 días, vuelven el cobro y este ingreso.':' Esta acción no se puede deshacer.';
+    confirmForm('Eliminar movimiento','Se borra este movimiento de la caja.'+extra+end,'Eliminar',async function(){
+      var r=await api('/cash/'+id,{method:'DELETE'});await reload();
+      toast('Movimiento eliminado'+(r.charges?' · cobro quitado (está en la Papelera)':'')+(d>0?' · stock devuelto':d<0?' · stock descontado':''));
     });
   },
   'backup-download':function(){return downloadExport();},

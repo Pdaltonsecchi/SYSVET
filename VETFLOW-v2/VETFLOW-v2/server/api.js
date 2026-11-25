@@ -192,6 +192,8 @@ const mapCash = (r) => ({
   amount: Number(r.amount),
   // Unidades que se mueven en el stock si se elimina este movimiento (+ vuelven, − se restan).
   stockDelta: Number(r.stock_delta || 0),
+  // Si este ingreso es de un cobro, el paciente: al eliminarlo también se quita el cobro de su historia.
+  chargePatient: r.charge_patient || '',
 });
 
 async function listPatients() {
@@ -1307,7 +1309,8 @@ add('GET', '/api/cash', { admin: true }, async (ctx) => {
     'SELECT c.id, c.on_date, c.kind, c.concept, c.category, c.method, c.amount, ' +
     // Unidades que se mueven si se elimina: el movimiento vinculado directamente y los de los cobros que usan este ingreso.
     'COALESCE((SELECT SUM(-m.qty) FROM stock_movements m WHERE NOT m.voided AND m.product_id IS NOT NULL AND ' +
-    '(m.id = c.stock_movement_id OR m.charge_id IN (SELECT ch.id FROM charges ch WHERE ch.cash_id = c.id))), 0) AS stock_delta ' +
+    '(m.id = c.stock_movement_id OR m.charge_id IN (SELECT ch.id FROM charges ch WHERE ch.cash_id = c.id))), 0) AS stock_delta, ' +
+    '(SELECT p.name FROM charges ch JOIN patients p ON p.id = ch.patient_id WHERE ch.cash_id = c.id AND ch.deleted_at IS NULL ORDER BY ch.id LIMIT 1) AS charge_patient ' +
     'FROM cash_movements c' +
     f.where +
     ' ORDER BY c.on_date DESC, c.id DESC LIMIT 500';
@@ -1378,9 +1381,18 @@ add('POST', '/api/cash', { admin: true }, async (ctx) => {
 
 // Eliminar un movimiento de caja generado por una venta o una compra de stock revierte también
 // el stock, en la misma transacción: o se hace todo, o no se hace nada.
+// Si el ingreso es de un cobro, el cobro se quita de la historia del paciente (revisión QA, A2: antes seguía figurando
+// como pagado). Va a la Papelera recordando que tenía ingreso, así al restaurarlo vuelven el cobro, el ingreso y el
+// descuento de stock. Los cobros se bloquean antes que el movimiento, en el mismo orden que al quitar un cobro.
 add('DELETE', '/api/cash/:id', { admin: true }, async (ctx) => {
   const id = U.idParam(ctx.params.id);
-  return db.tx(async (c) => ({ ok: true, stockDelta: await deleteCash(c, id, ctx.user.id) }));
+  return db.tx(async (c) => {
+    const ch = await c.query('SELECT id FROM charges WHERE cash_id = $1 AND deleted_at IS NULL ORDER BY id FOR UPDATE', [id]);
+    const ids = ch.rows.map((x) => x.id);
+    if (ids.length) await c.query('UPDATE charges SET deleted_at = now(), cash_was = TRUE WHERE id = ANY($1::int[])', [ids]);
+    const stockDelta = await deleteCash(c, id, ctx.user.id); // si el movimiento no existe, se deshace todo
+    return { ok: true, stockDelta, charges: ids.length };
+  });
 });
 
 /* ---------- Cierre de caja ----------

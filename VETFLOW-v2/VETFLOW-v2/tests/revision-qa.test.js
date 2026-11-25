@@ -1,6 +1,7 @@
 'use strict';
 // Arreglos de la revisión QA del 20/11/2026. Se corren con:  DATABASE_URL=postgres://... npm test
 //  A1: un pedido a "/%00" (byte nulo) ya no apaga el servidor.
+//  A2: borrar en Caja el ingreso de un cobro también quita el cobro de la ficha (va a la Papelera y se restaura).
 //  M3: todas las tablas tienen RLS (la Data API de Supabase no ve ninguna fila) y el servidor sigue viendo todo.
 //  M1: un monto o peso escrito con coma y tres decimales ("2,575") se guarda como 2,58 y no como 2575.
 //      Es de pantalla: necesita Playwright (no es dependencia del proyecto). Si no está, se saltea.
@@ -79,6 +80,75 @@ test('M3: RLS activado en todas las tablas; un rol de la Data API no ve filas y 
   } finally {
     await db.end();
   }
+});
+
+test('A2: borrar en Caja el ingreso de un cobro quita el cobro de la ficha y se puede restaurar', async () => {
+  const today = new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10);
+  const ok = async (m, p, b) => {
+    const r = await owner.call(m, p, b);
+    assert.equal(r.status, 200, m + ' ' + p + ' ' + JSON.stringify(r.data));
+    return r.data;
+  };
+  const prod = (await ok('POST', '/products', { name: 'Pipeta A2 ' + tag, category: 'Antiparasitarios', price: 6000, stock: 10, min: 0 })).id;
+  const drug = (await ok('POST', '/products', { name: 'Droga A2 ' + tag, category: 'Vacunas', price: 100, stock: 5, min: 0 })).id;
+  const svc = (await ok('POST', '/services', { name: 'Consulta A2 ' + tag, category: 'Consultas', price: 8000 })).id;
+  const vac = (await ok('POST', '/services', { name: 'Vacuna A2 ' + tag, category: 'Vacunas', price: 9000, productId: drug })).id;
+  const pid = (await ok('POST', '/patients', { name: 'Caja ' + tag, species: 'Perro', breed: '', sex: 'Macho', neutered: false, birth: '', weight: '', notes: '', client: { firstName: 'Caja', lastName: tag, phone: '', email: '', address: '' } })).id;
+  const ficha = () => ok('GET', '/patients/' + pid);
+  const stock = async (id) => (await ok('GET', '/bootstrap')).products.find((p) => p.id === id).stock;
+  const mine = async () => (await ok('GET', '/cash?period=month&type=all&group=all')).items.filter((x) => x.concept.includes('A2 ' + tag));
+  const byStart = async (s) => (await mine()).find((x) => x.concept.startsWith(s));
+  const trashed = async (id) => (await ok('GET', '/trash')).items.some((x) => x.kind === 'charge' && x.id === id);
+
+  // Cobro de dos líneas (consulta + 2 pipetas): se borra en Caja solo el ingreso de las pipetas.
+  await ok('POST', '/patients/' + pid + '/charges', { items: [{ type: 'service', id: svc, qty: 1 }, { type: 'product', id: prod, qty: 2 }], date: today, method: 'Efectivo', cash: true });
+  assert.equal(await stock(prod), 8);
+  const charge = (await ficha()).charges.find((c) => c.concept.startsWith('Pipeta'));
+  const mov = await byStart('Pipeta');
+  const del = await ok('DELETE', '/cash/' + mov.id);
+  assert.deepEqual((await ficha()).charges.map((c) => c.concept), ['Consulta A2 ' + tag], 'el cobro se quita y la otra línea no se toca');
+  assert.equal(mov.chargePatient, 'Caja ' + tag, 'la pantalla necesita saber que el ingreso es de un cobro');
+  assert.equal(del.charges, 1);
+  assert.equal(del.stockDelta, 2);
+  assert.equal(await stock(prod), 10);
+  assert.ok(await trashed(charge.id), 'el cobro queda en la Papelera');
+  assert.equal((await mine()).length, 1);
+  // Restaurar: vuelve el cobro, vuelve el ingreso y se descuenta otra vez el stock (una sola vez).
+  await ok('POST', '/trash/charge/' + charge.id + '/restore', {});
+  assert.equal(await stock(prod), 8);
+  assert.equal((await ficha()).charges.length, 2);
+  assert.equal((await byStart('Pipeta')).amount, 12000);
+  assert.equal((await mine()).length, 2);
+  // Y se puede volver a borrar desde Caja con el mismo resultado.
+  await ok('DELETE', '/cash/' + (await byStart('Pipeta')).id);
+  assert.equal(await stock(prod), 10);
+  assert.equal((await ficha()).charges.length, 1);
+
+  // Vacuna con "Cobrar ahora": borrar el ingreso quita el cobro; la vacuna aplicada y su stock quedan como estaban.
+  await ok('POST', '/patients/' + pid + '/vaccines', { serviceId: vac, name: 'x', date: today, next: '', charge: { amount: 9000, method: 'Efectivo' } });
+  assert.equal(await stock(drug), 4);
+  await ok('DELETE', '/cash/' + (await byStart('Vacuna')).id);
+  const f = await ficha();
+  assert.equal(f.vaccines.length, 1);
+  assert.ok(!f.charges.some((c) => c.concept.startsWith('Vacuna')));
+  assert.equal(await stock(drug), 4);
+
+  // Venta de mostrador con paciente: se quita el cobro y el stock vuelve una sola vez.
+  await ok('POST', '/products/' + prod + '/sell', { qty: 3, method: 'Efectivo', patientId: pid });
+  assert.equal(await stock(prod), 7);
+  assert.equal((await ok('DELETE', '/cash/' + (await byStart('Venta')).id)).charges, 1);
+  assert.equal(await stock(prod), 10);
+  assert.equal((await ficha()).charges.length, 1);
+
+  // Sin cobro vinculado (venta sin paciente y egreso manual): se borra como antes.
+  await ok('POST', '/products/' + prod + '/sell', { qty: 1, method: 'Efectivo' });
+  const anon = await byStart('Venta');
+  assert.equal(anon.chargePatient, '');
+  assert.equal((await ok('DELETE', '/cash/' + anon.id)).charges, 0);
+  assert.equal(await stock(prod), 10);
+  const man = (await ok('POST', '/cash', { type: 'out', date: today, amount: 50, concept: 'Gasto A2 ' + tag, category: 'Otros', method: 'Efectivo' })).id;
+  assert.equal((await ok('DELETE', '/cash/' + man)).charges, 0);
+  assert.equal((await owner.call('DELETE', '/cash/' + man)).status, 404);
 });
 
 let pw = null;
